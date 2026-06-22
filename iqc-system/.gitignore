@@ -1,0 +1,35 @@
+# ===== Secrets / Env =====
+.env
+.env.local
+.env.*.local
+.env.production
+.env.*
+!.env.production.example
+
+# ===== nginx TLS certs =====
+nginx/certs/
+nginx/www/
+
+# ===== Dependencies =====
+node_modules/
+*/node_modules/
+
+# ===== Database (data + WAL) =====
+iqc.db
+iqc.db-shm
+iqc.db-wal
+server/db/data/
+
+# ===== Uploaded files (user content) =====
+uploads/
+
+# ===== Build output =====
+client/dist/
+dist/
+build/
+
+# ===== Logs / OS =====
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db

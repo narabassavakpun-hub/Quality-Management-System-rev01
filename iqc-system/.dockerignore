@@ -1,0 +1,43 @@
+# dependencies (ติดตั้งใหม่ใน build stage)
+**/node_modules
+
+# build output (สร้างใหม่ใน build stage)
+client/dist
+
+# secrets / env (ส่งผ่าน env_file/compose แทน) — ยกเว้น example
+**/.env
+**/.env.*
+!.env.production.example
+
+# local databases / WAL (DB จริงอยู่บน volume — ห้าม bake เข้า image)
+*.db
+*.db-wal
+*.db-shm
+**/*.db
+**/*.db-wal
+**/*.db-shm
+server/db/data
+
+# runtime persistence (อยู่บน volume)
+uploads
+backups
+db_backups
+
+# vcs / editor / docs / misc
+.git
+.gitignore
+.vscode
+.idea
+.claude
+*.log
+npm-debug.log*
+Dockerfile
+docker-compose*.yml
+.dockerignore
+DEPLOYMENT.md
+PRODUCTION_CHECKLIST.md
+**/*.md
+
+# tests
+**/*.test.js
+server/test

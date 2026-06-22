@@ -1,0 +1,58 @@
+IQC Server running on port 3001
+[NCR CREATE] SqliteError: no such table: main.ncrs_old
+    at Database.prepare (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\better-sqlite3\lib\methods\wrappers.js:5:21)
+    at c:\Work space Project\Quality Management System rev01\iqc-system\server\routes\ncr.js:114:24
+    at sqliteTransaction (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\better-sqlite3\lib\methods\transaction.js:65:24)
+    at c:\Work space Project\Quality Management System rev01\iqc-system\server\routes\ncr.js:144:16
+    at Layer.handle [as handle_request] (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\layer.js:95:5)
+    at next (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\route.js:149:13)
+    at multerMiddleware (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\multer\lib\make-middleware.js:13:41)
+    at Layer.handle [as handle_request] (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\layer.js:95:5)
+    at next (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\route.js:149:13)
+    at c:\Work space Project\Quality Management System rev01\iqc-system\server\middleware\requireRole.js:5:5
+    at Layer.handle [as handle_request] (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\layer.js:95:5)
+    at next (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\route.js:149:13)
+    at authMiddleware (c:\Work space Project\Quality Management System rev01\iqc-system\server\middleware\auth.js:10:5)
+    at Layer.handle [as handle_request] (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\layer.js:95:5)
+    at next (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\route.js:119:3) {
+  code: 'SQLITE_ERROR'
+}
+[NCR CREATE] SqliteError: no such table: main.ncrs_old
+    at Database.prepare (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\better-sqlite3\lib\methods\wrappers.js:5:21)
+    at c:\Work space Project\Quality Management System rev01\iqc-system\server\routes\ncr.js:114:24
+    at sqliteTransaction (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\better-sqlite3\lib\methods\transaction.js:65:24)
+    at c:\Work space Project\Quality Management System rev01\iqc-system\server\routes\ncr.js:144:16
+    at Layer.handle [as handle_request] (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\layer.js:95:5)
+    at next (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\route.js:149:13)
+    at multerMiddleware (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\multer\lib\make-middleware.js:13:41)
+    at Layer.handle [as handle_request] (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\layer.js:95:5)
+    at next (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\route.js:149:13)
+    at c:\Work space Project\Quality Management System rev01\iqc-system\server\middleware\requireRole.js:5:5
+    at Layer.handle [as handle_request] (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\layer.js:95:5)
+    at next (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\route.js:149:13)
+    at authMiddleware (c:\Work space Project\Quality Management System rev01\iqc-system\server\middleware\auth.js:10:5)
+    at Layer.handle [as handle_request] (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\layer.js:95:5)
+    at next (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\route.js:119:3) {
+  code: 'SQLITE_ERROR'
+}
+[NCR CREATE] SqliteError: no such table: main.ncrs_old
+    at Database.prepare (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\better-sqlite3\lib\methods\wrappers.js:5:21)
+    at c:\Work space Project\Quality Management System rev01\iqc-system\server\routes\ncr.js:114:24
+    at sqliteTransaction (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\better-sqlite3\lib\methods\transaction.js:65:24)
+    at c:\Work space Project\Quality Management System rev01\iqc-system\server\routes\ncr.js:144:16
+    at Layer.handle [as handle_request] (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\layer.js:95:5)
+    at next (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\route.js:149:13)
+    at multerMiddleware (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\multer\lib\make-middleware.js:13:41)
+    at Layer.handle [as handle_request] (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\layer.js:95:5)
+    at next (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\route.js:149:13)
+    at c:\Work space Project\Quality Management System rev01\iqc-system\server\middleware\requireRole.js:5:5
+    at Layer.handle [as handle_request] (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\layer.js:95:5)
+    at next (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\route.js:149:13)
+    at authMiddleware (c:\Work space Project\Quality Management System rev01\iqc-system\server\middleware\auth.js:10:5)
+    at Layer.handle [as handle_request] (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\layer.js:95:5)
+    at next (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (c:\Work space Project\Quality Management System rev01\iqc-system\server\node_modules\express\lib\router\route.js:119:3) {
+  code: 'SQLITE_ERROR'
+}

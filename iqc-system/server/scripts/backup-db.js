@@ -1,0 +1,27 @@
+// backup-db.js — snapshot iqc.db แบบ consistent (DEVMORE / CLAUDE.md §5)
+// ใช้งาน: node scripts/backup-db.js [label]
+// เก็บไว้ใน ../backups/ และลบไฟล์เก่าเกิน 7 วันอัตโนมัติ
+const Database = require('better-sqlite3');
+const path = require('path');
+const fs = require('fs');
+
+const DB_PATH = process.env.IQC_DB_PATH || path.join(__dirname, '../../iqc.db');
+const BACKUP_DIR = path.join(__dirname, '../../backups');
+fs.mkdirSync(BACKUP_DIR, { recursive: true });
+
+const label = (process.argv[2] || 'manual').replace(/[^\w-]/g, '');
+const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+const out = path.join(BACKUP_DIR, `iqc_${label}_${stamp}.db`);
+
+const db = new Database(DB_PATH, { readonly: true });
+db.exec(`VACUUM INTO '${out.replace(/'/g, "''")}'`);
+db.close();
+console.log('[backup] created:', out);
+
+// rotate — ลบ backup ที่เก่ากว่า 7 วัน
+const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+for (const f of fs.readdirSync(BACKUP_DIR)) {
+  if (!f.endsWith('.db')) continue;
+  const full = path.join(BACKUP_DIR, f);
+  try { if (fs.statSync(full).mtimeMs < cutoff) { fs.unlinkSync(full); console.log('[backup] rotated old:', f); } } catch {}
+}
