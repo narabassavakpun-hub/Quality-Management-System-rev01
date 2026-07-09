@@ -4,6 +4,17 @@ const fs = require('fs');
 
 const UPLOADS_BASE = path.join(__dirname, '../../uploads');
 
+// ===== Original filename encoding fix (multer/busboy quirk) =====
+// busboy ถอดค่า filename จาก Content-Disposition header เป็น 'latin1' เสมอ (ตาม HTTP header spec ดั้งเดิม)
+// แต่ browser ส่ง UTF-8 bytes ของชื่อไฟล์จริงมา — ชื่อไฟล์ที่ไม่ใช่ ASCII (เช่น ภาษาไทย) จึงถูก decode ผิด
+// กลายเป็นตัวอักษรมั่ว (mojibake) ก่อนถูกเก็บเป็น original_name ใน DB
+// แก้โดยตีความ string ที่ decode ผิดกลับเป็น byte เดิม แล้ว decode ใหม่เป็น utf8 (lossless round-trip
+// เพราะ latin1 map byte 0-255 ↔ char code 0-255 ตรงตัว — ปลอดภัยแม้ชื่อไฟล์เป็น ASCII ล้วนอยู่แล้ว)
+function fixOriginalName(name) {
+  if (!name) return name;
+  try { return Buffer.from(name, 'latin1').toString('utf8'); } catch { return name; }
+}
+
 function makeStorage(folder) {
   return multer.diskStorage({
     destination: (req, file, cb) => {
@@ -12,6 +23,7 @@ function makeStorage(folder) {
       cb(null, dir);
     },
     filename: (req, file, cb) => {
+      file.originalname = fixOriginalName(file.originalname);
       const ext = path.extname(file.originalname);
       cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
     },
@@ -51,7 +63,22 @@ const uploads = {
   logo: multer({ storage: makeStorage('general'), fileFilter: imageFilter, limits: { fileSize: 5 * 1024 * 1024 } }),
   uai: multer({ storage: makeStorage('uai'), fileFilter: imageFilter, limits: { fileSize: 10 * 1024 * 1024 } }),
   issueTalk: multer({ storage: makeStorage('issue-talk'), fileFilter: issueTalkFilter, limits: { fileSize: 100 * 1024 * 1024 } }),
+  ipqc: multer({ storage: makeStorage('ipqc'), fileFilter: imageFilter, limits: { fileSize: 15 * 1024 * 1024 } }),
+  fqc: multer({ storage: makeStorage('fqc'), fileFilter: imageFilter, limits: { fileSize: 15 * 1024 * 1024 } }),
+  fgDefect: multer({ storage: makeStorage('fg-defect'), fileFilter: imageFilter, limits: { fileSize: 15 * 1024 * 1024 } }),
+  fgFix:    multer({ storage: makeStorage('fg-fix'),    fileFilter: imageFilter, limits: { fileSize: 15 * 1024 * 1024 } }),
 };
+
+// Excel import (PDPlan / ProCodeSAP) — kept in memory, parsed then discarded
+const xlsxUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    file.originalname = fixOriginalName(file.originalname); // memoryStorage ไม่มี filename callback — แก้ที่นี่แทน
+    if (/\.xlsx?$/i.test(file.originalname)) cb(null, true);
+    else cb(new Error('รองรับเฉพาะไฟล์ Excel (.xlsx)'), false);
+  },
+});
 
 // ===== Magic-number validation (DEVMORE C3) =====
 // ตรวจ "เนื้อหาไฟล์จริง" ไม่เชื่อ extension/MIME จาก client + rename นามสกุลตาม magic
@@ -115,6 +142,59 @@ function verifyMagic(req, res, next) {
   next();
 }
 
+// ===== Image Compression Middleware =====
+// ลดขนาดรูปภาพหลัง verifyMagic — JPEG/PNG/WebP เท่านั้น (GIF/PDF/Video ข้าม)
+// Max dimension: 1920px, คุณภาพ 82%, ใช้ compressed ก็ต่อเมื่อไฟล์เล็กกว่าต้นฉบับ
+
+const COMPRESS_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp']);
+const MAX_PX = 1920;
+
+let sharp;
+try { sharp = require('sharp'); } catch { sharp = null; }
+
+async function compressImages(req, res, next) {
+  if (!sharp) return next();
+  const files = collectFiles(req);
+  const imgs = files.filter(f => COMPRESS_EXTS.has(path.extname(f.filename).slice(1).toLowerCase()));
+  if (!imgs.length) return next();
+
+  await Promise.all(imgs.map(async f => {
+    const ext = path.extname(f.filename).slice(1).toLowerCase();
+    const tmp = f.path + '.comp';
+    try {
+      let pipeline = sharp(f.path)
+        .rotate()  // auto-orient ตาม EXIF
+        .resize(MAX_PX, MAX_PX, { fit: 'inside', withoutEnlargement: true });
+
+      if (ext === 'png') {
+        pipeline = pipeline.png({ compressionLevel: 8 });
+      } else if (ext === 'webp') {
+        pipeline = pipeline.webp({ quality: 82 });
+      } else {
+        pipeline = pipeline.jpeg({ quality: 82, progressive: true });
+      }
+
+      await pipeline.toFile(tmp);
+
+      const newSize = fs.statSync(tmp).size;
+      if (newSize < f.size) {
+        fs.renameSync(tmp, f.path);
+        f.size = newSize;
+      } else {
+        fs.unlinkSync(tmp); // compressed ใหญ่กว่า — คงต้นฉบับ
+      }
+    } catch (err) {
+      console.error('[compressImages]', f.filename, err.message);
+      try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch {}
+      // ไม่ crash — ใช้ไฟล์ต้นฉบับต่อไป
+    }
+  }));
+  next();
+}
+
 module.exports = uploads;
 module.exports.verifyMagic = verifyMagic;
+module.exports.compressImages = compressImages;
 module.exports.detectExt = detectExt; // สำหรับ unit test
+module.exports.xlsxUpload = xlsxUpload;
+module.exports.fixOriginalName = fixOriginalName; // ใช้ซ้ำใน multer instance อื่นนอกไฟล์นี้ (เช่น routes/kpi.js, routes/master.js)

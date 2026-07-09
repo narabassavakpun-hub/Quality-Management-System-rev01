@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 
-export default function Modal({ open, onClose, title, children, size = 'md' }) {
+export default function Modal({ open, onClose, title, children, size = 'md', tall = false }) {
   useEffect(() => {
     if (open) document.body.style.overflow = 'hidden';
     else document.body.style.overflow = '';
@@ -12,9 +12,11 @@ export default function Modal({ open, onClose, title, children, size = 'md' }) {
   const sizes = { sm: 'max-w-md', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-4xl' };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+      style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
       <div className="fixed inset-0 bg-black/50" onClick={onClose} />
-      <div className={`relative bg-surface rounded-t-xl sm:rounded-xl w-full ${sizes[size]} max-h-[90vh] flex flex-col shadow-xl z-10`}>
+      <div className={`relative bg-surface rounded-t-xl sm:rounded-xl w-full ${sizes[size]} flex flex-col shadow-xl z-10`}
+        style={{ maxHeight: tall ? 'min(97svh, calc(100dvh - env(safe-area-inset-top, 0px) - 4px))' : 'min(90svh, calc(100dvh - env(safe-area-inset-top, 0px) - 8px))' }}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
           <h3 className="text-h3 font-semibold text-primary">{title}</h3>
           <button onClick={onClose} className="p-2 -mr-2 text-muted hover:text-text rounded-lg min-h-[44px] min-w-[44px] flex items-center justify-center">

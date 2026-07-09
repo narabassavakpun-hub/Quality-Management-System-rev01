@@ -113,7 +113,7 @@ function OverrideModal({ entry, userId, date, onClose }) {
           </div>
 
           {save.isError && (
-            <div className="text-danger text-small bg-red-50 border border-red-200 rounded px-3 py-2">
+            <div className="text-danger text-small bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded px-3 py-2">
               {save.error?.response?.data?.error || 'บันทึกไม่สำเร็จ'}
             </div>
           )}
@@ -138,23 +138,23 @@ function CalCell({ date, record, isToday, isFuture, isWeekend, onEdit, canEdit }
   if (!date) return <div />;
 
   if (isWeekend) {
-    bg = 'bg-gray-50';
-    dot = <span className="w-1.5 h-1.5 rounded-full bg-gray-300 mx-auto mt-1 block" />;
+    bg = 'bg-gray-50 dark:bg-gray-900';
+    dot = <span className="w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-gray-800 mx-auto mt-1 block" />;
   } else if (isFuture) {
     bg = '';
     dot = null;
   } else if (record?.check_in_at) {
     if ((record.late_minutes || 0) > 0) {
-      bg = 'bg-orange-50 border-orange-200';
-      dot = <span className="w-1.5 h-1.5 rounded-full bg-orange-400 mx-auto mt-1 block" />;
+      bg = 'bg-orange-50 dark:bg-orange-900 border-orange-200 dark:border-orange-700';
+      dot = <span className="w-1.5 h-1.5 rounded-full bg-orange-400 dark:bg-orange-700 mx-auto mt-1 block" />;
     } else {
-      bg = 'bg-green-50 border-green-200';
-      dot = <span className="w-1.5 h-1.5 rounded-full bg-green-400 mx-auto mt-1 block" />;
+      bg = 'bg-green-50 dark:bg-green-900 border-green-200 dark:border-green-700';
+      dot = <span className="w-1.5 h-1.5 rounded-full bg-green-400 dark:bg-green-700 mx-auto mt-1 block" />;
     }
   } else {
     // Past workday with no check-in = absent
-    bg = 'bg-red-50 border-red-200';
-    dot = <span className="w-1.5 h-1.5 rounded-full bg-red-300 mx-auto mt-1 block" />;
+    bg = 'bg-red-50 dark:bg-red-900 border-red-200 dark:border-red-700';
+    dot = <span className="w-1.5 h-1.5 rounded-full bg-red-300 dark:bg-red-800 mx-auto mt-1 block" />;
   }
 
   return (
@@ -411,10 +411,10 @@ export default function EmployeeHistory() {
             {/* Legend */}
             <div className="flex items-center gap-3 mt-3 pt-3 border-t border-border flex-wrap">
               {[
-                { color: 'bg-green-400', label: 'ตรงเวลา' },
-                { color: 'bg-orange-400', label: 'สาย' },
-                { color: 'bg-red-300',   label: 'ขาด' },
-                { color: 'bg-gray-300',  label: 'หยุด' },
+                { color: 'bg-green-400 dark:bg-green-700', label: 'ตรงเวลา' },
+                { color: 'bg-orange-400 dark:bg-orange-700', label: 'สาย' },
+                { color: 'bg-red-300 dark:bg-red-800',   label: 'ขาด' },
+                { color: 'bg-gray-300 dark:bg-gray-800',  label: 'หยุด' },
               ].map(l => (
                 <div key={l.label} className="flex items-center gap-1">
                   <span className={`w-2.5 h-2.5 rounded-full ${l.color} inline-block flex-shrink-0`} />

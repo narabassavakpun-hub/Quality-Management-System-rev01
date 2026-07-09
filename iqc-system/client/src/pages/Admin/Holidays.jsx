@@ -56,13 +56,13 @@ export default function Holidays() {
       <p className="text-sm text-muted mb-6">วันอาทิตย์เป็นวันหยุดประจำทุกสัปดาห์โดยอัตโนมัติ</p>
 
       {/* Sunday fixed notice */}
-      <div className="mb-6 flex items-center gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-lg">
+      <div className="mb-6 flex items-center gap-3 px-4 py-3 bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded-lg">
         <span className="w-3 h-3 rounded-full bg-red-500 flex-shrink-0" />
-        <span className="text-sm text-red-700 font-medium">{SUNDAY_LABEL} — วันหยุดถาวร ไม่สามารถแก้ไขได้</span>
+        <span className="text-sm text-red-700 dark:text-red-200 font-medium">{SUNDAY_LABEL} — วันหยุดถาวร ไม่สามารถแก้ไขได้</span>
       </div>
 
       {/* Add form */}
-      <div className="bg-white rounded-xl border border-border p-5 mb-6">
+      <div className="bg-surface rounded-xl border border-border p-5 mb-6">
         <h2 className="text-base font-semibold text-text mb-4">เพิ่มวันหยุดบริษัท</h2>
         <form onSubmit={handleAdd} className="flex flex-col sm:flex-row gap-3">
           <input
@@ -92,7 +92,7 @@ export default function Holidays() {
       </div>
 
       {/* Holiday list */}
-      <div className="bg-white rounded-xl border border-border">
+      <div className="bg-surface rounded-xl border border-border">
         <div className="flex items-center justify-between px-5 py-3 border-b border-border">
           <h2 className="text-base font-semibold text-text">รายการวันหยุดบริษัท</h2>
           <select

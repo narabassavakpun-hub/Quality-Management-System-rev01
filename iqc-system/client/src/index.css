@@ -2,6 +2,45 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ===== Dark Mode tokens (ThemeContext toggles .dark class บน <html>) ===== */
+/* ค่า dark ปรับจากโทน operational dashboard เดิม (brand.md §13.2 dash-bg/dash-card/dash-border/dash-text)
+   เพื่อความสอดคล้องของแบรนด์ — primary/accent/success/warning ในโหมดมืดสว่างขึ้นให้อ่านง่ายบนพื้นเข้ม */
+:root {
+  --color-primary: 18 58 107;   /* #123A6B */
+  --color-accent: 29 111 201;   /* #1D6FC9 */
+  --color-bg: 245 246 248;      /* #F5F6F8 */
+  --color-surface: 255 255 255; /* #FFFFFF */
+  --color-border: 209 213 219;  /* #D1D5DB */
+  --color-text: 31 41 55;       /* #1F2937 */
+  --color-muted: 107 114 128;   /* #6B7280 */
+  --color-success: 22 163 74;   /* #16A34A */
+  --color-danger: 220 38 38;    /* #DC2626 */
+  --color-warning: 217 119 6;   /* #D97706 */
+}
+
+.dark {
+  --color-primary: 79 156 255;   /* #4F9CFF — deep navy เดิมจะจมกับพื้นมืด ใช้ accent-glow แทน */
+  --color-accent: 56 189 248;    /* #38BDF8 — ตรงกับ accent-cyan ของ dashboard เดิม */
+  --color-bg: 11 25 41;          /* #0B1929 — ตรงกับ dash-bg เดิม */
+  --color-surface: 15 34 54;     /* #0F2236 — ตรงกับ dash-card เดิม */
+  --color-border: 30 58 95;      /* #1E3A5F — ตรงกับ dash-border เดิม */
+  --color-text: 226 234 244;     /* #E2EAF4 — ตรงกับ dash-text เดิม */
+  --color-muted: 138 160 186;    /* #8AA0BA */
+  --color-success: 34 197 94;    /* #22C55E — ตรงกับ accent-green เดิม */
+  --color-danger: 248 113 113;   /* #F87171 — แดงสว่างขึ้นให้อ่านง่ายบนพื้นเข้ม */
+  --color-warning: 234 179 8;    /* #EAB308 — ตรงกับ accent-yellow เดิม */
+}
+
+/* ป้องกัน iOS/Android auto-zoom เมื่อ focus input (font-size < 16px trigger zoom) */
+@media (max-width: 640px) {
+  .input,
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
 @layer base {
   body {
     @apply bg-bg text-text font-sans text-body;
@@ -11,15 +50,23 @@
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
 @layer components {
   .btn {
-    @apply inline-flex items-center justify-center px-4 py-2 rounded-md font-medium text-body min-h-[44px] transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-md font-medium text-body min-h-[44px] transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed;
   }
   .btn-primary {
-    @apply btn bg-primary text-white hover:bg-accent focus:ring-primary;
+    @apply btn text-white bg-gradient-to-r from-primary to-accent bg-[length:160%_100%] bg-left hover:bg-right hover:shadow-glow focus:ring-primary;
   }
   .btn-secondary {
-    @apply btn bg-white text-text border border-border hover:bg-bg focus:ring-border;
+    @apply btn bg-surface text-text border border-border hover:bg-bg focus:ring-border;
   }
   .btn-danger {
     @apply btn bg-danger text-white hover:bg-red-700 focus:ring-danger;
@@ -31,28 +78,34 @@
     @apply btn bg-success text-white hover:bg-green-700 focus:ring-success;
   }
   .input {
-    @apply w-full px-3 py-2 border border-border rounded-md text-body bg-surface focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent min-h-[44px];
+    @apply w-full px-3 py-2 border border-border rounded-md text-body bg-surface transition-shadow duration-150 focus:outline-none focus:ring-4 focus:ring-accent-glow/25 focus:border-accent min-h-[44px];
   }
   .label {
     @apply block text-small font-medium text-muted mb-1;
   }
   .card {
-    @apply bg-surface rounded-lg border border-border p-4;
+    @apply bg-surface rounded-xl border border-border p-4 shadow-sm;
   }
+  /* กรอบตาราง — สี header ใช้ solid primary (แทน bg-bg เดิมที่จมกับพื้นในโหมดมืด), มุมโค้ง+เงา ให้ดูเป็น panel เดียวกัน */
+  /* หมายเหตุ: .table th ใช้กับ <th> แต่ละอันแยกกัน — ห้ามใช้ gradient ตรงนี้ เพราะแต่ละ cell จะวาด gradient ของตัวเอง
+     กลายเป็นแถบไล่สีซ้ำเรียงกันทีละคอลัมน์ (ลายๆ) แทนที่จะเป็นแถบสีเดียวกันทั้งแถว — ใช้สีทึบตัวเดียวเท่านั้น */
   .table-container {
-    @apply overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0;
+    @apply overflow-x-auto -mx-4 sm:mx-0 sm:rounded-xl sm:border sm:border-border sm:shadow-sm bg-surface;
   }
   .table {
-    @apply w-full text-body;
+    @apply w-full text-body border-collapse;
   }
   .table th {
-    @apply text-center px-3 py-2 text-small font-semibold text-muted bg-bg border-b border-border whitespace-nowrap;
+    @apply text-center px-3 py-3 text-small font-semibold text-blue-900 dark:text-blue-200 bg-blue-50 dark:bg-blue-900 whitespace-nowrap;
   }
   .table td {
-    @apply text-center px-3 py-2 text-small border-b border-border;
+    @apply text-center px-3 py-3 text-small border-b border-border;
   }
   .table tbody tr {
-    @apply cursor-pointer hover:bg-bg transition-colors;
+    @apply cursor-pointer hover:bg-accent/5 dark:hover:bg-white/5 transition-colors;
+  }
+  .table tbody tr:last-child td {
+    @apply border-b-0;
   }
   .badge {
     @apply inline-flex items-center px-2 py-0.5 rounded-full text-small font-medium;
@@ -62,5 +115,21 @@
   }
   .page-title {
     @apply text-h2 font-bold text-primary;
+  }
+
+  /* ── Window Asia brand surfaces — ใช้ใน Login / hero / auth-adjacent screens ── */
+  /* glass-panel อยู่บน brand-gradient (มืดถาวรอยู่แล้ว) ไม่ต้องมี dark: variant */
+  .glass-panel {
+    @apply bg-white/10 backdrop-blur-xl border border-white/15;
+  }
+  .glass-card {
+    @apply bg-white/95 dark:bg-surface/95 backdrop-blur-xl border border-white/60 dark:border-border shadow-elevated;
+  }
+  .brand-gradient {
+    background: linear-gradient(135deg, #081B32 0%, #123A6B 45%, #1D6FC9 100%);
+    background-size: 200% 200%;
+  }
+  .frame-corner {
+    @apply pointer-events-none absolute w-8 h-8 border-accent-glow/40;
   }
 }

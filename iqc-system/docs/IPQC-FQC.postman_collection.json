@@ -1,0 +1,239 @@
+{
+  "info": {
+    "name": "IQC System — IPQC/FQC (Phase 0+1)",
+    "description": "Master data, ProCodeSAP and PDPlan endpoints. Auth via httpOnly cookie set by Login. Set collection variable baseUrl (default http://localhost:3001).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3001" },
+    { "key": "lineId", "value": "" },
+    { "key": "sapId", "value": "" },
+    { "key": "ipqcId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login (admin)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "auth", "login"] },
+            "body": { "mode": "raw", "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"admin1234\"\n}" }
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('logged in', () => pm.response.code === 200);"] } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Master",
+      "item": [
+        {
+          "name": "List production lines",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/ipqc/master/production-lines?active=1", "host": ["{{baseUrl}}"], "path": ["api","ipqc","master","production-lines"], "query": [{ "key": "active", "value": "1" }] } }
+        },
+        {
+          "name": "Create production line",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/ipqc/master/production-lines", "host": ["{{baseUrl}}"], "path": ["api","ipqc","master","production-lines"] },
+            "body": { "mode": "raw", "raw": "{\n  \"code\": \"F01-ALU-15\",\n  \"name\": \"สาย ALU 15 โรงงาน 1\",\n  \"line_type\": \"alu\",\n  \"factory\": \"F01\",\n  \"factory_code\": \"01\",\n  \"pdplan_sheet\": \"0115,0116\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["if (pm.response.code===201) pm.collectionVariables.set('lineId', pm.response.json().id);"] } }]
+        },
+        {
+          "name": "Get line by id (with managers)",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/ipqc/master/production-lines/{{lineId}}", "host": ["{{baseUrl}}"], "path": ["api","ipqc","master","production-lines","{{lineId}}"] } }
+        },
+        {
+          "name": "Update line",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/ipqc/master/production-lines/{{lineId}}", "host": ["{{baseUrl}}"], "path": ["api","ipqc","master","production-lines","{{lineId}}"] },
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"สาย ALU 15 (แก้ไข)\"\n}" }
+          }
+        },
+        {
+          "name": "Assignable production_manager users",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/ipqc/master/manager-users", "host": ["{{baseUrl}}"], "path": ["api","ipqc","master","manager-users"] } }
+        },
+        {
+          "name": "Assign manager to line",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/ipqc/master/production-lines/{{lineId}}/managers", "host": ["{{baseUrl}}"], "path": ["api","ipqc","master","production-lines","{{lineId}}","managers"] },
+            "body": { "mode": "raw", "raw": "{\n  \"user_id\": 10\n}" }
+          }
+        },
+        {
+          "name": "List FM categories",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/ipqc/master/fm-categories", "host": ["{{baseUrl}}"], "path": ["api","ipqc","master","fm-categories"] } }
+        },
+        {
+          "name": "List shifts",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/ipqc/master/shifts", "host": ["{{baseUrl}}"], "path": ["api","ipqc","master","shifts"] } }
+        },
+        {
+          "name": "List process steps (by line)",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/ipqc/master/process-steps?line_id={{lineId}}", "host": ["{{baseUrl}}"], "path": ["api","ipqc","master","process-steps"], "query": [{ "key": "line_id", "value": "{{lineId}}" }] } }
+        },
+        {
+          "name": "Create defect type",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/ipqc/master/defect-types", "host": ["{{baseUrl}}"], "path": ["api","ipqc","master","defect-types"] },
+            "body": { "mode": "raw", "raw": "{\n  \"production_line_id\": {{lineId}},\n  \"fm_category_id\": 2,\n  \"name\": \"ขอบบิ่น\",\n  \"code\": \"001\"\n}" }
+          }
+        },
+        {
+          "name": "Create threshold",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/ipqc/master/thresholds", "host": ["{{baseUrl}}"], "path": ["api","ipqc","master","thresholds"] },
+            "body": { "mode": "raw", "raw": "{\n  \"production_line_id\": {{lineId}},\n  \"threshold_pct\": 2.5,\n  \"effective_date\": \"2026-06-01\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ProCodeSAP",
+      "item": [
+        {
+          "name": "List (pending queue)",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/pro-code-sap?status=auto", "host": ["{{baseUrl}}"], "path": ["api","pro-code-sap"], "query": [{ "key": "status", "value": "auto" }] } }
+        },
+        {
+          "name": "Search (confirmed, for picker)",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/pro-code-sap/search?q=FA00", "host": ["{{baseUrl}}"], "path": ["api","pro-code-sap","search"], "query": [{ "key": "q", "value": "FA00" }] } }
+        },
+        {
+          "name": "Create (manual, auto-classified)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/pro-code-sap", "host": ["{{baseUrl}}"], "path": ["api","pro-code-sap"] },
+            "body": { "mode": "raw", "raw": "{\n  \"product_no\": \"FA00-W0313-240110\",\n  \"product_desc\": \"FA น.พ. SS ขาว 240x110\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["if(pm.response.code===201) pm.collectionVariables.set('sapId', pm.response.json().id);"] } }]
+        },
+        {
+          "name": "Confirm classification",
+          "request": { "method": "POST", "url": { "raw": "{{baseUrl}}/api/pro-code-sap/{{sapId}}/confirm", "host": ["{{baseUrl}}"], "path": ["api","pro-code-sap","{{sapId}}","confirm"] } }
+        },
+        {
+          "name": "Auto-classify all pending",
+          "request": { "method": "POST", "url": { "raw": "{{baseUrl}}/api/pro-code-sap/auto-classify", "host": ["{{baseUrl}}"], "path": ["api","pro-code-sap","auto-classify"] } }
+        },
+        {
+          "name": "Export Excel",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/pro-code-sap/export/excel", "host": ["{{baseUrl}}"], "path": ["api","pro-code-sap","export","excel"] } }
+        }
+      ]
+    },
+    {
+      "name": "IPQC",
+      "item": [
+        {
+          "name": "Create record",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/ipqc", "host": ["{{baseUrl}}"], "path": ["api","ipqc"] },
+            "body": { "mode": "raw", "raw": "{\n  \"found_date\": \"2026-06-24\",\n  \"pro_code_sap_id\": {{sapId}},\n  \"production_line_id\": {{lineId}},\n  \"process_step_id\": 1,\n  \"fm_category_id\": 2,\n  \"defect_type_id\": 1,\n  \"defect_qty\": 5,\n  \"total_qty\": 100,\n  \"responsible_name\": \"สมชาย\"\n}" }
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["if(pm.response.code===201) pm.collectionVariables.set('ipqcId', pm.response.json().id);"] } }]
+        },
+        {
+          "name": "List records",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/ipqc?line_id={{lineId}}&status=open", "host": ["{{baseUrl}}"], "path": ["api","ipqc"], "query": [{ "key": "line_id", "value": "{{lineId}}" }, { "key": "status", "value": "open" }] } }
+        },
+        {
+          "name": "Detail",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/ipqc/{{ipqcId}}", "host": ["{{baseUrl}}"], "path": ["api","ipqc","{{ipqcId}}"] } }
+        },
+        {
+          "name": "Edit fields",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/ipqc/{{ipqcId}}", "host": ["{{baseUrl}}"], "path": ["api","ipqc","{{ipqcId}}"] },
+            "body": { "mode": "raw", "raw": "{\n  \"defect_qty\": 7,\n  \"description\": \"อัปเดต\"\n}" }
+          }
+        },
+        {
+          "name": "Change status (supervisor/manager)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/ipqc/{{ipqcId}}/status", "host": ["{{baseUrl}}"], "path": ["api","ipqc","{{ipqcId}}","status"] },
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"in_progress\"\n}" }
+          }
+        },
+        {
+          "name": "Upload images (≤15)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/ipqc/{{ipqcId}}/images", "host": ["{{baseUrl}}"], "path": ["api","ipqc","{{ipqcId}}","images"] },
+            "body": { "mode": "formdata", "formdata": [{ "key": "images", "type": "file", "src": [] }] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "FQC",
+      "item": [
+        {
+          "name": "Create record",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/fqc", "host": ["{{baseUrl}}"], "path": ["api","fqc"] },
+            "body": { "mode": "raw", "raw": "{\n  \"inspect_date\": \"2026-06-25\",\n  \"pro_code_sap_id\": {{sapId}},\n  \"production_line_id\": {{lineId}},\n  \"total_qty\": 100,\n  \"defect_items\": [{ \"defect_type_id\": 1, \"qty\": 4 }]\n}" }
+          }
+        },
+        {
+          "name": "List records",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/fqc?line_id={{lineId}}&result=fail", "host": ["{{baseUrl}}"], "path": ["api","fqc"], "query": [{ "key": "line_id", "value": "{{lineId}}" }, { "key": "result", "value": "fail" }] } }
+        },
+        {
+          "name": "Monthly report",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/fqc/monthly?year=2026&month=6", "host": ["{{baseUrl}}"], "path": ["api","fqc","monthly"], "query": [{ "key": "year", "value": "2026" }, { "key": "month", "value": "6" }] } }
+        },
+        {
+          "name": "Monthly approve (role-based)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/fqc/monthly/approve", "host": ["{{baseUrl}}"], "path": ["api","fqc","monthly","approve"] },
+            "body": { "mode": "raw", "raw": "{\n  \"year\": 2026,\n  \"month\": 6\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "PDPlan",
+      "item": [
+        {
+          "name": "Import Excel",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/pd-plan/import", "host": ["{{baseUrl}}"], "path": ["api","pd-plan","import"] },
+            "body": { "mode": "formdata", "formdata": [{ "key": "file", "type": "file", "src": [] }] }
+          }
+        },
+        {
+          "name": "List plans",
+          "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/api/pd-plan?line_id={{lineId}}", "host": ["{{baseUrl}}"], "path": ["api","pd-plan"], "query": [{ "key": "line_id", "value": "{{lineId}}" }] } }
+        }
+      ]
+    }
+  ]
+}

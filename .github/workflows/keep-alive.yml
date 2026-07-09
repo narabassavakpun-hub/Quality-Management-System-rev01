@@ -1,0 +1,23 @@
+name: Keep Render instance awake
+
+# เสริม/สำรอง keep-alive — ตัวหลักคือ UptimeRobot/cron-job.org ภายนอก (มี failure-alert ในตัว, ดู DEPLOYMENT.md
+# หัวข้อ "Render Free tier") เพราะ GitHub Actions schedule: อาจถูก delay ได้เวลา platform โหลดสูง (ตาม GitHub เอง)
+# ตั้งค่า repo variable RENDER_APP_URL ก่อนใช้งาน (Settings > Secrets and variables > Actions > Variables)
+# เช่น https://iqc-system.onrender.com — ไม่ hardcode URL จริงไว้ในไฟล์นี้
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /api/health
+        run: |
+          if [ -z "${{ vars.RENDER_APP_URL }}" ]; then
+            echo "::warning::RENDER_APP_URL repo variable ยังไม่ได้ตั้งค่า — ข้าม ping"
+            exit 0
+          fi
+          curl -fsS --max-time 20 "${{ vars.RENDER_APP_URL }}/api/health" || echo "::warning::ping ไม่สำเร็จ"

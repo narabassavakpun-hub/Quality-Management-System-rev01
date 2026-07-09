@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import api from '../../utils/api';
+import api, { downloadFile } from '../../utils/api';
 import SummaryCard from '../../components/UI/SummaryCard';
 import Badge from '../../components/UI/Badge';
 import Button from '../../components/UI/Button';
@@ -34,7 +34,7 @@ export default function NCRReport() {
         <div><label className="label">ถึงวันที่</label><input type="date" className="input" value={to} onChange={e => setTo(e.target.value)} /></div>
         <Button onClick={() => setApplied({ from, to })}>แสดงข้อมูล</Button>
         <div className="ml-auto flex gap-2">
-          <a href={`/api/reports/ncr/excel?from=${applied.from}&to=${applied.to}`} download className="btn-secondary btn text-small">Export Excel</a>
+          <button onClick={() => downloadFile('/reports/ncr/excel', { from: applied.from, to: applied.to }, 'ncr_report.xlsx')} className="btn-secondary btn text-small">Export Excel</button>
         </div>
       </div>
 
@@ -76,7 +76,7 @@ export default function NCRReport() {
                       <td className="font-mono text-primary">{n.ncr_code}</td>
                       <td>{n.item_count || 1} รายการ</td>
                       <td>{n.supplier_name}</td>
-                      <td><span className={`badge ${n.severity === 'major' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>{n.severity === 'major' ? 'Major' : 'Minor'}</span></td>
+                      <td><span className={`badge ${n.severity === 'major' ? 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-200' : 'bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-200'}`}>{n.severity === 'major' ? 'Major' : 'Minor'}</span></td>
                       <td>{n.created_at?.slice(0, 10)}</td>
                       <td><Badge status={n.status} /></td>
                     </tr>

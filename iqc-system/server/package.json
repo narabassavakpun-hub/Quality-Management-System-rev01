@@ -8,10 +8,12 @@
     "dev": "nodemon index.js",
     "test": "node --test",
     "backup": "node scripts/backup-db.js",
+    "restore-from-r2": "node scripts/restore-from-r2.js",
     "clear-db": "node scripts/clear-db.js",
     "clear-db:force": "node scripts/clear-db.js --confirm"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.716.0",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^12.10.0",
     "cookie-parser": "^1.4.6",
@@ -24,6 +26,7 @@
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",
     "node-fetch": "^2.7.0",
+    "sharp": "^0.33.5",
     "uuid": "^9.0.1"
   },
   "devDependencies": {

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import api from '../../utils/api';
+import api, { downloadFile } from '../../utils/api';
 import SummaryCard from '../../components/UI/SummaryCard';
 import Button from '../../components/UI/Button';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
@@ -33,8 +33,8 @@ export default function SummaryReport() {
         <div><label className="label">ถึงวันที่</label><input type="date" className="input" value={to} onChange={e => setTo(e.target.value)} /></div>
         <Button onClick={() => setApplied({ from, to })}>แสดงข้อมูล</Button>
         <div className="ml-auto flex gap-2">
-          <a href={`/api/reports/summary/excel?from=${applied.from}&to=${applied.to}`} download className="btn-secondary btn text-small">Export Excel</a>
-          <a href={`/api/reports/summary/pdf?from=${applied.from}&to=${applied.to}`} download className="btn-primary btn text-small">Export PDF</a>
+          <button onClick={() => downloadFile('/reports/summary/excel', { from: applied.from, to: applied.to }, 'summary_report.xlsx')} className="btn-secondary btn text-small">Export Excel</button>
+          <button onClick={() => downloadFile('/reports/summary/pdf', { from: applied.from, to: applied.to }, 'summary_report.pdf')} className="btn-primary btn text-small">Export PDF</button>
         </div>
       </div>
 

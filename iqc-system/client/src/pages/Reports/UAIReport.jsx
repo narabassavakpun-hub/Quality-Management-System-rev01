@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import api from '../../utils/api';
+import api, { downloadFile } from '../../utils/api';
 import SummaryCard from '../../components/UI/SummaryCard';
 import Badge from '../../components/UI/Badge';
 import Button from '../../components/UI/Button';
@@ -24,7 +24,7 @@ export default function UAIReport() {
         <div><label className="label">ถึงวันที่</label><input type="date" className="input" value={to} onChange={e => setTo(e.target.value)} /></div>
         <Button onClick={() => setApplied({ from, to })}>แสดงข้อมูล</Button>
         <div className="ml-auto flex gap-2">
-          <a href={`/api/reports/uai/excel?from=${applied.from}&to=${applied.to}`} download className="btn-secondary btn text-small">Export Excel</a>
+          <button onClick={() => downloadFile('/reports/uai/excel', { from: applied.from, to: applied.to }, 'uai_report.xlsx')} className="btn-secondary btn text-small">Export Excel</button>
         </div>
       </div>
 

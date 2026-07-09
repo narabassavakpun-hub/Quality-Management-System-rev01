@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../contexts/AuthContext';
-import { NAV_ITEMS } from '../../utils/rolePermissions';
+import { NAV_ITEMS, matchesChild } from '../../utils/rolePermissions';
 import api from '../../utils/api';
 import Modal from '../UI/Modal';
 import Button from '../UI/Button';
+import logoWindowAsia from '../../assets/logo-window-asia.png';
 
 const Icons = {
   home:     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>,
@@ -25,7 +26,19 @@ const Icons = {
   chat:     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>,
   checkin:  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>,
   users:    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>,
+  log:      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg>,
+  kpi:      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>,
+  grid:     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>,
+  pie:      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" /></svg>,
+  pencil:   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>,
+  inbox:    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg>,
+  factory:  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21h18M4 21V10l5 3V10l5 3V8l5 3v10M9 21v-4h2v4" /></svg>,
+  clipboard:<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>,
   chevron:  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>,
+  plus:     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>,
+  search:   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 11A6 6 0 105 11a6 6 0 0012 0z" /></svg>,
+  warning:  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg>,
+  list:     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>,
 };
 
 function ChangePasswordModal({ open, onClose }) {
@@ -121,6 +134,14 @@ function ChangePasswordModal({ open, onClose }) {
   );
 }
 
+// หากลุ่มเดียวที่ children ตรงกับ path ปัจจุบัน (มีได้สูงสุด 1 กลุ่มถ้า path ไม่ซ้อนกันเอง) — matchesChild
+// (utils/rolePermissions.js) เคารพ child.end กัน path ซ้อนกันข้ามกลุ่ม (เช่น '/fg-production' vs
+// '/fg-production/material-defects')
+function findOpenGroupPath(pathname, items) {
+  const match = items.find(item => item.children?.some(c => matchesChild(pathname, c)));
+  return match ? match.path : null;
+}
+
 function IssueTalkBadge({ count }) {
   if (!count) return null;
   return (
@@ -147,35 +168,31 @@ export default function Sidebar({ collapsed, onToggle }) {
   });
   const issueTalkUnread = unreadData?.total ?? 0;
 
-  // auto-expand groups that contain the current path
-  const defaultOpen = new Set(
-    visibleItems
-      .filter(item => item.children?.some(c => location.pathname.startsWith(c.path)))
-      .map(item => item.path)
-  );
-  const [openGroups, setOpenGroups] = useState(defaultOpen);
+  // auto-expand เฉพาะกลุ่มที่ path ปัจจุบันอยู่จริง (accordion — เปิดได้ทีละกลุ่มเท่านั้น)
+  const [openGroups, setOpenGroups] = useState(() => {
+    const p = findOpenGroupPath(location.pathname, visibleItems);
+    return p ? new Set([p]) : new Set();
+  });
 
   useEffect(() => {
-    visibleItems.forEach(item => {
-      if (item.children?.some(c => location.pathname.startsWith(c.path))) {
-        setOpenGroups(prev => new Set([...prev, item.path]));
-      }
-    });
+    const p = findOpenGroupPath(location.pathname, visibleItems);
+    setOpenGroups(p ? new Set([p]) : new Set());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
 
+  // accordion: คลิกกลุ่มที่ปิดอยู่ → เปิดกลุ่มนั้นกลุ่มเดียว (ปิดกลุ่มอื่นทั้งหมด); คลิกกลุ่มที่เปิดอยู่ซ้ำ → ปิด
   function toggleGroup(path) {
-    setOpenGroups(prev => {
-      const next = new Set(prev);
-      next.has(path) ? next.delete(path) : next.add(path);
-      return next;
-    });
+    setOpenGroups(prev => (prev.has(path) ? new Set() : new Set([path])));
   }
 
   return (
-    <aside className={`bg-primary flex flex-col h-full transition-all duration-200 ${collapsed ? 'w-0 overflow-hidden' : 'w-60'}`}>
-      <div className="px-4 py-4 border-b border-white/10">
-        <div className="text-white font-bold text-h3">IQC System</div>
-        <div className="text-white/60 text-small mt-0.5">{user?.full_name}</div>
+    <aside className={`brand-gradient flex flex-col h-full transition-all duration-200 ${collapsed ? 'w-0 overflow-hidden' : 'w-60'}`}>
+      <div className="px-4 py-4 border-b border-white/10 flex items-center gap-2.5">
+        <img src={logoWindowAsia} alt="Window Asia" className="w-9 h-9 rounded-full flex-shrink-0 shadow" />
+        <div className="min-w-0">
+          <div className="text-white font-bold text-h3 truncate">Window Asia</div>
+          <div className="text-white/60 text-small truncate">{user?.full_name}</div>
+        </div>
       </div>
 
       <nav className="flex-1 py-2 overflow-y-auto">
@@ -199,7 +216,7 @@ export default function Sidebar({ collapsed, onToggle }) {
 
           // Group with children
           const isGroupOpen = openGroups.has(item.path);
-          const isGroupActive = item.children.some(c => location.pathname.startsWith(c.path));
+          const isGroupActive = item.children.some(c => matchesChild(location.pathname, c));
 
           return (
             <div key={item.path}>
@@ -216,18 +233,21 @@ export default function Sidebar({ collapsed, onToggle }) {
 
               {isGroupOpen && (
                 <div className="bg-black/20 border-l-2 border-white/20 ml-4">
-                  {item.children.map(child => (
-                    <NavLink
-                      key={child.path}
-                      to={child.path}
-                      className={({ isActive }) =>
-                        `flex items-center gap-2 pl-4 pr-3 py-2.5 text-small transition-colors min-h-[40px] ${isActive ? 'bg-white/20 text-white font-medium' : 'text-white/60 hover:bg-white/10 hover:text-white'}`
-                      }
-                    >
-                      {Icons[child.icon]}
-                      {child.label}
-                    </NavLink>
-                  ))}
+                  {item.children
+                    .filter(child => (!child.roles || child.roles.includes(user?.role)) && (!child.condition || child.condition(user)))
+                    .map(child => (
+                      <NavLink
+                        key={child.path}
+                        to={child.path}
+                        end={child.end === true}
+                        className={({ isActive }) =>
+                          `flex items-center gap-2 pl-4 pr-3 py-2.5 text-small transition-colors min-h-[40px] ${isActive ? 'bg-white/20 text-white font-medium' : 'text-white/60 hover:bg-white/10 hover:text-white'}`
+                        }
+                      >
+                        {Icons[child.icon]}
+                        {child.label}
+                      </NavLink>
+                    ))}
                 </div>
               )}
             </div>

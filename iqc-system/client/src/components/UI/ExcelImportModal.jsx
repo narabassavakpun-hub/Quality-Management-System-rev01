@@ -3,7 +3,7 @@ import api from '../../utils/api';
 import Modal from './Modal';
 import Button from './Button';
 
-const STATUS_BG = { error: 'bg-red-50', warning: 'bg-amber-50', ok: '' };
+const STATUS_BG = { error: 'bg-red-50 dark:bg-red-900', warning: 'bg-amber-50 dark:bg-amber-900', ok: '' };
 
 const Spinner = () => (
   <svg className="w-8 h-8 mx-auto mb-3 animate-spin text-accent" fill="none" viewBox="0 0 24 24">
@@ -82,7 +82,7 @@ export default function ExcelImportModal({ open, onClose, title = 'Import Excel'
               onChange={e => { setFile(e.target.files[0] || null); setPreview(null); setError(''); }}
             />
           </div>
-          {error && <div className="text-danger text-small bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>}
+          {error && <div className="text-danger text-small bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded px-3 py-2">{error}</div>}
           <div className="flex justify-end gap-2 pt-2 border-t border-border">
             <button type="button" onClick={handleClose} className="btn-secondary min-h-[44px] px-4">ยกเลิก</button>
             <Button onClick={handlePreview} disabled={!file}>ตรวจสอบข้อมูล</Button>
@@ -100,21 +100,21 @@ export default function ExcelImportModal({ open, onClose, title = 'Import Excel'
         <div className="space-y-4">
           {/* summary chips */}
           <div className="flex flex-wrap gap-2">
-            <span className="px-2.5 py-1 rounded-full text-small bg-gray-100 text-text font-medium">
+            <span className="px-2.5 py-1 rounded-full text-small bg-gray-100 dark:bg-gray-900 text-text font-medium">
               ทั้งหมด {preview.total} รายการ
             </span>
             {preview.errorCount > 0 && (
-              <span className="px-2.5 py-1 rounded-full text-small bg-red-100 text-danger font-medium">
+              <span className="px-2.5 py-1 rounded-full text-small bg-red-100 dark:bg-red-900 text-danger font-medium">
                 ข้อผิดพลาด {preview.errorCount} รายการ
               </span>
             )}
             {preview.warningCount > 0 && (
-              <span className="px-2.5 py-1 rounded-full text-small bg-amber-100 text-warning font-medium">
+              <span className="px-2.5 py-1 rounded-full text-small bg-amber-100 dark:bg-amber-900 text-warning font-medium">
                 คำเตือน {preview.warningCount} รายการ
               </span>
             )}
             {preview.errorCount === 0 && (
-              <span className="px-2.5 py-1 rounded-full text-small bg-green-100 text-success font-medium">
+              <span className="px-2.5 py-1 rounded-full text-small bg-green-100 dark:bg-green-900 text-success font-medium">
                 พร้อม Import
               </span>
             )}
@@ -156,7 +156,7 @@ export default function ExcelImportModal({ open, onClose, title = 'Import Excel'
             </table>
           </div>
 
-          {error && <div className="text-danger text-small bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>}
+          {error && <div className="text-danger text-small bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded px-3 py-2">{error}</div>}
 
           <div className="flex items-center justify-between pt-2 border-t border-border gap-3 flex-wrap">
             <button

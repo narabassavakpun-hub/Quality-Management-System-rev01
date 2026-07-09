@@ -13,6 +13,19 @@ require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
   }
 })();
 
+// ===== SETTINGS_ENCRYPTION_KEY — เข้ารหัส secret ใน settings table (เช่น ad_secret_key) — CLAUDE.md §24 =====
+// ไม่ fail-fast/exit ตอน boot (ต่างจาก JWT_SECRET) เพราะ AD เป็น feature เสริม — ระบบเดิมที่ไม่ใช้ AD ต้องบูตได้
+// ปกติแม้ไม่ได้ตั้งค่านี้ไว้; ค่านี้จะถูก require จริงแบบ lazy ตอนมีการ save/read secret setting เท่านั้น
+// (server/lib/secretsCrypto.js — โยน error ชัดเจนตอนนั้นแทน)
+(() => {
+  const k = process.env.SETTINGS_ENCRYPTION_KEY || '';
+  if (k && k.length !== 64) {
+    console.warn('[WARN] SETTINGS_ENCRYPTION_KEY ต้องเป็น hex 64 ตัวอักษร (32 bytes) — ค่าปัจจุบันไม่ถูกต้อง');
+  } else if (!k) {
+    console.warn('[WARN] ยังไม่ได้ตั้ง SETTINGS_ENCRYPTION_KEY — ต้องตั้งก่อนใช้งาน Active Directory settings');
+  }
+})();
+
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
@@ -64,11 +77,13 @@ app.get(['/api/health', '/healthz'], (req, res) => {
 // ===== Rate limiting (DEVMORE H2 — ตาม CLAUDE.md 3.4) =====
 app.use('/api', rateLimit({ windowMs: 60 * 1000, max: 200, standardHeaders: true, legacyHeaders: false }));
 app.use('/api/supplier', rateLimit({ windowMs: 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false }));
+app.use('/api/exports', rateLimit({ windowMs: 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false }));
 
 // Serve uploaded files (DEVMORE C3 — hardened)
 // - nosniff: บังคับ browser เคารพ Content-Type ไม่ MIME-sniff
 // - นามสกุลที่ execute ได้ (html/svg/js/...) → force download + octet-stream กัน Stored XSS
 const UNSAFE_INLINE_EXT = /\.(html?|svg|xml|js|mjs|xhtml|shtml|php|css)$/i;
+const UPLOADS_DIR = path.join(__dirname, '../uploads');
 app.use('/uploads', (req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   if (UNSAFE_INLINE_EXT.test(req.path)) {
@@ -76,7 +91,24 @@ app.use('/uploads', (req, res, next) => {
     res.setHeader('Content-Disposition', 'attachment');
   }
   next();
-}, express.static(path.join(__dirname, '../uploads')));
+}, express.static(UPLOADS_DIR), async (req, res) => {
+  // ไฟล์ไม่มีบน local disk (เช่น หลัง restore-on-boot ที่ตั้งใจไม่ eager-restore uploads — ดู DEPLOYMENT.md /
+  // server/lib/restoreService.js) — lazy fetch-through จาก R2 แล้ว cache ไว้ local ต่อให้ครั้งถัดไปเจอเลย
+  try {
+    const r2 = require('./lib/r2Client');
+    if (req.method !== 'GET' || !r2.isConfigured()) return res.status(404).end();
+    const rel = decodeURIComponent(req.path).replace(/^\/+/, '');
+    if (!rel || rel.includes('..')) return res.status(400).end();
+    const localPath = path.join(UPLOADS_DIR, rel);
+    const tmpPath = `${localPath}.fetch-tmp-${Date.now()}`;
+    fs.mkdirSync(path.dirname(localPath), { recursive: true });
+    await r2.getObjectToFile(`backups/uploads/${rel}`, tmpPath);
+    fs.renameSync(tmpPath, localPath);
+    res.sendFile(localPath);
+  } catch (e) {
+    res.status(404).end();
+  }
+});
 
 // ===== SSE (Server-Sent Events) =====
 // DEVMORE M12 — เก็บเป็น Set ต่อ user รองรับหลายแท็บ + ไม่ leak connection เดิม
@@ -179,7 +211,7 @@ app.post('/api/admin/settings/telegram/test', ...adminOnly, async (req, res) => 
 });
 
 // ===== PDF TEMPLATE SETTINGS =====
-const PDF_SETTING_KEYS = ['company_name','company_address','company_logo','ncr_img_cols','ncr_img_max_width','uai_img_cols','uai_img_max_width'];
+const PDF_SETTING_KEYS = ['company_name','company_address','company_logo','ncr_img_cols','ncr_img_max_width','uai_img_cols','uai_img_max_height','uai_img_inbox_max_height'];
 
 app.get('/api/admin/settings/pdf-template', ...adminOnly, (req, res) => {
   const result = {};
@@ -189,7 +221,7 @@ app.get('/api/admin/settings/pdf-template', ...adminOnly, (req, res) => {
 });
 
 app.post('/api/admin/settings/pdf-template', ...adminOnly, (req, res) => {
-  const allowed = ['company_name','company_address','ncr_img_cols','ncr_img_max_width','uai_img_cols','uai_img_max_width'];
+  const allowed = ['company_name','company_address','ncr_img_cols','ncr_img_max_width','uai_img_cols','uai_img_max_height','uai_img_inbox_max_height'];
   for (const k of allowed) {
     if (req.body[k] !== undefined) db.setSetting(k, req.body[k]);
   }
@@ -220,20 +252,26 @@ app.delete('/api/admin/settings/logo', ...adminOnly, (req, res) => {
 
 // ===== ADMIN USERS =====
 app.get('/api/admin/users', ...adminOnly, (req, res) => {
-  const rows = db.prepare('SELECT id, username, full_name, role, qc_station, telegram_chat_id, is_active, created_at FROM users ORDER BY created_at').all();
+  const rows = db.prepare('SELECT id, username, full_name, role, qc_station, telegram_chat_id, auth_provider, is_active, created_at FROM users ORDER BY created_at').all();
   res.json(rows);
 });
 
+const VALID_AUTH_PROVIDERS = new Set(['local', 'ad']);
+
 app.post('/api/admin/users', ...adminOnly, (req, res) => {
   const bcrypt = require('bcryptjs');
-  const { username, password, full_name, role, qc_station, telegram_chat_id } = req.body;
+  const { username, password, full_name, role, qc_station, telegram_chat_id, auth_provider } = req.body;
   if (!username || !password || !full_name || !role) return res.status(400).json({ error: 'กรุณากรอกข้อมูลครบ' });
-  if (password.length < 8) return res.status(400).json({ error: 'รหัสผ่านต้องยาวอย่างน้อย 8 ตัว' });
+  const minLength = parseInt(db.getSetting('password_min_length'), 10) || 8;
+  if (password.length < minLength) return res.status(400).json({ error: `รหัสผ่านต้องยาวอย่างน้อย ${minLength} ตัว` });
+  if (auth_provider !== undefined && !VALID_AUTH_PROVIDERS.has(auth_provider)) {
+    return res.status(400).json({ error: 'auth_provider ไม่ถูกต้อง' });
+  }
   try {
-    const hash = bcrypt.hashSync(password, 12);
-    const result = db.prepare('INSERT INTO users (username, password_hash, full_name, role, qc_station, telegram_chat_id) VALUES (?, ?, ?, ?, ?, ?)').run(username, hash, full_name, role, qc_station || null, telegram_chat_id ? String(telegram_chat_id).trim() : null);
-    db.auditLog('users', result.lastInsertRowid, 'CREATE', null, { username, full_name, role, qc_station, telegram_chat_id }, req.user.id, req.ip);
-    res.json(db.prepare('SELECT id, username, full_name, role, qc_station, telegram_chat_id, is_active, created_at FROM users WHERE id = ?').get(result.lastInsertRowid));
+    const hash = bcrypt.hashSync(password, parseInt(process.env.BCRYPT_ROUNDS) || 12);
+    const result = db.prepare('INSERT INTO users (username, password_hash, full_name, role, qc_station, telegram_chat_id, auth_provider) VALUES (?, ?, ?, ?, ?, ?, ?)').run(username, hash, full_name, role, qc_station || null, telegram_chat_id ? String(telegram_chat_id).trim() : null, auth_provider || 'local');
+    db.auditLog('users', result.lastInsertRowid, 'CREATE', null, { username, full_name, role, qc_station, telegram_chat_id, auth_provider }, req.user.id, req.ip);
+    res.json(db.prepare('SELECT id, username, full_name, role, qc_station, telegram_chat_id, auth_provider, is_active, created_at FROM users WHERE id = ?').get(result.lastInsertRowid));
   } catch (e) {
     if (e.message.includes('UNIQUE')) return res.status(400).json({ error: 'username ซ้ำ' });
     res.status(500).json({ error: e.message });
@@ -241,18 +279,27 @@ app.post('/api/admin/users', ...adminOnly, (req, res) => {
 });
 
 app.patch('/api/admin/users/:id', ...adminOnly, (req, res) => {
-  const { full_name, role, qc_station, telegram_chat_id } = req.body;
+  const { username, full_name, role, qc_station, telegram_chat_id, auth_provider } = req.body;
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!user) return res.status(404).json({ error: 'ไม่พบ user' });
-  db.prepare('UPDATE users SET full_name=?, role=?, qc_station=?, telegram_chat_id=? WHERE id=?').run(
+  if (username && username !== user.username) {
+    const exists = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(username, req.params.id);
+    if (exists) return res.status(409).json({ error: `Username "${username}" ถูกใช้งานแล้ว` });
+  }
+  if (auth_provider !== undefined && !VALID_AUTH_PROVIDERS.has(auth_provider)) {
+    return res.status(400).json({ error: 'auth_provider ไม่ถูกต้อง' });
+  }
+  db.prepare('UPDATE users SET username=?, full_name=?, role=?, qc_station=?, telegram_chat_id=?, auth_provider=? WHERE id=?').run(
+    username || user.username,
     full_name || user.full_name,
     role || user.role,
     qc_station !== undefined ? (qc_station || null) : user.qc_station,
     telegram_chat_id !== undefined ? (telegram_chat_id ? String(telegram_chat_id).trim() : null) : user.telegram_chat_id,
+    auth_provider !== undefined ? auth_provider : user.auth_provider,
     req.params.id
   );
-  db.auditLog('users', req.params.id, 'UPDATE', user, { full_name, role, qc_station, telegram_chat_id }, req.user.id, req.ip);
-  res.json(db.prepare('SELECT id, username, full_name, role, qc_station, telegram_chat_id, is_active, created_at FROM users WHERE id = ?').get(req.params.id));
+  db.auditLog('users', req.params.id, 'UPDATE', user, { username, full_name, role, qc_station, telegram_chat_id, auth_provider }, req.user.id, req.ip);
+  res.json(db.prepare('SELECT id, username, full_name, role, qc_station, telegram_chat_id, auth_provider, is_active, created_at FROM users WHERE id = ?').get(req.params.id));
 });
 
 // ทดสอบส่งข้อความเข้า Telegram ส่วนตัวของ user คนนั้น — ให้ admin verify chat id ที่กรอก
@@ -308,8 +355,9 @@ app.post('/api/admin/settings/attendance', ...adminOnly, (req, res) => {
 app.post('/api/admin/users/:id/reset-password', ...adminOnly, (req, res) => {
   const bcrypt = require('bcryptjs');
   const { new_password } = req.body;
-  if (!new_password || new_password.length < 8) return res.status(400).json({ error: 'รหัสผ่านต้องยาวอย่างน้อย 8 ตัว' });
-  const hash = bcrypt.hashSync(new_password, 12);
+  const minLength = parseInt(db.getSetting('password_min_length'), 10) || 8;
+  if (!new_password || new_password.length < minLength) return res.status(400).json({ error: `รหัสผ่านต้องยาวอย่างน้อย ${minLength} ตัว` });
+  const hash = bcrypt.hashSync(new_password, parseInt(process.env.BCRYPT_ROUNDS) || 12);
   db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(hash, req.params.id);
   db.prepare('INSERT INTO password_reset_logs (user_id, reset_by) VALUES (?, ?)').run(req.params.id, req.user.id);
   db.auditLog('users', req.params.id, 'RESET_PASSWORD', null, null, req.user.id, req.ip);
@@ -427,6 +475,28 @@ app.get('/api/admin/stats', ...adminOnly, (req, res) => {
   });
 });
 
+app.delete('/api/admin/users/:id', ...adminOnly, (req, res) => {
+  const id = Number(req.params.id);
+  if (id === req.user.id) return res.status(400).json({ error: 'ไม่สามารถลบตัวเองได้' });
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  if (!user) return res.status(404).json({ error: 'ไม่พบ user' });
+  // ป้องกันลบ admin คนสุดท้าย
+  if (user.role === 'admin') {
+    const adminCount = db.prepare("SELECT COUNT(*) AS c FROM users WHERE role='admin' AND is_active=1").get().c;
+    if (adminCount <= 1) return res.status(400).json({ error: 'ไม่สามารถลบ Admin คนสุดท้ายได้' });
+  }
+  try {
+    db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    db.auditLog('users', id, 'DELETE', user, null, req.user.id, req.ip);
+    res.json({ ok: true });
+  } catch (e) {
+    if (e.message.includes('FOREIGN KEY') || e.message.includes('RESTRICT')) {
+      return res.status(400).json({ error: 'ผู้ใช้นี้มีข้อมูลในระบบ (บิล, NCR, หรืออื่นๆ) — กรุณาปิดใช้งานแทนการลบ' });
+    }
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.patch('/api/admin/users/:id/toggle', ...adminOnly, (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!user) return res.status(404).json({ error: 'ไม่พบ user' });
@@ -437,27 +507,60 @@ app.patch('/api/admin/users/:id/toggle', ...adminOnly, (req, res) => {
 });
 
 app.get('/api/admin/audit-logs', ...adminOnly, (req, res) => {
-  const { limit = 50, offset = 0 } = req.query;
-  const rows = db.prepare(
-    'SELECT al.*, u.username, u.full_name FROM audit_logs al LEFT JOIN users u ON u.id = al.user_id ORDER BY al.created_at DESC LIMIT ? OFFSET ?'
-  ).all(+limit, +offset);
-  const total = db.prepare('SELECT COUNT(*) as c FROM audit_logs').get().c;
-  res.json({ data: rows, total, limit: +limit, offset: +offset });
+  const { q = '', action = '', table_name = '', from = '', to = '', page = 1, limit = 30 } = req.query;
+  const offset = (Math.max(1, +page) - 1) * +limit;
+
+  const conds = []; const params = [];
+  if (q.trim()) {
+    conds.push('(u.username LIKE ? OR u.full_name LIKE ?)');
+    params.push(`%${q}%`, `%${q}%`);
+  }
+  if (action)     { conds.push('al.action = ?');     params.push(action); }
+  if (table_name) { conds.push('al.table_name = ?'); params.push(table_name); }
+  if (from)       { conds.push("al.created_at >= ?"); params.push(from + ' 00:00:00'); }
+  if (to)         { conds.push("al.created_at <= ?"); params.push(to   + ' 23:59:59'); }
+
+  const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+  const base = `FROM audit_logs al LEFT JOIN users u ON u.id = al.user_id ${where}`;
+
+  const rows  = db.prepare(`SELECT al.*, u.username, u.full_name ${base} ORDER BY al.created_at DESC LIMIT ? OFFSET ?`).all(...params, +limit, offset);
+  const total = db.prepare(`SELECT COUNT(*) as c ${base}`).get(...params).c;
+
+  // dropdown options สำหรับ filter
+  const actions = db.prepare('SELECT DISTINCT action FROM audit_logs ORDER BY action').all().map(r => r.action);
+  const tables  = db.prepare('SELECT DISTINCT table_name FROM audit_logs ORDER BY table_name').all().map(r => r.table_name);
+
+  res.json({ data: rows, total, page: +page, limit: +limit, actions, tables });
 });
 
 // ===== ROUTES =====
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/admin/system-settings', require('./routes/systemSettings'));
 app.use('/api/master', require('./routes/master'));
 app.use('/api/bills', require('./routes/bills'));
 app.use('/api/ncr', require('./routes/ncr'));
 app.use('/api/supplier', require('./routes/supplier'));
 app.use('/api/uai', require('./routes/uai'));
+app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/reports', require('./routes/reports'));
 app.use('/api/delivery', require('./routes/delivery'));
 app.use('/api/holidays', require('./routes/holidays'));
 app.use('/api/issue-talk', require('./routes/issue-talk'));
 app.use('/api/attendance', require('./routes/attendance'));
+app.use('/api/kpi', require('./routes/kpi'));
+app.use('/api/ipqc/master', require('./routes/ipqcMaster'));
+app.use('/api/ipqc-inspection', require('./routes/ipqcInspection'));
+app.use('/api/ipncr', require('./routes/ipncr'));
+app.use('/api/pro-code-sap', require('./routes/proCodeSap'));
+app.use('/api/pd-plan', require('./routes/pdPlan'));
+app.use('/api/fg-production',  require('./routes/fgProduction'));
+app.use('/api/fg-master',      require('./routes/fgMaster'));
+app.use('/api/fg-defect',      require('./routes/fgDefect'));
+app.use('/api/fg-fncp',        require('./routes/fgFncp'));
+app.use('/api/fncp-response',  require('./routes/fgFncpResponse')); // public — no auth
+app.use('/api/fg-fuai',            require('./routes/fgFuai'));
+app.use('/api/fg-material-defects', require('./routes/fgMaterialDefects'));
 app.use('/api', require('./routes/exports'));
 
 // Serve React build in production
@@ -498,6 +601,14 @@ function archiveOldNotifications() {
 archiveOldNotifications();
 setInterval(archiveOldNotifications, 24 * 60 * 60 * 1000).unref();
 
+// ===== Backup ไป Cloudflare R2 (optional — no-op ถ้าไม่ได้ตั้ง R2_* env, ดู DEPLOYMENT.md) =====
+// รอบถี่ (~10 นาที) แทนที่จะเป็นรอบเดียว/วัน เพราะ container ephemeral (เช่น Render free tier ที่ไม่มี
+// persistent disk) หายได้จาก sleep/wake, maintenance restart, OOM-kill — ไม่ใช่แค่ตอน redeploy เท่านั้น
+// runFullCycle() กิน error ของทุกขั้นตอนย่อยเอง (ส่ง Telegram alert แทน) จึงไม่ทำให้ setInterval พัง
+const backupService = require('./lib/backupService');
+backupService.runFullCycle().catch(e => console.error('[backup] initial cycle error:', e.message));
+setInterval(() => backupService.runFullCycle().catch(e => console.error('[backup] cycle error:', e.message)), 10 * 60 * 1000).unref();
+
 const server = app.listen(PORT, () => {
   console.log(`IQC Server running on port ${PORT}`);
 });
@@ -521,6 +632,7 @@ function shutdown(signal) {
 
   server.close(async () => {
     try { await require('./routes/exports').closeBrowser?.(); } catch {}  // ปิด Chromium singleton
+    try { await backupService.runHotBackup(); } catch {}                  // best-effort backup ก่อนปิด (bound ด้วย force timer ด้านบน)
     try { db.close(); } catch {}                                          // flush WAL + ปิด DB
     clearTimeout(force);
     console.log('[shutdown] ปิดเรียบร้อย');

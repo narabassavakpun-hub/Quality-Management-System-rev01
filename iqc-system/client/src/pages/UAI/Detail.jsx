@@ -1,21 +1,23 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import api from '../../utils/api';
+import api, { downloadFile } from '../../utils/api';
 import Badge from '../../components/UI/Badge';
 import Button from '../../components/UI/Button';
 import Modal from '../../components/UI/Modal';
 import SignatureCanvas from '../../components/Signature/SignatureCanvas';
+import ImageUploadPair from '../../components/UI/ImageUploadPair';
+import { ROLE_LABELS } from '../../utils/rolePermissions';
 
 const SIGN_STEPS = [
-  { status: 'uai_pending_purchasing', role: 'purchasing', label: 'จัดซื้อ', type: 'ผู้ออกเอกสาร' },
-  { status: 'uai_pending_cco', role: 'cco', label: 'CCO', type: 'อนุมัติ' },
-  { status: 'uai_pending_cmo', role: 'cmo', label: 'CMO', type: 'อนุมัติ' },
-  { status: 'uai_pending_cpo', role: 'cpo', label: 'CPO', type: 'อนุมัติ' },
-  { status: 'uai_pending_qc_ack', role: 'qc_manager', label: 'QC Manager', type: 'รับทราบ' },
-  { status: 'uai_pending_production_ack', role: 'production_manager', label: 'ผู้จัดการผลิต', type: 'รับทราบ' },
-  { status: 'uai_pending_qmr_ack', role: 'qmr', label: 'QMR', type: 'รับทราบ' },
+  { status: 'uai_pending_purchasing', role: 'purchasing', label: ROLE_LABELS.purchasing, type: 'ผู้ออกเอกสาร' },
+  { status: 'uai_pending_cco', role: 'cco', label: ROLE_LABELS.cco, type: 'อนุมัติ' },
+  { status: 'uai_pending_cmo', role: 'cmo', label: ROLE_LABELS.cmo, type: 'อนุมัติ' },
+  { status: 'uai_pending_cpo', role: 'cpo', label: ROLE_LABELS.cpo, type: 'อนุมัติ' },
+  { status: 'uai_pending_qc_ack', role: 'qc_manager', label: ROLE_LABELS.qc_manager, type: 'รับทราบ' },
+  { status: 'uai_pending_production_ack', role: 'production_manager', label: ROLE_LABELS.production_manager, type: 'รับทราบ' },
+  { status: 'uai_pending_qmr_ack', role: 'qmr', label: ROLE_LABELS.qmr, type: 'รับทราบ' },
 ];
 
 const STATUS_ORDER = [
@@ -32,16 +34,6 @@ const ACTION_LABELS = {
   rejected: 'ไม่อนุมัติ (C-Level)',
 };
 
-const ROLE_LABELS = {
-  qc_manager: 'QC Manager',
-  purchasing: 'จัดซื้อ',
-  cco: 'CCO',
-  cmo: 'CMO',
-  cpo: 'CPO',
-  production_manager: 'ผู้จัดการผลิต',
-  qmr: 'QMR',
-};
-
 function isStepDone(step, uaiStatus) {
   if (uaiStatus === 'uai_rejected_by_exec') return false; // handled separately per-step
   const currentIdx = STATUS_ORDER.indexOf(uaiStatus);
@@ -56,7 +48,10 @@ function isStepActive(step, uaiStatus) {
 export default function UAIDetail() {
   const { id } = useParams();
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
   const qc = useQueryClient();
+  const focusedRef = useRef(false);
   const [sigOpen, setSigOpen] = useState(false);
   const [sigComment, setSigComment] = useState('');
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -88,6 +83,17 @@ export default function UAIDetail() {
       });
     }
   }, [uai?.id, uai?.status, user?.role]);
+
+  // มาจากคลิกกระดิ่งแจ้งเตือน — เลื่อนไปช่องลงนามของ user คนนี้แล้ว focus ปุ่มอนุมัติ/ไม่อนุมัติทันที
+  useEffect(() => {
+    if (!uai || focusedRef.current || !location.state?.focusSign || !user?.role) return;
+    focusedRef.current = true;
+    const el = document.getElementById(`sig-step-${user.role}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      (el.querySelector('[data-approve-btn]') || el.querySelector('button'))?.focus();
+    }
+  }, [uai, location.state, user?.role]);
 
   const sign = useMutation({
     mutationFn: ({ signature_image, comment }) => api.post(`/uai/${id}/sign`, { signature_image, comment }),
@@ -157,6 +163,13 @@ export default function UAIDetail() {
 
   return (
     <div className="space-y-4">
+      <button onClick={() => navigate(-1)}
+        className="inline-flex items-center gap-1.5 text-muted hover:text-text text-small min-h-[44px] -ml-1">
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+        </svg>
+        กลับ
+      </button>
       <div className="page-header flex-wrap gap-3">
         <div>
           <h1 className="page-title">{uai.uai_code}</h1>
@@ -167,17 +180,10 @@ export default function UAIDetail() {
         </div>
         <div className="flex gap-2 items-center flex-wrap">
           {canReview && <Button variant="primary" onClick={() => setReviewOpen(true)}>ตรวจสอบ UAI</Button>}
-          {isMyTurn && purchasingMissingDetails && (
-            <span className="text-small text-warning font-medium">กรุณากรอกข้อมูลด้านล่างก่อนลงนาม</span>
-          )}
-          {canRejectExec && (
-            <Button variant="danger" onClick={() => setRejectExecOpen(true)}>ไม่อนุมัติ</Button>
-          )}
-          {canSign && <Button variant="success" onClick={() => setSigOpen(true)}>อนุมัติ (ลงนาม)</Button>}
           {uai.status === 'uai_completed' && (
             <>
-              <a href={`/api/uai/${id}/excel`} download className="btn-secondary btn text-small">Export Excel</a>
-              <a href={`/api/uai/${id}/pdf`} download className="btn-primary btn text-small">Export PDF</a>
+              <button onClick={() => downloadFile(`/uai/${id}/excel`, {}, `${uai.uai_code || id}.xlsx`)} className="btn-secondary btn text-small">Export Excel</button>
+              <button onClick={() => downloadFile(`/uai/${id}/pdf`, {}, `${uai.uai_code || id}.pdf`)} className="btn-primary btn text-small">Export PDF</button>
             </>
           )}
         </div>
@@ -216,21 +222,21 @@ export default function UAIDetail() {
                 )}
                 <div className="grid grid-cols-4 gap-2 text-center text-small mb-2">
                   <div className="bg-surface border border-border rounded p-1.5">
-                    <div className="text-muted text-[10px]">รับเข้า</div>
+                    <div className="text-muted text-[12px]">รับเข้า</div>
                     <div className="font-mono font-bold text-text">{item.qty_received}</div>
                   </div>
                   <div className="bg-surface border border-border rounded p-1.5">
-                    <div className="text-muted text-[10px]">ตรวจสอบ</div>
+                    <div className="text-muted text-[12px]">ตรวจสอบ</div>
                     <div className="font-mono font-bold text-text">{item.qty_sampled}</div>
                   </div>
-                  <div className="bg-green-50 border border-green-200 rounded p-1.5">
-                    <div className="text-muted text-[10px]">ผ่าน</div>
+                  <div className="bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-700 rounded p-1.5">
+                    <div className="text-muted text-[12px]">ผ่าน</div>
                     <div className="font-mono font-bold text-success">
                       {item.qty_passed != null ? item.qty_passed : item.qty_received - item.qty_failed}
                     </div>
                   </div>
-                  <div className="bg-red-50 border border-red-200 rounded p-1.5">
-                    <div className="text-muted text-[10px]">ไม่ผ่าน</div>
+                  <div className="bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded p-1.5">
+                    <div className="text-muted text-[12px]">ไม่ผ่าน</div>
                     <div className="font-mono font-bold text-danger">{item.qty_failed}</div>
                   </div>
                 </div>
@@ -241,7 +247,7 @@ export default function UAIDetail() {
                 )}
                 {item.bill_item_images?.length > 0 && (
                   <div className="mt-2 pt-2 border-t border-border">
-                    <div className="text-[11px] text-muted mb-1">รูปภาพงานเสีย ({item.bill_item_images.length} รูป)</div>
+                    <div className="text-[12px] text-muted mb-1">รูปภาพงานเสีย ({item.bill_item_images.length} รูป)</div>
                     <div className="flex flex-wrap gap-1">
                       {item.bill_item_images.map((img, j) => (
                         <a key={j} href={`/uploads/bill-items/${img.file_path}`} target="_blank" rel="noreferrer">
@@ -355,18 +361,7 @@ export default function UAIDetail() {
             <div className="flex items-center justify-between mb-2">
               <p className="text-small font-semibold text-primary">รูปภาพประกอบจากผู้ผลิต</p>
               {canEditDetails && (
-                <label className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-border cursor-pointer hover:border-accent transition-colors text-small text-muted">
-                  {uploadingImg ? 'กำลังอัปโหลด...' : (
-                    <>
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                      </svg>
-                      เพิ่มรูป
-                    </>
-                  )}
-                  <input type="file" accept="image/*" multiple className="hidden"
-                    disabled={uploadingImg} onChange={handleUploadImages} />
-                </label>
+                <ImageUploadPair disabled={uploadingImg} onChange={handleUploadImages} />
               )}
             </div>
             {uai.images?.length > 0 ? (
@@ -379,7 +374,7 @@ export default function UAIDetail() {
                     </a>
                     {canEditDetails && (
                       <button onClick={() => deleteImage(img.id)}
-                        className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-danger text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                        className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-danger text-white text-[12px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow">
                         ×
                       </button>
                     )}
@@ -407,35 +402,51 @@ export default function UAIDetail() {
             const isRejectedDoc = uai.status === 'uai_rejected_by_exec';
             const done = isStepDone(step, uai.status) || uai.status === 'uai_completed';
             const active = isStepActive(step, uai.status);
+            const isMine = active && step.role === user?.role;
             const sig = uai.signatures?.find(s => s.role === step.role && s.signature_image);
             const rejSig = isRejectedDoc && uai.signatures?.find(s => s.role === step.role && s.action === 'rejected');
 
             let cardClass = 'border-dashed border-border bg-bg';
-            if (rejSig) cardClass = 'border-danger bg-red-50';
-            else if (active && step.role === user?.role) cardClass = 'border-success bg-green-50';
+            if (rejSig) cardClass = 'border-danger bg-red-50 dark:bg-red-900';
+            else if (isMine) cardClass = 'border-success bg-green-50 dark:bg-green-900';
             else if (done || sig) cardClass = 'border-border';
 
             return (
-              <div key={step.role} className={`border rounded-lg p-3 text-center ${cardClass}`}>
+              <div key={step.role} id={`sig-step-${step.role}`} className={`border rounded-lg p-3 text-center flex flex-col justify-center min-h-[150px] ${cardClass}`}>
                 <div className="text-small font-medium text-primary">{i + 1}. {step.label}</div>
-                <div className="text-[11px] text-muted mb-2">{step.type}</div>
+                <div className="text-[12px] text-muted mb-2">{step.type}</div>
                 {rejSig ? (
                   <div>
-                    <div className="text-[11px] font-semibold text-danger mb-1">ไม่อนุมัติ</div>
-                    <div className="text-[10px] text-muted">{rejSig.full_name}</div>
-                    <div className="text-[10px] text-muted">{new Date(rejSig.signed_at + 'Z').toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok' })}</div>
-                    {rejSig.comment && <div className="text-[10px] text-danger mt-1 italic">"{rejSig.comment}"</div>}
+                    <div className="text-[12px] font-semibold text-danger mb-1">ไม่อนุมัติ</div>
+                    <div className="text-[12px] text-muted">{rejSig.full_name}</div>
+                    <div className="text-[12px] text-muted">{new Date(rejSig.signed_at + 'Z').toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok' })}</div>
+                    {rejSig.comment && <div className="text-[12px] text-danger mt-1 italic break-words whitespace-pre-wrap">"{rejSig.comment}"</div>}
                   </div>
                 ) : sig ? (
                   <div>
                     <img src={sig.signature_image} alt="sig" className="max-w-full max-h-16 mx-auto object-contain border border-border rounded" />
-                    <div className="text-[10px] text-muted mt-1">{sig.full_name}</div>
-                    <div className="text-[10px] text-muted">{new Date(sig.signed_at + 'Z').toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok' })}</div>
-                    {sig.comment && <div className="text-[10px] text-accent mt-1 italic">"{sig.comment}"</div>}
+                    <div className="text-[12px] text-muted mt-1">{sig.full_name}</div>
+                    <div className="text-[12px] text-muted">{new Date(sig.signed_at + 'Z').toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok' })}</div>
+                    {sig.comment && <div className="text-[12px] text-accent mt-1 italic break-words whitespace-pre-wrap">"{sig.comment}"</div>}
                   </div>
                 ) : (
-                  <div className={`min-h-16 flex items-center justify-center text-[11px] ${active ? 'text-success' : 'text-muted'}`}>
-                    {active && step.role === user?.role ? 'รอลงนามของคุณ' : active ? 'รอลงนาม' : 'รอขั้นก่อนหน้า'}
+                  <div className={`min-h-16 flex flex-col items-center justify-center gap-1.5 text-[12px] ${active ? 'text-success' : 'text-muted'}`}>
+                    {isMine ? (
+                      (canSign || canRejectExec) ? (
+                        <div className="flex flex-col gap-1.5 w-full">
+                          {canRejectExec && (
+                            <Button variant="danger" onClick={() => setRejectExecOpen(true)} className="text-small py-1 w-full">ไม่อนุมัติ</Button>
+                          )}
+                          {canSign && (
+                            <Button variant="success" data-approve-btn="true" onClick={() => setSigOpen(true)} className="text-small py-1 w-full">
+                              {step.type === 'รับทราบ' ? 'รับทราบ (ลงนาม)' : 'อนุมัติ (ลงนาม)'}
+                            </Button>
+                          )}
+                        </div>
+                      ) : purchasingMissingDetails ? (
+                        <span className="text-warning font-medium">กรุณากรอกข้อมูลด้านล่างก่อนลงนาม</span>
+                      ) : 'รอลงนามของคุณ'
+                    ) : active ? 'รอลงนาม' : 'รอขั้นก่อนหน้า'}
                   </div>
                 )}
               </div>
@@ -459,9 +470,9 @@ export default function UAIDetail() {
                     <div className={`text-small font-semibold ${isNeg ? 'text-danger' : 'text-success'}`}>{actionLabel}</div>
                     <div className="text-small text-muted mt-0.5">{roleLabel} — {sig.full_name}</div>
                     {sig.comment && (
-                      <div className="text-small text-muted mt-1 italic bg-bg rounded px-2 py-1">"{sig.comment}"</div>
+                      <div className="text-small text-muted mt-1 italic bg-bg rounded px-2 py-1 break-words whitespace-pre-wrap">"{sig.comment}"</div>
                     )}
-                    <div className="text-[10px] text-muted mt-1">
+                    <div className="text-[12px] text-muted mt-1">
                       {new Date(sig.signed_at + 'Z').toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Bangkok' })}
                     </div>
                   </div>
@@ -501,7 +512,7 @@ export default function UAIDetail() {
       {/* Reject by Exec Modal */}
       <Modal open={rejectExecOpen} onClose={() => { setRejectExecOpen(false); setRejectExecReason(''); }} title="ไม่อนุมัติ UAI" size="sm">
         <div className="space-y-3">
-          <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-small text-danger">
+          <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 text-small text-danger">
             การไม่อนุมัติจะปิดเอกสาร UAI นี้ทันที และ NCR ที่อ้างอิงจะกลับสู่สถานะ "รอผู้ผลิตตอบกลับ" พร้อมแจ้งเตือนผู้ที่เกี่ยวข้องทุกฝ่าย
           </div>
           <div>

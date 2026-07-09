@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../utils/api';
 import Button from '../../components/UI/Button';
 import SearchableSelect from '../../components/UI/SearchableSelect';
+import ImageUploadPair from '../../components/UI/ImageUploadPair';
 
 export default function NCRNew() {
   const navigate = useNavigate();
@@ -78,7 +79,7 @@ export default function NCRNew() {
       </div>
 
       <form onSubmit={e => { e.preventDefault(); setError(''); create.mutate(); }} className="space-y-4 max-w-4xl">
-        {error && <div className="text-danger text-small bg-red-50 px-3 py-2 rounded">{error}</div>}
+        {error && <div className="text-danger text-small bg-red-50 dark:bg-red-900 px-3 py-2 rounded">{error}</div>}
 
         <div className="card space-y-3">
           <div>
@@ -98,14 +99,14 @@ export default function NCRNew() {
               {['major', 'minor'].map(s => (
                 <label key={s} className="flex items-center gap-2 cursor-pointer min-h-[44px]">
                   <input type="radio" name="severity" value={s} checked={severity === s} onChange={() => setSeverity(s)} />
-                  <span className={`badge ${s === 'major' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                  <span className={`badge ${s === 'major' ? 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-200' : 'bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-200'}`}>
                     {s === 'major' ? 'Major — NCR' : 'Minor — NCP'}
                   </span>
                 </label>
               ))}
             </div>
             {severity === 'minor' && (
-              <div className="mt-2 bg-yellow-50 border border-yellow-200 rounded px-3 py-2 text-small text-yellow-800">
+              <div className="mt-2 bg-yellow-50 dark:bg-yellow-900 border border-yellow-200 dark:border-yellow-700 rounded px-3 py-2 text-small text-yellow-800 dark:text-yellow-200">
                 <span className="font-medium">NCP (Non-Conformance Product)</span> — บันทึกภายใน ไม่ส่ง Supplier<br />
                 ปัญหาไม่กระทบกระบวนการผลิตโดยตรง QC Supervisor อนุมัติปิดได้ทันที<br />
                 รหัสเอกสารจะเป็น NCP-{new Date().getFullYear()}-XXXX
@@ -133,7 +134,7 @@ export default function NCRNew() {
                     className={`border rounded-lg overflow-hidden transition-colors ${selected ? 'border-primary' : 'border-border'}`}>
 
                     {/* Header row — checkbox + ชื่อ + qty */}
-                    <label className={`flex items-start gap-3 p-3 cursor-pointer ${selected ? 'bg-blue-50' : 'bg-surface hover:bg-bg'}`}>
+                    <label className={`flex items-start gap-3 p-3 cursor-pointer ${selected ? 'bg-blue-50 dark:bg-blue-900' : 'bg-surface hover:bg-bg'}`}>
                       <input type="checkbox" className="mt-0.5 min-w-[18px]" checked={selected} onChange={() => toggleItem(item.id)} />
                       <div className="flex-1 min-w-0">
                         <div className="font-medium text-body">{item.product_name || item.product_code || item.item_name}</div>
@@ -151,7 +152,7 @@ export default function NCRNew() {
 
                     {/* Detail — แสดงเมื่อเลือก */}
                     {selected && (
-                      <div className="border-t border-border bg-red-50 p-3 space-y-2">
+                      <div className="border-t border-border bg-red-50 dark:bg-red-900 p-3 space-y-2">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-small">
                           <div>
                             <span className="text-muted">กลุ่มปัญหา: </span>
@@ -172,7 +173,7 @@ export default function NCRNew() {
                                   <img
                                     src={`/uploads/bill-items/${img.file_path}`}
                                     alt=""
-                                    className="h-16 w-16 object-cover rounded border border-red-200 hover:opacity-80"
+                                    className="h-16 w-16 object-cover rounded border border-red-200 dark:border-red-700 hover:opacity-80"
                                   />
                                 </a>
                               ))}
@@ -191,11 +192,7 @@ export default function NCRNew() {
         {/* รูปเพิ่มเติม (ถ้ามี) */}
         <div className="card space-y-2">
           <label className="label">รูปภาพเพิ่มเติม (ถ้ามี)</label>
-          <input
-            type="file" multiple accept="image/*" capture="environment"
-            onChange={e => setExtraImages(Array.from(e.target.files))}
-            className="block w-full text-small text-muted file:mr-3 file:py-2 file:px-3 file:rounded file:border file:border-border file:bg-surface hover:file:bg-bg"
-          />
+          <ImageUploadPair onChange={e => setExtraImages(prev => [...prev, ...Array.from(e.target.files)])} />
           {extraImages.length > 0 && (
             <div className="flex flex-wrap gap-2 mt-1">
               {extraImages.map((f, i) => (
@@ -203,7 +200,7 @@ export default function NCRNew() {
                   <img src={URL.createObjectURL(f)} alt="" className="h-20 w-20 object-cover rounded border border-border" />
                   <button type="button"
                     onClick={() => setExtraImages(prev => prev.filter((_, j) => j !== i))}
-                    className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-danger text-white text-[10px] flex items-center justify-center">
+                    className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-danger text-white text-[12px] flex items-center justify-center shadow">
                     x
                   </button>
                 </div>

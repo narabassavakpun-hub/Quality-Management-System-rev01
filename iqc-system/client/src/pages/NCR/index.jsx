@@ -62,7 +62,34 @@ export default function NCRList() {
         </select>
       </div>
 
-      <div className="table-container">
+      {/* Mobile card list */}
+      <div className="md:hidden space-y-2">
+        {isLoading && <div className="text-center py-8 text-muted text-small">กำลังโหลด...</div>}
+        {!isLoading && filtered.length === 0 && <div className="text-center py-8 text-muted text-small">ไม่พบข้อมูล</div>}
+        {filtered.map(n => (
+          <div key={n.id} onClick={() => navigate(`/ncr/${n.id}`)}
+            className="bg-surface border border-border rounded-lg p-3 active:bg-bg cursor-pointer"
+          >
+            <div className="flex items-start justify-between gap-2 mb-1">
+              <span className="font-mono font-semibold text-primary text-body">{n.ncr_code}</span>
+              <Badge status={n.status} />
+            </div>
+            <div className="text-small font-medium text-text mb-0.5">{n.supplier_name}</div>
+            <div className="text-small text-muted mb-1">
+              {n.items?.length > 1 ? `${n.items.length} รายการ` : (n.items?.[0]?.item_name || '-')}
+            </div>
+            <div className="flex items-center justify-between">
+              <span className={`badge ${n.severity === 'major' ? 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-200' : 'bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-200'}`}>
+                {n.severity === 'major' ? 'NCR Major' : 'NCP Minor'}
+              </span>
+              <span className="text-small text-muted">{n.created_at?.slice(0, 10)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop table */}
+      <div className="hidden md:block table-container">
         <table className="table">
           <thead>
             <tr>
@@ -85,7 +112,7 @@ export default function NCRList() {
                 <td>{n.items?.length > 1 ? `${n.items.length} รายการ` : (n.items?.[0]?.item_name || '-')}</td>
                 <td>{n.supplier_name}</td>
                 <td>
-                  <span className={`badge ${n.severity === 'major' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                  <span className={`badge ${n.severity === 'major' ? 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-200' : 'bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-200'}`}>
                     {n.severity === 'major' ? 'NCR Major' : 'NCP Minor'}
                   </span>
                 </td>

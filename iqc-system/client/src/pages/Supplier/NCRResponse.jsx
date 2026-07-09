@@ -112,9 +112,9 @@ export default function NCRResponse() {
 
           <div className="space-y-3">
             {ncr.items?.map((item, i) => (
-              <div key={i} className="border border-red-200 rounded-lg overflow-hidden">
+              <div key={i} className="border border-red-200 dark:border-red-700 rounded-lg overflow-hidden">
                 {/* Item header */}
-                <div className="bg-red-50 px-4 py-3">
+                <div className="bg-red-50 dark:bg-red-900 px-4 py-3">
                   <div className="font-semibold text-body text-primary">
                     {item.item_name_en || item.item_name}
                   </div>
@@ -132,8 +132,8 @@ export default function NCRResponse() {
                       <div className="text-small text-muted leading-tight">Qty Sampled<br /><span className="text-xs">จำนวนสุ่มตรวจ</span></div>
                       <div className="font-mono font-bold text-h3 mt-0.5">{item.qty_sampled}</div>
                     </div>
-                    <div className="bg-red-100 rounded px-2 py-1.5 text-center">
-                      <div className="text-small text-red-600 leading-tight">Qty Failed<br /><span className="text-xs">จำนวนของเสีย</span></div>
+                    <div className="bg-red-100 dark:bg-red-900 rounded px-2 py-1.5 text-center">
+                      <div className="text-small text-red-600 dark:text-red-200 leading-tight">Qty Failed<br /><span className="text-xs">จำนวนของเสีย</span></div>
                       <div className="font-mono font-bold text-h3 text-danger mt-0.5">{item.qty_failed}</div>
                     </div>
                   </div>
@@ -154,7 +154,7 @@ export default function NCRResponse() {
 
                 {/* Problem images */}
                 {item.bill_item_images?.length > 0 && (
-                  <div className="px-4 py-3 bg-surface border-t border-red-200">
+                  <div className="px-4 py-3 bg-surface border-t border-red-200 dark:border-red-700">
                     <div className="text-small text-muted mb-2 font-medium">
                       Problem Photos / รูปภาพปัญหา ({item.bill_item_images.length})
                     </div>
@@ -164,7 +164,7 @@ export default function NCRResponse() {
                           <img
                             src={`/uploads/bill-items/${img.file_path}`}
                             alt=""
-                            className="h-28 w-28 object-cover rounded border border-red-200 hover:opacity-80"
+                            className="h-28 w-28 object-cover rounded border border-red-200 dark:border-red-700 hover:opacity-80"
                           />
                         </a>
                       ))}
@@ -196,7 +196,7 @@ export default function NCRResponse() {
           <div className="text-small text-muted mb-4">Please respond in English or Thai / กรุณาตอบเป็นภาษาอังกฤษหรือภาษาไทย</div>
 
           <div className="space-y-4">
-            {error && <div className="text-danger text-small bg-red-50 px-3 py-2 rounded">{error}</div>}
+            {error && <div className="text-danger text-small bg-red-50 dark:bg-red-900 px-3 py-2 rounded">{error}</div>}
 
             <div>
               <label className="label">

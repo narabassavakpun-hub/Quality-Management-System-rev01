@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ProcessingProvider } from './contexts/ProcessingContext';
+import { ThemeProvider } from './contexts/ThemeContext';
 import ProcessingToast from './components/UI/ProcessingToast';
 import AppLayout from './components/Layout/AppLayout';
 import Login from './pages/Login';
@@ -26,6 +27,7 @@ import Colors from './pages/Master/Colors';
 import AdminUsers from './pages/Admin/Users';
 import AdminSettings from './pages/Admin/Settings';
 import AdminHolidays from './pages/Admin/Holidays';
+import AdminAuditLogs from './pages/Admin/AuditLogs';
 import ReportsLayout from './pages/Reports/index';
 import ReceivingReport from './pages/Reports/Receiving';
 import NCRReport from './pages/Reports/NCRReport';
@@ -39,6 +41,25 @@ import QCAttendanceOverview from './pages/QCAttendance/index';
 import QCCheckIn from './pages/QCAttendance/CheckIn';
 import QCEmployeeHistory from './pages/QCAttendance/EmployeeHistory';
 import QCAttendanceStats from './pages/QCAttendance/AttendanceStats';
+import KPIPage from './pages/KPI/index';
+import KPIReportDetail from './pages/KPI/ReportDetail';
+import ProductionMaster from './pages/Admin/ProductionMaster';
+import ProCodeSapPage from './pages/Admin/ProCodeSap';
+import ProductionQCDashboard from './pages/FQC/Dashboard';
+import FGProductionPage from './pages/FGProduction/index';
+import FNCPList from './pages/FGProduction/FNCPList';
+import FNCPDetail from './pages/FGProduction/FNCPDetail';
+import FNCPResponse from './pages/FGProduction/FNCPResponse';
+import FUAIList from './pages/FGProduction/FUAIList';
+import FUAIDetail from './pages/FGProduction/FUAIDetail';
+import MaterialDefects from './pages/FGProduction/MaterialDefects';
+import IPQCList from './pages/ProductionQC/IPQCList';
+import IPQCNew from './pages/ProductionQC/IPQCNew';
+import IPQCDetail from './pages/ProductionQC/IPQCDetail';
+import IPNCRList from './pages/ProductionQC/IPNCRList';
+import IPNCRDetail from './pages/ProductionQC/IPNCRDetail';
+
+const PROD_QC_ROLES = ['admin','qc_staff','qc_supervisor','qc_manager','cpo','production_manager','prod_supervisor'];
 
 function ProtectedRoute({ children, roles }) {
   const { user, loading } = useAuth();
@@ -56,6 +77,7 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
       <Route path="/supplier/ncr/:token" element={<NCRResponse />} />
+      <Route path="/fncp-response/:token" element={<FNCPResponse />} />
 
       <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
         <Route index element={<Dashboard />} />
@@ -68,6 +90,27 @@ function AppRoutes() {
         <Route path="uai" element={<UAIList />} />
         <Route path="uai/:id" element={<UAIDetail />} />
         <Route path="delivery" element={<DeliveryCalendar />} />
+        <Route path="kpi">
+          <Route index element={<Navigate to="dashboard" replace />} />
+          <Route path="dashboard" element={<KPIPage />} />
+          <Route path="summary"   element={<KPIPage />} />
+          <Route path="bantuk"    element={<KPIPage />} />
+          <Route path="setup"     element={<ProtectedRoute roles={['admin']}><KPIPage /></ProtectedRoute>} />
+          {/* ⚠️ DEPRECATED (Session 104) — ไม่มีที่ไหนใน UI ลิงก์มาหน้านี้ (kpi_reports ถูกแทนที่ด้วย kpi_actuals+kpi_action_plans) ดู AUDIT.md §3.7/D3 */}
+          <Route path="reports/:id" element={<KPIReportDetail />} />
+        </Route>
+        <Route path="production-qc/dashboard" element={<ProtectedRoute roles={PROD_QC_ROLES}><ProductionQCDashboard /></ProtectedRoute>} />
+        <Route path="production-qc/ipqc" element={<ProtectedRoute roles={PROD_QC_ROLES}><IPQCList /></ProtectedRoute>} />
+        <Route path="production-qc/ipqc/new" element={<ProtectedRoute roles={['admin','qc_staff','qc_supervisor']}><IPQCNew /></ProtectedRoute>} />
+        <Route path="production-qc/ipqc/:id" element={<ProtectedRoute roles={PROD_QC_ROLES}><IPQCDetail /></ProtectedRoute>} />
+        <Route path="production-qc/ipncr" element={<ProtectedRoute roles={PROD_QC_ROLES}><IPNCRList /></ProtectedRoute>} />
+        <Route path="production-qc/ipncr/:id" element={<ProtectedRoute roles={PROD_QC_ROLES}><IPNCRDetail /></ProtectedRoute>} />
+        <Route path="fg-production" element={<ProtectedRoute roles={PROD_QC_ROLES}><FGProductionPage /></ProtectedRoute>} />
+        <Route path="fg-production/fncp" element={<ProtectedRoute roles={PROD_QC_ROLES}><FNCPList /></ProtectedRoute>} />
+        <Route path="fg-production/fncp/:id" element={<ProtectedRoute roles={PROD_QC_ROLES}><FNCPDetail /></ProtectedRoute>} />
+        <Route path="fg-production/fuai" element={<ProtectedRoute roles={PROD_QC_ROLES}><FUAIList /></ProtectedRoute>} />
+        <Route path="fg-production/fuai/:id" element={<ProtectedRoute roles={PROD_QC_ROLES}><FUAIDetail /></ProtectedRoute>} />
+        <Route path="fg-production/material-defects" element={<ProtectedRoute roles={PROD_QC_ROLES}><MaterialDefects /></ProtectedRoute>} />
         <Route path="issue-talk" element={<IssueTalkList />} />
         <Route path="issue-talk/:id" element={<IssueTalkDetail />} />
         <Route path="qc-attendance" element={<ProtectedRoute roles={['qc_staff','qc_supervisor','qc_manager','admin']}><QCAttendanceOverview /></ProtectedRoute>} />
@@ -77,7 +120,10 @@ function AppRoutes() {
         <Route path="admin" element={<ProtectedRoute roles={['admin']}><Outlet /></ProtectedRoute>}>
           <Route path="users" element={<AdminUsers />} />
           <Route path="settings" element={<AdminSettings />} />
+          <Route path="production-master" element={<ProductionMaster />} />
+          <Route path="procode-sap" element={<ProCodeSapPage />} />
           <Route path="holidays" element={<AdminHolidays />} />
+          <Route path="audit-logs" element={<AdminAuditLogs />} />
         </Route>
         <Route path="master" element={<ProtectedRoute roles={['admin']}><MasterLayout /></ProtectedRoute>}>
           <Route index element={<Navigate to="suppliers" replace />} />
@@ -104,13 +150,15 @@ function AppRoutes() {
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <ProcessingProvider>
-        <AuthProvider>
-          <AppRoutes />
-          <ProcessingToast />
-        </AuthProvider>
-      </ProcessingProvider>
-    </BrowserRouter>
+    <ThemeProvider>
+      <BrowserRouter>
+        <ProcessingProvider>
+          <AuthProvider>
+            <AppRoutes />
+            <ProcessingToast />
+          </AuthProvider>
+        </ProcessingProvider>
+      </BrowserRouter>
+    </ThemeProvider>
   );
 }

@@ -18,7 +18,8 @@ Browser ───► Cloudflare ───► nginx (reverse proxy) ───► 
 ```
 
 - **single origin**: Node เสิร์ฟทั้ง SPA + API + ไฟล์แนบ → frontend เรียก `/api` แบบ relative (ไม่มีปัญหา CORS/cookie)
-- **stateful**: SQLite + uploads ต้องอยู่บน **named volume / persistent disk** เท่านั้น (ห้าม ephemeral)
+- **stateful**: SQLite + uploads ต้องอยู่บน **named volume / persistent disk** เท่านั้น (ห้าม ephemeral) —
+  ยกเว้น deployment ที่เลือกใช้ restore-on-boot จาก Cloudflare R2 แทนโดยตั้งใจ (Render Free tier, ดู §8.2)
 - **1 instance เท่านั้น**: SQLite (single-writer), SSE (in-memory), Chromium singleton → **scale แนวนอนไม่ได้** จนกว่าจะย้ายไป Postgres + Redis (ดูข้อ 9)
 
 ---
@@ -152,16 +153,70 @@ docker image prune -f
 
 ## 8. Render.com (ทางเลือก PaaS — ไม่ใช้ docker-compose)
 
-Render รัน 1 container จาก Dockerfile + ให้ TLS/proxy เอง (ไม่ต้องใช้ nginx)
+Render รัน 1 container จาก Dockerfile + ให้ TLS/proxy เอง (ไม่ต้องใช้ nginx) — มี 2 ทางเลือกตาม budget:
 
-1. New → **Web Service** → เลือก repo, Root Directory = `iqc-system`, Runtime = **Docker**
+### 8.1 Starter+ ผูก Persistent Disk (แนะนำ — ไม่มี data-loss window)
+
+1. New → **Web Service** → เลือก repo, Root Directory = `iqc-system`, Runtime = **Docker**, Plan = **Starter ขึ้นไป**
 2. เพิ่ม **Disk** (persistent):
    - Mount `/data` (สำหรับ SQLite) — ขนาดตามต้องการ
    - Mount `/app/uploads` (สำหรับไฟล์แนบ) *(Render รองรับ disk เดียวต่อ service — ดูหมายเหตุ)*
-3. Environment: ตั้ง `JWT_SECRET`, `APP_URL=https://<service>.onrender.com`, `NODE_ENV=production`, `IQC_DB_PATH=/data/iqc.db`, `PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium`, `TZ=Asia/Bangkok`
-4. Health Check Path = `/api/health`
+3. Environment: ตั้ง `JWT_SECRET`, `APP_URL=https://<service>.onrender.com`, `NODE_ENV=production`, `IQC_DB_PATH=/data/iqc.db`, `PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium`, `TZ=Asia/Bangkok`, `RESTORE_ON_BOOT=false` (หรือปล่อยว่าง — มี disk จริงแล้วไม่ต้องใช้)
+4. Health Check Path (ตั้งใน Render dashboard — **คนละจุดกับ Dockerfile `HEALTHCHECK`**) = `/api/health`
+5. Starter ขึ้นไปไม่ sleep — ไม่ต้องตั้ง keep-alive ping (ข้าม §8.2)
 
 > หมายเหตุ Render มี disk ได้หลายตัวต่อ service (ตรวจแพลนปัจจุบัน) — ถ้าได้ disk เดียว ให้ตั้ง `IQC_DB_PATH=/data/db/iqc.db` และย้าย uploads ไปใต้ `/data/uploads` โดยอาจ symlink `ln -s /data/uploads /app/uploads` ใน entrypoint (หรือ mount disk ที่ `/data` แล้วเก็บทั้งสองใต้ `/data`)
+
+### 8.2 Free tier + restore-on-boot จาก Cloudflare R2 (ทางเลือกที่เลือกใช้จริง — งบ $0, มี data-loss window ที่ยอมรับได้)
+
+⚠️ **Deliberate exception ต่อกฎ "SQLite ต้องอยู่บน volume เท่านั้น ห้าม ephemeral" ด้านบน** — Free tier ของ
+Render ไม่มี persistent Disk เลย ตกลงกับ user แล้วให้ใช้แนวทางนี้แทน (ตัดสินใจเมื่อรู้ tradeoff ครบแล้ว):
+เก็บ DB/uploads บน ephemeral disk ของ container ตามปกติ แต่ sync ไป Cloudflare R2 อัตโนมัติ แล้ว**กู้กลับมาเอง
+ตอน boot** ถ้า container เป็นตัวใหม่ (fresh ephemeral filesystem)
+
+**RPO (ข้อมูลสูญเสียได้มากสุด) ~10 นาที ไม่ใช่ ~24 ชม.** — เหตุผล: container ephemeral หายได้จากหลายทางไม่ใช่แค่
+redeploy (sleep/wake หลัง idle 15 นาที, Render maintenance restart, OOM-kill จาก Chromium ตอน export PDF) ซึ่ง
+เกิดบ่อยกว่า redeploy มาก สำหรับ internal tool ที่มีคนใช้งานทั้งวัน จึงต้อง backup รอบถี่ (~10 นาที) ไม่ใช่แค่วันละครั้ง
+— ดู `server/lib/backupService.js`
+
+**สถาปัตยกรรม:**
+- `server/lib/r2Client.js` — S3-compatible client คุยกับ R2
+- `server/lib/backupService.js` — snapshot DB (VACUUM INTO + `PRAGMA quick_check`) ทุก ~10 นาที ขึ้น
+  `backups/db/latest.db` (RPO หลัก) + ทุกวัน (ครั้งแรกของวัน) ขึ้น `backups/db/day-N.db` (N=0..6 ตามวันในสัปดาห์
+  Asia/Bangkok — คือ FIFO 7 ไฟล์ที่ผู้ใช้ต้องการเป๊ะๆ: วันที่ 8 = สัปดาห์ถัดไป วันเดียวกัน จะทับ slot เดิมของมันเอง
+  โดยธรรมชาติ ไม่ต้องมี counter) + sync ไฟล์แนบใหม่/เปลี่ยนแปลงไป `backups/uploads/**` แบบ incremental (ไม่ tar
+  ทั้งโฟลเดอร์ทุกรอบ — กันไฟล์โตไม่จบ) — เขียน `backups/manifest.json` "หลังสุด" เสมอ (หลัง object อัปโหลดสำเร็จ)
+- `server/bootstrap.js` — container entrypoint ใหม่ (Dockerfile `CMD`) — ถ้า `RESTORE_ON_BOOT=true` และ DB local
+  ที่ `IQC_DB_PATH` ไม่มี/ว่างเปล่า จะดาวน์โหลด backup ที่ fresh สุดจาก R2 มาก่อน (verify ขนาด + `quick_check`
+  ก่อน rename เข้าที่จริงแบบ atomic) แล้วค่อย `require('./index.js')` ต่อ — no-op ถ้าไม่ได้ตั้ง flag นี้
+- **ไฟล์แนบ (uploads) ไม่ eager-restore ตอน boot** — ใช้ lazy fetch-through แทน (`/uploads` middleware ใน
+  `index.js` จะดึงจาก R2 อัตโนมัติถ้าไม่เจอไฟล์ local แล้ว cache ไว้) กัน cold-start ช้าลงเรื่อยๆ ตามขนาด uploads
+  ที่โตขึ้นเรื่อยๆ ตามอายุระบบ
+- `runHotBackup()` ยังถูกเรียกใน SIGTERM shutdown handler (`index.js`) ก่อน `db.close()` ด้วย — ปิดช่องว่างของ
+  redeploy/graceful-restart ให้เกือบ real-time (ไม่ต้องรอรอบ 10 นาทีถัดไป)
+
+**ขั้นตอน setup:**
+1. **Cloudflare R2**: สร้าง bucket (เช่น `qms-iqc-backups`) → สร้าง API token ขอบเขตเฉพาะ bucket นี้ (Object Read
+   & Write) → จด Account ID / Access Key ID / Secret Access Key
+2. **Render**: New Web Service → Docker, Root Directory `iqc-system`, Plan = **Free**, **Instance Count = 1
+   เสมอ ห้าม autoscale** (SQLite single-writer + SSE client เก็บใน memory + Chromium singleton ต่อ process —
+   ดู §9) — ตั้ง env vars: ค่าพื้นฐานเหมือน §8.1 บวก `R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`/
+   `R2_BUCKET`/`RESTORE_ON_BOOT=true`/`TELEGRAM_BOOT_ALERT_TOKEN`/`TELEGRAM_BOOT_ALERT_CHAT_ID` (ดู
+   `.env.production.example`) — ตั้ง Health Check Path = `/api/health` ใน Render dashboard (คนละจุดกับ
+   Dockerfile `HEALTHCHECK`)
+3. **Keep-alive หลัก (สำคัญ — ต้องมี failure-alert ในตัว)**: สมัคร UptimeRobot หรือ cron-job.org (ฟรี) ยิง
+   `/api/health` ทุก ~5 นาที **เปิดแจ้งเตือนเมื่อ ping ล้มเหลวด้วย** — เพราะถ้า keep-alive เองหยุดทำงานเงียบๆ
+   ทั้ง app (รวม Telegram alert ที่อยู่ใน process เดียวกัน) ก็จะไม่ทำงานไปด้วย ต้องมีตัวเฝ้านอก process
+4. **Keep-alive สำรอง** (optional): `.github/workflows/keep-alive.yml` (ตั้ง repo variable `RENDER_APP_URL`
+   ก่อนใช้) — GitHub Actions schedule อาจถูก delay ได้เวลา platform โหลดสูง (GitHub เอกสารเอง) จึงเป็นแค่ตัวเสริม
+   ไม่ใช่ตัวหลัก
+
+**Checklist ก่อนใช้งานจริง** (เพิ่มจาก `PRODUCTION_CHECKLIST.md`):
+- ทดสอบ **restore drill**: `node scripts/restore-from-r2.js` กู้ DB จริงจาก R2 มาทดสอบได้ถูกต้อง
+- ทดสอบ **sleep→wake พร้อมมี write คั่นกลาง** (ไม่ใช่แค่ redeploy เฉยๆ) — sleep ทิ้งไว้ → wake → สร้างข้อมูล
+  ทดสอบ → รอ ~10-15 นาทีให้ hot-backup รอบถัดไปทำงาน → sleep/redeploy อีกรอบ → ยืนยันข้อมูลที่สร้างไว้ยังอยู่
+- จำลอง backup ล้มเหลว (เช่น ใส่ R2 credential ผิดชั่วคราว) → ยืนยัน Telegram alert ยิงจริง
+- ยืนยัน UptimeRobot/cron-job.org ping ผ่านจริง + alert เมื่อ ping ล้มเหลวทำงานจริง (ลองชี้ไป URL ผิดชั่วคราว)
 
 ---
 

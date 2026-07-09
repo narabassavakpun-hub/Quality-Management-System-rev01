@@ -1,3 +1,5 @@
+> ⚠️ **DEPRECATED (2026-07-02)** — รวมเข้า [`../testcase.md`](../testcase.md) แล้ว เก็บไว้เป็นประวัติ
+
 # TESTCASES.md — IQC System
 
 > วันที่: 2026-06-19

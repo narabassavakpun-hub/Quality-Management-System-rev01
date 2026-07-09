@@ -33,7 +33,7 @@ function PctBar({ pct }) {
   const color = pct >= 90 ? '#16A34A' : pct >= 75 ? '#D97706' : '#DC2626';
   return (
     <div className="flex items-center gap-2">
-      <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden min-w-[40px]">
+      <div className="flex-1 h-1.5 bg-gray-100 dark:bg-gray-900 rounded-full overflow-hidden min-w-[40px]">
         <div className="h-full rounded-full" style={{ width: `${pct}%`, background: color }} />
       </div>
       <span className="text-[11px] font-mono font-bold flex-shrink-0" style={{ color }}>{pct}%</span>
@@ -44,12 +44,12 @@ function PctBar({ pct }) {
 function GradeChip({ pct }) {
   if (pct == null) return null;
   const { label, bg, text } = pct >= 95
-    ? { label: 'ดีเยี่ยม', bg: 'bg-green-100', text: 'text-green-700' }
+    ? { label: 'ดีเยี่ยม', bg: 'bg-green-100 dark:bg-green-900', text: 'text-green-700 dark:text-green-200' }
     : pct >= 85
-    ? { label: 'ดี',       bg: 'bg-blue-100',  text: 'text-blue-700' }
+    ? { label: 'ดี',       bg: 'bg-blue-100 dark:bg-blue-900',  text: 'text-blue-700 dark:text-blue-200' }
     : pct >= 75
-    ? { label: 'พอใช้',   bg: 'bg-yellow-100', text: 'text-yellow-700' }
-    : { label: 'ต้องปรับปรุง', bg: 'bg-red-100', text: 'text-red-700' };
+    ? { label: 'พอใช้',   bg: 'bg-yellow-100 dark:bg-yellow-900', text: 'text-yellow-700 dark:text-yellow-200' }
+    : { label: 'ต้องปรับปรุง', bg: 'bg-red-100 dark:bg-red-900', text: 'text-red-700 dark:text-red-200' };
   return (
     <span className={`inline-flex px-1.5 py-0.5 rounded text-[9px] font-semibold ${bg} ${text}`}>
       {label}
@@ -310,7 +310,7 @@ export default function AttendanceStats() {
                           </div>
                         )}
                       </div>
-                      <div className="mt-2 h-1 bg-gray-100 rounded-full overflow-hidden">
+                      <div className="mt-2 h-1 bg-gray-100 dark:bg-gray-900 rounded-full overflow-hidden">
                         <div
                           className="h-full rounded-full"
                           style={{
@@ -330,10 +330,10 @@ export default function AttendanceStats() {
           <div className="flex items-center gap-4 mt-4 pt-3 border-t border-border flex-wrap text-[11px] text-muted">
             <span>เกรด:</span>
             {[
-              { label: 'ดีเยี่ยม ≥95%', color: 'text-green-700 bg-green-100' },
-              { label: 'ดี 85–94%',     color: 'text-blue-700 bg-blue-100' },
-              { label: 'พอใช้ 75–84%',  color: 'text-yellow-700 bg-yellow-100' },
-              { label: 'ต้องปรับ <75%', color: 'text-red-700 bg-red-100' },
+              { label: 'ดีเยี่ยม ≥95%', color: 'text-green-700 dark:text-green-200 bg-green-100 dark:bg-green-900' },
+              { label: 'ดี 85–94%',     color: 'text-blue-700 dark:text-blue-200 bg-blue-100 dark:bg-blue-900' },
+              { label: 'พอใช้ 75–84%',  color: 'text-yellow-700 dark:text-yellow-200 bg-yellow-100 dark:bg-yellow-900' },
+              { label: 'ต้องปรับ <75%', color: 'text-red-700 dark:text-red-200 bg-red-100 dark:bg-red-900' },
             ].map(l => (
               <span key={l.label} className={`px-2 py-0.5 rounded text-[10px] font-semibold ${l.color}`}>{l.label}</span>
             ))}

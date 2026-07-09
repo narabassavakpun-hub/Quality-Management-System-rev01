@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import api from '../../utils/api';
+import api, { downloadExcel } from '../../utils/api';
 import Button from '../../components/UI/Button';
 import Modal from '../../components/UI/Modal';
 import ConfirmDialog from '../../components/UI/ConfirmDialog';
+import ImageUploadPair from '../../components/UI/ImageUploadPair';
 import SortTh from '../../components/UI/SortTh';
 import ToggleSwitch from '../../components/UI/ToggleSwitch';
 import EditButton from '../../components/UI/EditButton';
@@ -13,7 +14,7 @@ import SearchableSelect from '../../components/UI/SearchableSelect';
 const PAGE_SIZE = 20;
 import { useSortable } from '../../hooks/useSortable';
 
-const IMPORT_STATUS_CLASS = { error: 'bg-red-50', warning: 'bg-amber-50', ok: '' };
+const IMPORT_STATUS_CLASS = { error: 'bg-red-50 dark:bg-red-900', warning: 'bg-amber-50 dark:bg-amber-900', ok: '' };
 
 // ─── AQL Inspection Plan Options ───────────────────────────────────────────────
 const INSPECTION_LEVELS = [
@@ -41,7 +42,7 @@ function ImageStrip({ images, onRemove, label }) {
   if (!images.length) return null;
   return (
     <div className="mt-2">
-      <p className="text-[11px] text-muted mb-1">{label} ({images.length} รูป)</p>
+      <p className="text-[12px] text-muted mb-1">{label} ({images.length} รูป)</p>
       <div className="flex flex-wrap gap-2">
         {images.map((img, i) => (
           <div key={i} className="relative group w-20 h-20 flex-shrink-0">
@@ -54,12 +55,12 @@ function ImageStrip({ images, onRemove, label }) {
               <button
                 type="button"
                 onClick={() => onRemove(i)}
-                className="absolute top-0.5 right-0.5 w-5 h-5 bg-danger text-white rounded-full text-[10px] font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                className="absolute -top-1.5 -right-1.5 w-6 h-6 bg-danger text-white rounded-full text-[12px] font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow"
               >
                 X
               </button>
             )}
-            <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[9px] px-1 py-0.5 rounded-b truncate">
+            <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[12px] px-1 py-0.5 rounded-b truncate">
               {img.name || img.original_name}
             </div>
           </div>
@@ -104,8 +105,6 @@ function Form({ initial = {}, onSave, loading, error, onClose, onDone }) {
   const [deletingImg, setDeletingImg]         = useState(null);
   const [uploadError, setUploadError]         = useState('');
   const [uploading, setUploading]             = useState(false);
-  const productFileRef = useRef();
-  const qualityFileRef = useRef();
 
   const { data: suppliers = [] } = useQuery({ queryKey: ['suppliers'], queryFn: () => api.get('/master/suppliers').then(r => r.data) });
   const { data: groups = [] }    = useQuery({ queryKey: ['product-groups'], queryFn: () => api.get('/master/product-groups').then(r => r.data) });
@@ -197,20 +196,20 @@ function Form({ initial = {}, onSave, loading, error, onClose, onDone }) {
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       {(error || uploadError) && (
-        <div className="text-danger text-small bg-red-50 border border-red-200 rounded px-3 py-2">{error || uploadError}</div>
+        <div className="text-danger text-small bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded px-3 py-2">{error || uploadError}</div>
       )}
 
       {/* ─── Section 1: ข้อมูลพื้นฐาน ─── */}
       <div>
         <h4 className="text-small font-semibold text-muted uppercase tracking-wide mb-2">ข้อมูลสินค้า</h4>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div><label className="label">รหัสสินค้า</label><input className="input" value={form.code} onChange={e => set('code', e.target.value)} /></div>
           <div><label className="label">ชื่อสินค้า *</label><input className="input" value={form.name} onChange={e => set('name', e.target.value)} required /></div>
         </div>
         <div className="mt-3">
           <label className="label">
             Supplier *
-            <span className="ml-1 text-[11px] text-muted font-normal">(เลือกได้มากกว่า 1)</span>
+            <span className="ml-1 text-[12px] text-muted font-normal">(เลือกได้มากกว่า 1)</span>
           </label>
           {suppliers.length === 0 ? (
             <p className="text-small text-muted italic">ยังไม่มีข้อมูล Supplier</p>
@@ -247,10 +246,10 @@ function Form({ initial = {}, onSave, loading, error, onClose, onDone }) {
             </div>
           )}
           {form.supplier_ids.length === 0 && (
-            <p className="text-[11px] text-danger mt-1">กรุณาเลือก Supplier อย่างน้อย 1</p>
+            <p className="text-[12px] text-danger mt-1">กรุณาเลือก Supplier อย่างน้อย 1</p>
           )}
         </div>
-        <div className="grid grid-cols-2 gap-3 mt-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
           <div>
             <label className="label">กลุ่มสินค้า *</label>
             <SearchableSelect
@@ -319,7 +318,7 @@ function Form({ initial = {}, onSave, loading, error, onClose, onDone }) {
       {/* ─── Section 2: แผนการสุ่มตรวจ AQL ─── */}
       <div className="border-t border-border pt-4">
         <h4 className="text-small font-semibold text-muted uppercase tracking-wide mb-2">แผนการสุ่มตรวจ (AQL)</h4>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="label">ระดับการสุ่มตรวจ</label>
             <select className="input" value={form.inspection_level} onChange={e => { set('inspection_level', e.target.value); if (e.target.value === 'FULL') set('aql_value', ''); }}>
@@ -329,7 +328,7 @@ function Form({ initial = {}, onSave, loading, error, onClose, onDone }) {
           <div>
             <label className="label">
               ค่า AQL
-              {isFullInspection && <span className="ml-2 text-[11px] text-success font-medium">(ไม่ใช้ — ตรวจทุกชิ้น)</span>}
+              {isFullInspection && <span className="ml-2 text-[12px] text-success font-medium">(ไม่ใช้ — ตรวจทุกชิ้น)</span>}
             </label>
             <select
               className="input"
@@ -342,7 +341,7 @@ function Form({ initial = {}, onSave, loading, error, onClose, onDone }) {
           </div>
         </div>
         {isFullInspection && (
-          <p className="text-small text-warning mt-2 bg-amber-50 border border-amber-200 rounded px-3 py-1.5">
+          <p className="text-small text-warning mt-2 bg-amber-50 dark:bg-amber-900 border border-amber-200 dark:border-amber-700 rounded px-3 py-1.5">
             โหมด "ตรวจ 100%" — ระบบจะกำหนดขนาดตัวอย่าง = จำนวนรับเข้าทั้งหมด โดยอัตโนมัติ
           </p>
         )}
@@ -352,23 +351,23 @@ function Form({ initial = {}, onSave, loading, error, onClose, onDone }) {
       <div className="border-t border-border pt-4">
         <h4 className="text-small font-semibold text-muted uppercase tracking-wide mb-2">Engineering Drawing (PDF)</h4>
         {currentDrawing && (
-          <div className="flex items-center gap-3 mb-2 p-2 bg-red-50 border border-red-200 rounded">
-            <svg className="w-5 h-5 text-red-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M4 18h12V6l-4-4H4v16zm8-14l2 2h-2V4z"/></svg>
+          <div className="flex items-center gap-3 mb-2 p-2 bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded">
+            <svg className="w-5 h-5 text-red-600 dark:text-red-200 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M4 18h12V6l-4-4H4v16zm8-14l2 2h-2V4z"/></svg>
             <div className="flex-1 min-w-0">
               <p className="text-small font-medium text-text truncate">{currentDrawing.original_name}</p>
-              <p className="text-[11px] text-muted">Rev: {currentDrawing.revision} — มีผลวันที่ {currentDrawing.effective_date}</p>
+              <p className="text-[12px] text-muted">Rev: {currentDrawing.revision} — มีผลวันที่ {currentDrawing.effective_date}</p>
             </div>
             <a
               href={`/api/master/products/${initial.id}/drawings/current`}
               target="_blank"
               rel="noreferrer"
-              className="text-small text-red-600 hover:underline font-medium whitespace-nowrap"
+              className="text-small text-red-600 dark:text-red-200 hover:underline font-medium whitespace-nowrap"
             >
               ดู PDF
             </a>
           </div>
         )}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="label">{currentDrawing ? 'อัปโหลด Revision ใหม่' : 'อัปโหลด Drawing'}</label>
             <input
@@ -376,7 +375,7 @@ function Form({ initial = {}, onSave, loading, error, onClose, onDone }) {
               className="block w-full text-small text-muted file:mr-3 file:py-1.5 file:px-3 file:rounded file:border file:border-border file:text-small file:bg-surface hover:file:bg-bg"
               onChange={e => setDrawingFile(e.target.files[0] || null)}
             />
-            {drawingFile && <p className="text-[11px] text-success mt-1">{drawingFile.name}</p>}
+            {drawingFile && <p className="text-[12px] text-success mt-1">{drawingFile.name}</p>}
           </div>
           <div>
             <label className="label">Revision</label>
@@ -402,9 +401,9 @@ function Form({ initial = {}, onSave, loading, error, onClose, onDone }) {
                 <button
                   type="button"
                   onClick={() => setDeletingImg(img)}
-                  className="absolute top-0.5 right-0.5 w-5 h-5 bg-danger text-white rounded-full text-[10px] font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="absolute -top-1.5 -right-1.5 w-6 h-6 bg-danger text-white rounded-full text-[12px] font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow"
                 >X</button>
-                <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[9px] px-1 py-0.5 rounded-b truncate">{img.original_name}</div>
+                <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[12px] px-1 py-0.5 rounded-b truncate">{img.original_name}</div>
               </div>
             ))}
           </div>
@@ -413,21 +412,15 @@ function Form({ initial = {}, onSave, loading, error, onClose, onDone }) {
         {/* Pending product images preview */}
         <ImageStrip images={pendingProduct} onRemove={i => removePending(i, 'product')} label="รูปที่เลือก (ยังไม่บันทึก)" />
 
-        <button
-          type="button"
-          onClick={() => productFileRef.current?.click()}
-          className="mt-2 inline-flex items-center gap-2 px-3 py-2 text-small border border-dashed border-border rounded-md text-muted hover:border-accent hover:text-accent transition-colors min-h-[40px]"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4"/></svg>
-          เพิ่มรูปภาพสินค้า
-        </button>
-        <input ref={productFileRef} type="file" accept="image/*" multiple className="hidden" onChange={e => addPendingFiles(e.target.files, 'product')} />
+        <div className="mt-2">
+          <ImageUploadPair onChange={e => addPendingFiles(e.target.files, 'product')} />
+        </div>
       </div>
 
       {/* ─── Section 5: รูปภาพปัญหาคุณภาพ ─── */}
       <div className="border-t border-border pt-4">
         <h4 className="text-small font-semibold text-muted uppercase tracking-wide mb-1">รูปภาพปัญหาคุณภาพ</h4>
-        <p className="text-[11px] text-muted mb-2">รูปตัวอย่างปัญหาที่เคยพบ (สำหรับอ้างอิงตรวจรับ)</p>
+        <p className="text-[12px] text-muted mb-2">รูปตัวอย่างปัญหาที่เคยพบ (สำหรับอ้างอิงตรวจรับ)</p>
 
         {/* Existing quality images */}
         {qualityImgs.length > 0 && (
@@ -437,14 +430,14 @@ function Form({ initial = {}, onSave, loading, error, onClose, onDone }) {
                 <img
                   src={`/uploads/general/${img.file_path}`}
                   alt={img.original_name}
-                  className="w-20 h-20 object-cover rounded border border-red-200"
+                  className="w-20 h-20 object-cover rounded border border-red-200 dark:border-red-700"
                 />
                 <button
                   type="button"
                   onClick={() => setDeletingImg(img)}
-                  className="absolute top-0.5 right-0.5 w-5 h-5 bg-danger text-white rounded-full text-[10px] font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="absolute -top-1.5 -right-1.5 w-6 h-6 bg-danger text-white rounded-full text-[12px] font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow"
                 >X</button>
-                <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[9px] px-1 py-0.5 rounded-b truncate">{img.original_name}</div>
+                <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[12px] px-1 py-0.5 rounded-b truncate">{img.original_name}</div>
               </div>
             ))}
           </div>
@@ -452,15 +445,9 @@ function Form({ initial = {}, onSave, loading, error, onClose, onDone }) {
 
         <ImageStrip images={pendingQuality} onRemove={i => removePending(i, 'quality_issue')} label="รูปปัญหาที่เลือก (ยังไม่บันทึก)" />
 
-        <button
-          type="button"
-          onClick={() => qualityFileRef.current?.click()}
-          className="mt-2 inline-flex items-center gap-2 px-3 py-2 text-small border border-dashed border-red-300 rounded-md text-danger hover:border-danger hover:bg-red-50 transition-colors min-h-[40px]"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4"/></svg>
-          เพิ่มรูปภาพปัญหาคุณภาพ
-        </button>
-        <input ref={qualityFileRef} type="file" accept="image/*" multiple className="hidden" onChange={e => addPendingFiles(e.target.files, 'quality_issue')} />
+        <div className="mt-2">
+          <ImageUploadPair variant="danger" onChange={e => addPendingFiles(e.target.files, 'quality_issue')} />
+        </div>
       </div>
 
       <div className="flex justify-end pt-2 border-t border-border gap-2">
@@ -557,11 +544,7 @@ export default function Products() {
 
   async function handleExport() {
     try {
-      const res = await api.get('/master/products/export', { responseType: 'blob' });
-      const url = URL.createObjectURL(new Blob([res.data]));
-      const a = document.createElement('a');
-      a.href = url; a.download = 'products_template.xlsx'; a.click();
-      URL.revokeObjectURL(url);
+      await downloadExcel('/master/products/export', {}, 'products_template.xlsx');
     } catch { alert('Export ไม่สำเร็จ กรุณาลองอีกครั้ง'); }
   }
 
@@ -594,7 +577,7 @@ export default function Products() {
 
   // AQL display helper
   function aqlLabel(row) {
-    if (row.inspection_level === 'FULL') return <span className="badge bg-amber-100 text-amber-700">ตรวจ 100%</span>;
+    if (row.inspection_level === 'FULL') return <span className="badge bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-200">ตรวจ 100%</span>;
     const lvl = row.inspection_level?.replace('GEN_', 'GEN-') || '-';
     const aql = row.aql_value ? `AQL ${row.aql_value}` : '';
     return <span className="text-small text-muted font-mono">{lvl} {aql}</span>;
@@ -637,7 +620,108 @@ export default function Products() {
         </div>
       </div>
 
-      <div className="table-container">
+      {/* ── Mobile cards ── */}
+      <div className="md:hidden space-y-2 mb-4">
+        {rows.length === 0 && <p className="text-center text-muted py-8 text-body">ไม่พบสินค้า</p>}
+        {sorted.map(r => (
+          <div key={r.id} className="bg-surface border border-border rounded-lg p-3">
+            {/* ── Header row: badge สถานะ ── */}
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="min-w-0">
+                {r.code && <span className="font-mono text-[12px] text-muted mr-1">{r.code} ·</span>}
+              </div>
+              <span className={`badge flex-shrink-0 ${r.is_active ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-200' : 'bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-200'}`}>
+                {r.is_active ? 'ใช้งาน' : 'ปิด'}
+              </span>
+            </div>
+
+            {/* ── Body: ข้อมูล (ซ้าย) + รูป (ขวา) ── */}
+            <div className="flex gap-3 mb-2">
+              {/* ซ้าย: ข้อความ */}
+              <div className="flex-1 min-w-0">
+                <p className={`font-semibold text-body mb-1 ${r.is_active ? 'text-text' : 'text-muted'}`}>{r.name}</p>
+                <p className="text-[12px] text-muted mb-1.5 truncate">
+                  {r.suppliers?.length > 0
+                    ? r.suppliers.map(s => s.supplier_name).join(', ')
+                    : (r.supplier_name || '—')}
+                </p>
+                <div className="flex flex-wrap items-center gap-1 mb-1.5">
+                  {r.product_group_name && (
+                    <span className="px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900 text-blue-700 dark:text-blue-200 text-[12px]">{r.product_group_name}</span>
+                  )}
+                  {aqlLabel(r)}
+                </div>
+                {r.colors?.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {r.colors.map(c => (
+                      <span key={c.id} className="flex items-center gap-1">
+                        <span className="w-3 h-3 rounded-full border border-border inline-block flex-shrink-0" style={{ backgroundColor: c.hex_code || '#ccc' }} />
+                        <span className="text-[12px] text-muted">{c.name}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* ขวา: รูปภาพสินค้า */}
+              <div className="flex-shrink-0 w-24">
+                {r.thumbnail_path ? (
+                  <button
+                    onClick={() => setImgViewer({ productId: r.id, label: `รูปสินค้า — ${r.name}`, type: 'product' })}
+                    className="block w-full relative rounded-lg overflow-hidden border border-border"
+                  >
+                    <img
+                      src={`/uploads/general/${r.thumbnail_path}`}
+                      alt={r.name}
+                      className="w-24 h-24 object-cover"
+                    />
+                    {r.product_img_count > 1 && (
+                      <span className="absolute bottom-0 inset-x-0 bg-black/50 text-white text-[11px] text-center py-0.5">
+                        +{r.product_img_count - 1} รูป
+                      </span>
+                    )}
+                  </button>
+                ) : (
+                  <div className="w-24 h-24 rounded-lg border border-dashed border-border bg-bg flex items-center justify-center">
+                    <span className="text-[12px] text-muted text-center leading-tight px-1">No image</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ── Drawing + quality images ── */}
+            {(r.current_drawing || r.quality_img_count > 0) && (
+              <div className="flex items-center gap-3 text-[12px] text-muted mb-2">
+                {r.current_drawing && (
+                  <a href={`/api/master/products/${r.id}/drawings/current`} target="_blank" rel="noreferrer"
+                    className="text-red-600 dark:text-red-200 hover:underline flex items-center gap-0.5">
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M4 18h12V6l-4-4H4v16zm8-14l2 2h-2V4z"/></svg>
+                    Rev.{r.current_drawing?.revision}
+                  </a>
+                )}
+                {r.quality_img_count > 0 && (
+                  <button onClick={() => setImgViewer({ productId: r.id, label: `รูปงานเสีย — ${r.name}`, type: 'quality_issue' })}
+                    className="text-danger hover:underline">{r.quality_img_count} รูปงานเสีย</button>
+                )}
+              </div>
+            )}
+
+            {/* ── Actions ── */}
+            <div className="flex gap-2 pt-2 border-t border-border">
+              <button onClick={() => openEdit(r)}
+                className="flex-1 min-h-[44px] rounded-lg border border-border text-body text-text flex items-center justify-center hover:bg-bg">
+                แก้ไข
+              </button>
+              <div className="flex items-center justify-center min-w-[48px]">
+                <ToggleSwitch active={r.is_active} onClick={() => setConfirmToggle(r)} />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Desktop table ── */}
+      <div className="hidden md:block table-container">
         <table className="table">
           <thead>
             <tr>
@@ -683,7 +767,7 @@ export default function Products() {
                         </div>
                       ))}
                       {r.colors.length > 4 && (
-                        <span className="text-[11px] text-muted">+{r.colors.length - 4} สี</span>
+                        <span className="text-[12px] text-muted">+{r.colors.length - 4} สี</span>
                       )}
                     </div>
                   ) : (
@@ -706,7 +790,7 @@ export default function Products() {
                       href={`/api/master/products/${r.id}/drawings/current`}
                       target="_blank" rel="noreferrer"
                       onClick={e => e.stopPropagation()}
-                      className="text-red-600 hover:underline text-small flex items-center justify-center gap-1"
+                      className="text-red-600 dark:text-red-200 hover:underline text-small flex items-center justify-center gap-1"
                     >
                       <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M4 18h12V6l-4-4H4v16zm8-14l2 2h-2V4z"/></svg>
                       Rev.{r.current_drawing?.revision}
@@ -714,7 +798,7 @@ export default function Products() {
                   ) : <span className="text-muted text-small">-</span>}
                 </td>
                 <td>
-                  <span className={`badge ${r.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                  <span className={`badge ${r.is_active ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-200' : 'bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-200'}`}>
                     {r.is_active ? 'ใช้งาน' : 'ปิด'}
                   </span>
                 </td>
@@ -798,7 +882,7 @@ export default function Products() {
               />
             </div>
             {importError && (
-              <div className="text-danger text-small bg-red-50 border border-red-200 rounded px-3 py-2">{importError}</div>
+              <div className="text-danger text-small bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded px-3 py-2">{importError}</div>
             )}
             <div className="flex justify-end gap-2 pt-2 border-t border-border">
               <button type="button" onClick={closeImport} className="btn-secondary min-h-[44px] px-4">ยกเลิก</button>
@@ -818,21 +902,21 @@ export default function Products() {
           <div className="space-y-4">
             {/* Summary chips */}
             <div className="flex flex-wrap gap-2 items-center">
-              <span className="px-2.5 py-1 rounded-full text-small bg-gray-100 text-text font-medium">
+              <span className="px-2.5 py-1 rounded-full text-small bg-gray-100 dark:bg-gray-900 text-text font-medium">
                 ทั้งหมด {importPreview.total} รายการ
               </span>
               {importPreview.errorCount > 0 && (
-                <span className="px-2.5 py-1 rounded-full text-small bg-red-100 text-danger font-medium">
+                <span className="px-2.5 py-1 rounded-full text-small bg-red-100 dark:bg-red-900 text-danger font-medium">
                   ข้อผิดพลาด {importPreview.errorCount} รายการ
                 </span>
               )}
               {importPreview.warningCount > 0 && (
-                <span className="px-2.5 py-1 rounded-full text-small bg-amber-100 text-warning font-medium">
+                <span className="px-2.5 py-1 rounded-full text-small bg-amber-100 dark:bg-amber-900 text-warning font-medium">
                   คำเตือน {importPreview.warningCount} รายการ
                 </span>
               )}
               {importPreview.errorCount === 0 && (
-                <span className="px-2.5 py-1 rounded-full text-small bg-green-100 text-success font-medium">
+                <span className="px-2.5 py-1 rounded-full text-small bg-green-100 dark:bg-green-900 text-success font-medium">
                   พร้อม Import
                 </span>
               )}
@@ -866,10 +950,10 @@ export default function Products() {
                           <span className="text-success font-medium">OK</span>
                         )}
                         {r.errors.map((e, i) => (
-                          <div key={i} className="text-danger text-[11px] leading-snug">{e}</div>
+                          <div key={i} className="text-danger text-[12px] leading-snug">{e}</div>
                         ))}
                         {r.warnings.map((w, i) => (
-                          <div key={i} className="text-warning text-[11px] leading-snug">{w}</div>
+                          <div key={i} className="text-warning text-[12px] leading-snug">{w}</div>
                         ))}
                       </td>
                     </tr>
@@ -879,7 +963,7 @@ export default function Products() {
             </div>
 
             {importError && (
-              <div className="text-danger text-small bg-red-50 border border-red-200 rounded px-3 py-2">{importError}</div>
+              <div className="text-danger text-small bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded px-3 py-2">{importError}</div>
             )}
 
             <div className="flex items-center justify-between pt-2 border-t border-border gap-3">

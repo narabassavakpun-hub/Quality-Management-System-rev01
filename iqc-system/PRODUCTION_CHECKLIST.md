@@ -18,6 +18,18 @@
 - [ ] ตั้ง backup รายวัน (DB ด้วย `.backup`, uploads ด้วย tar) + เก็บนอกเครื่อง 7 วัน
 - [ ] ทดสอบ restore จาก backup ได้จริง
 
+### ถ้า deploy บน Render Free tier (ephemeral + restore-on-boot จาก R2 — ดู DEPLOYMENT.md §8.2 แทนหัวข้อบน)
+- [ ] `R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`/`R2_BUCKET` ตั้งครบใน Render env vars
+- [ ] `RESTORE_ON_BOOT=true` ตั้งไว้
+- [ ] `TELEGRAM_BOOT_ALERT_TOKEN`/`TELEGRAM_BOOT_ALERT_CHAT_ID` ตั้งไว้ (alert ตอน restore ล้มเหลวก่อน DB พร้อม)
+- [ ] Render dashboard **Health Check Path** = `/api/health` (ตั้งแยกจาก Dockerfile `HEALTHCHECK`)
+- [ ] **Instance Count = 1 เสมอ** — ไม่เปิด autoscale (SQLite single-writer)
+- [ ] ทดสอบ **restore drill**: `node scripts/restore-from-r2.js` กู้ DB จาก R2 สำเร็จจริง
+- [ ] ทดสอบ **sleep→wake พร้อมมี write คั่นกลาง** (ไม่ใช่แค่ redeploy) แล้วข้อมูลไม่หาย
+- [ ] จำลอง backup ล้มเหลว (เช่น R2 credential ผิดชั่วคราว) → Telegram alert ยิงจริง
+- [ ] Keep-alive หลัก (UptimeRobot/cron-job.org, ~5 นาที) ตั้งแล้ว **พร้อมเปิด failure-alert**
+- [ ] (optional) `.github/workflows/keep-alive.yml` ตั้ง repo variable `RENDER_APP_URL` แล้ว
+
 ## Build / Image
 - [ ] `docker compose build` ผ่าน (multi-stage)
 - [ ] image รัน non-root (`USER node`) — ตรวจ `docker compose exec app whoami` = `node`

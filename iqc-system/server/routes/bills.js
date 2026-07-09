@@ -8,6 +8,7 @@ const requireRole = require('../middleware/requireRole');
 const uploads = require('../middleware/upload');
 const { requireReceivingQC } = require('../middleware/requireRole');
 const { getUsersByRole, getReceivingQCStaff, createNotification, sendTelegram } = require('../lib/notify');
+const billService = require('../services/billService');
 
 // qc_staff ทุก route ใน bills ต้องเป็นสถานี incoming เท่านั้น
 router.use((req, res, next) => {
@@ -102,16 +103,10 @@ router.post('/', auth, requireRole(['qc_staff']), (req, res) => {
     return res.status(400).json({ error: `Supplier นี้มีสถานะ ${supplier.approval_status} ไม่สามารถรับสินค้าได้` });
   }
 
-  const create = db.transaction(() => {
-    const result = db.prepare(`
-      INSERT INTO bills (invoice_no, po_no, container_no, tracking_no, supplier_id, received_date, status, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, 'draft', ?)
-    `).run(invoice_no, po_no, container_no || null, tracking_no || null, supplier_id, received_date, req.user.id);
-    db.auditLog('bills', result.lastInsertRowid, 'CREATE', null, { invoice_no, po_no, supplier_id }, req.user.id, req.ip);
-    return result.lastInsertRowid;
+  const id = billService.createBill({
+    invoice_no, po_no, container_no, tracking_no, supplier_id, received_date,
+    actorId: req.user.id, actorIp: req.ip,
   });
-
-  const id = create();
   res.json(db.prepare('SELECT * FROM bills WHERE id = ?').get(id));
 });
 
@@ -266,16 +261,7 @@ router.post('/:id/submit', auth, requireRole(['qc_staff']), (req, res) => {
     }
   }
 
-  const submit = db.transaction(() => {
-    db.prepare("UPDATE bills SET status='pending_approval' WHERE id=?").run(req.params.id);
-    for (const sv of getUsersByRole('qc_supervisor')) {
-      createNotification(sv.id, 'บิลรออนุมัติ', `Invoice ${bill.invoice_no} รอการอนุมัติ`, `/bills/${bill.id}`);
-    }
-    sendTelegram(db.getSetting('telegram_group_qc'), `[IQC] บิลใหม่รออนุมัติ\nInvoice: ${bill.invoice_no}\nPO: ${bill.po_no}`);
-    db.auditLog('bills', req.params.id, 'SUBMIT', { status: 'draft' }, { status: 'pending_approval' }, req.user.id, req.ip);
-  });
-
-  submit();
+  billService.submitBill({ bill, actorId: req.user.id, actorIp: req.ip });
   res.json({ ok: true, status: 'pending_approval' });
 });
 
@@ -285,15 +271,8 @@ router.post('/:id/approve', auth, requireRole(['qc_supervisor']), (req, res) => 
   if (!bill) return res.status(404).json({ error: 'ไม่พบบิล' });
   if (bill.status !== 'pending_approval') return res.status(400).json({ error: 'บิลนี้ไม่ได้รออนุมัติ' });
 
-  const approve = db.transaction(() => {
-    const changed = db.prepare("UPDATE bills SET status='approved' WHERE id=? AND status='pending_approval'").run(req.params.id);
-    if (changed.changes === 0) throw new Error('บิลถูกดำเนินการแล้ว กรุณารีเฟรชหน้า');
-    createNotification(bill.created_by, 'บิลได้รับการอนุมัติ', `Invoice ${bill.invoice_no} อนุมัติแล้ว`, `/bills/${bill.id}`);
-    db.auditLog('bills', req.params.id, 'APPROVE', { status: 'pending_approval' }, { status: 'approved' }, req.user.id, req.ip);
-  });
-
   try {
-    approve();
+    billService.approveBill({ bill, actorId: req.user.id, actorIp: req.ip });
     res.json({ ok: true, status: 'approved' });
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -316,7 +295,7 @@ router.post('/:id/reject', auth, requireRole(['qc_supervisor']), (req, res) => {
 });
 
 // ===== POST /api/bills/:id/images =====
-router.post('/:id/images', auth, requireRole(['qc_staff']), uploads.bills.array('images', 20), uploads.verifyMagic, (req, res) => {
+router.post('/:id/images', auth, requireRole(['qc_staff']), uploads.bills.array('images', 20), uploads.verifyMagic, uploads.compressImages, (req, res) => {
   if (!req.files?.length) return res.status(400).json({ error: 'กรุณาเลือกไฟล์' });
   const insert = db.prepare('INSERT INTO bill_images (bill_id, file_path) VALUES (?, ?)');
   for (const file of req.files) insert.run(req.params.id, file.filename);
@@ -328,7 +307,7 @@ router.delete('/:id/images/:imageId', auth, requireRole(['qc_staff']), (req, res
   const img = db.prepare('SELECT * FROM bill_images WHERE id = ? AND bill_id = ?').get(req.params.imageId, req.params.id);
   if (!img) return res.status(404).json({ error: 'ไม่พบรูปภาพ' });
   const filePath = path.join(__dirname, '../../uploads/bills', img.file_path);
-  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch (e) { console.error('[delete bill image]', e.message); }
   db.prepare('DELETE FROM bill_images WHERE id = ?').run(req.params.imageId);
   res.json({ ok: true });
 });
@@ -469,7 +448,7 @@ router.delete('/:id/items/:itemId', auth, requireRole(['qc_staff']), (req, res) 
 });
 
 // ===== POST /api/bills/:id/items/:itemId/images =====
-router.post('/:id/items/:itemId/images', auth, requireRole(['qc_staff']), uploads.billItems.array('images', 10), uploads.verifyMagic, (req, res) => {
+router.post('/:id/items/:itemId/images', auth, requireRole(['qc_staff']), uploads.billItems.array('images', 10), uploads.verifyMagic, uploads.compressImages, (req, res) => {
   if (!req.files?.length) return res.status(400).json({ error: 'กรุณาเลือกไฟล์' });
   const insert = db.prepare('INSERT INTO bill_item_images (bill_item_id, file_path) VALUES (?, ?)');
   for (const file of req.files) insert.run(req.params.itemId, file.filename);
@@ -487,7 +466,7 @@ router.delete('/:id/items/:itemId/images/:imageId', auth, requireRole(['qc_staff
 });
 
 // ===== POST /api/bills/:id/items/:itemId/inspection-docs =====
-router.post('/:id/items/:itemId/inspection-docs', auth, requireRole(['qc_staff']), uploads.inspectionDocs.array('docs', 10), uploads.verifyMagic, (req, res) => {
+router.post('/:id/items/:itemId/inspection-docs', auth, requireRole(['qc_staff']), uploads.inspectionDocs.array('docs', 10), uploads.verifyMagic, uploads.compressImages, (req, res) => {
   if (!req.files?.length) return res.status(400).json({ error: 'กรุณาเลือกไฟล์' });
   const insert = db.prepare('INSERT INTO bill_item_inspection_docs (bill_item_id, file_path, file_type, original_name) VALUES (?, ?, ?, ?)');
   for (const file of req.files) {
@@ -506,13 +485,13 @@ router.delete('/:id/items/:itemId/inspection-docs/:docId', auth, requireRole(['q
   const doc = db.prepare('SELECT * FROM bill_item_inspection_docs WHERE id = ? AND bill_item_id = ?').get(req.params.docId, req.params.itemId);
   if (!doc) return res.status(404).json({ error: 'ไม่พบไฟล์' });
   const filePath = path.join(__dirname, '../../uploads/inspection-docs', doc.file_path);
-  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch (e) { console.error('[delete inspection-doc]', e.message); }
   db.prepare('DELETE FROM bill_item_inspection_docs WHERE id = ?').run(req.params.docId);
   res.json({ ok: true });
 });
 
 // ===== POST /api/bills/:id/items/:itemId/certificates — Certificate of Conformance =====
-router.post('/:id/items/:itemId/certificates', auth, requireRole(['qc_staff']), uploads.inspectionDocs.array('files', 5), uploads.verifyMagic, (req, res) => {
+router.post('/:id/items/:itemId/certificates', auth, requireRole(['qc_staff']), uploads.inspectionDocs.array('files', 5), uploads.verifyMagic, uploads.compressImages, (req, res) => {
   const { cert_type, cert_number, issued_date, issued_by } = req.body;
   if (!cert_type || !req.files?.length) return res.status(400).json({ error: 'กรุณาระบุประเภท certificate และอัปโหลดไฟล์' });
   const ins = db.prepare('INSERT INTO bill_item_certificates (bill_item_id, cert_type, cert_number, file_path, original_name, issued_date, issued_by) VALUES (?, ?, ?, ?, ?, ?, ?)');

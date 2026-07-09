@@ -1,0 +1,172 @@
+// Unit tests — backupService.js / r2Client.js (Render free-tier deployment plan)
+// mock ทุกฟังก์ชันของ r2Client โดยตรง (reassign export) แบบเดียวกับที่ authService.test.js mock
+// adGatewayClient.postLogin — ไม่ยิง network จริงไป Cloudflare R2 เลยในเทสชุดนี้
+const os = require('node:os');
+const path = require('node:path');
+const fs = require('node:fs');
+process.env.IQC_DB_PATH = path.join(os.tmpdir(), `iqc-backupsvc-${process.pid}-${Date.now()}.db`);
+
+const test = require('node:test');
+const assert = require('node:assert');
+const RawDatabase = require('better-sqlite3');
+const r2 = require('../lib/r2Client');
+const backupService = require('../lib/backupService');
+
+// สร้างไฟล์ sqlite ที่ valid ขั้นต่ำไว้ที่ IQC_DB_PATH — ไม่ require('../db/database') เพื่อไม่ต้องแบก
+// schema/migration/seed เต็มระบบ (backupService เองก็ตั้งใจไม่พึ่ง db/database.js เช่นกัน ดู comment ในไฟล์จริง)
+test.before(() => {
+  const db = new RawDatabase(process.env.IQC_DB_PATH);
+  db.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)');
+  db.prepare('INSERT INTO t (v) VALUES (?)').run('hello');
+  db.close();
+});
+test.after(() => {
+  for (const f of [process.env.IQC_DB_PATH, process.env.IQC_DB_PATH + '-wal', process.env.IQC_DB_PATH + '-shm']) {
+    try { fs.unlinkSync(f); } catch {}
+  }
+});
+
+function setR2Env() {
+  process.env.R2_ACCOUNT_ID = 'test-account';
+  process.env.R2_ACCESS_KEY_ID = 'test-key';
+  process.env.R2_SECRET_ACCESS_KEY = 'test-secret';
+  process.env.R2_BUCKET = 'test-bucket';
+}
+function unsetR2Env() {
+  delete process.env.R2_ACCOUNT_ID;
+  delete process.env.R2_ACCESS_KEY_ID;
+  delete process.env.R2_SECRET_ACCESS_KEY;
+  delete process.env.R2_BUCKET;
+}
+
+// ===== bangkokDateString / bangkokWeekdayIndex — pure date math, ไม่ต้อง mock =====
+test('BACKUP-01 bangkokDateString: format YYYY-MM-DD ตาม Asia/Bangkok', () => {
+  const d = new Date('2026-07-09T20:00:00Z'); // 03:00 09-Jul Bangkok ของวันถัดไป (UTC+7)
+  assert.equal(backupService.bangkokDateString(d), '2026-07-10');
+});
+
+test('BACKUP-02 bangkokWeekdayIndex: ข้าม UTC-day boundary ตามเวลาไทยถูกต้อง (0=Sun..6=Sat)', () => {
+  // 2026-07-09 คือวันพฤหัส (Thu) ตามปฏิทินจริง — 21:00 UTC ของวันพุธ = 04:00 พฤหัส เวลาไทย
+  const d = new Date('2026-07-08T21:00:00Z');
+  assert.equal(backupService.bangkokWeekdayIndex(d), 4); // Thu = 4
+});
+
+// ===== r2Client.isConfigured =====
+test('BACKUP-03 r2Client.isConfigured: false ถ้าตั้งค่าไม่ครบ, true ถ้าครบ', () => {
+  unsetR2Env();
+  assert.equal(r2.isConfigured(), false);
+  setR2Env();
+  assert.equal(r2.isConfigured(), true);
+  unsetR2Env();
+});
+
+// ===== runHotBackup =====
+test('BACKUP-04 runHotBackup: no-op (ไม่เรียก R2 เลย) ถ้ายังไม่ได้ตั้งค่า R2', async () => {
+  unsetR2Env();
+  let called = false;
+  const orig = r2.putObjectFromFile;
+  r2.putObjectFromFile = async () => { called = true; };
+  try {
+    await backupService.runHotBackup();
+    assert.equal(called, false);
+  } finally {
+    r2.putObjectFromFile = orig;
+  }
+});
+
+test('BACKUP-05 runHotBackup: อัปโหลด backups/db/latest.db + อัปเดต manifest.latest', async () => {
+  setR2Env();
+  const origPut = r2.putObjectFromFile;
+  const origPutJson = r2.putJson;
+  const origGetJson = r2.getJson;
+  let uploadedKey = null;
+  let manifestWritten = null;
+  r2.putObjectFromFile = async (key) => { uploadedKey = key; return { size: 1234 }; };
+  r2.getJson = async () => ({});
+  r2.putJson = async (key, obj) => { manifestWritten = { key, obj }; };
+  try {
+    await backupService.runHotBackup();
+    assert.equal(uploadedKey, 'backups/db/latest.db');
+    assert.equal(manifestWritten.key, 'backups/manifest.json');
+    assert.equal(manifestWritten.obj.latest.sizeBytes, 1234);
+    assert.ok(manifestWritten.obj.latest.uploadedAt);
+  } finally {
+    r2.putObjectFromFile = origPut;
+    r2.putJson = origPutJson;
+    r2.getJson = origGetJson;
+    unsetR2Env();
+  }
+});
+
+test('BACKUP-06 runHotBackup: ไม่ throw แม้ R2 upload ล้มเหลว (alertFailure กิน error เอง)', async () => {
+  setR2Env();
+  const origPut = r2.putObjectFromFile;
+  r2.putObjectFromFile = async () => { throw new Error('network down'); };
+  try {
+    await assert.doesNotReject(() => backupService.runHotBackup());
+  } finally {
+    r2.putObjectFromFile = origPut;
+    unsetR2Env();
+  }
+});
+
+// ===== runDailyFifoBackup =====
+test('BACKUP-07 runDailyFifoBackup: skip ถ้า slot ของวันนี้ทำไปแล้ว (manifest.day[day-N].date = วันนี้)', async () => {
+  setR2Env();
+  const today = backupService.bangkokDateString();
+  const dayIdx = backupService.bangkokWeekdayIndex();
+  const origGetJson = r2.getJson;
+  const origPut = r2.putObjectFromFile;
+  let putCalled = false;
+  r2.getJson = async () => ({ day: { [`day-${dayIdx}`]: { date: today, uploadedAt: new Date().toISOString(), sizeBytes: 1 } } });
+  r2.putObjectFromFile = async () => { putCalled = true; };
+  try {
+    await backupService.runDailyFifoBackup();
+    assert.equal(putCalled, false);
+  } finally {
+    r2.getJson = origGetJson;
+    r2.putObjectFromFile = origPut;
+    unsetR2Env();
+  }
+});
+
+test('BACKUP-08 runDailyFifoBackup: อัปโหลด day-N.db ตาม weekday ปัจจุบัน ถ้ายังไม่ได้ทำวันนี้', async () => {
+  setR2Env();
+  const dayIdx = backupService.bangkokWeekdayIndex();
+  const origGetJson = r2.getJson;
+  const origPut = r2.putObjectFromFile;
+  const origPutJson = r2.putJson;
+  let uploadedKey = null;
+  let manifestWritten = null;
+  r2.getJson = async () => ({}); // manifest ว่าง — ยังไม่เคยทำวันนี้
+  r2.putObjectFromFile = async (key) => { uploadedKey = key; return { size: 999 }; };
+  r2.putJson = async (key, obj) => { manifestWritten = obj; };
+  try {
+    await backupService.runDailyFifoBackup();
+    assert.equal(uploadedKey, `backups/db/day-${dayIdx}.db`);
+    assert.equal(manifestWritten.day[`day-${dayIdx}`].sizeBytes, 999);
+  } finally {
+    r2.getJson = origGetJson;
+    r2.putObjectFromFile = origPut;
+    r2.putJson = origPutJson;
+    unsetR2Env();
+  }
+});
+
+// ===== walkFiles (uploads sync helper) =====
+test('BACKUP-09 walkFiles: เดินไฟล์ nested directory ครบทุกไฟล์', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iqc-walkfiles-'));
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'a');
+  fs.mkdirSync(path.join(dir, 'sub'));
+  fs.writeFileSync(path.join(dir, 'sub', 'b.txt'), 'b');
+  try {
+    const files = backupService.walkFiles(dir).map(f => path.relative(dir, f).split(path.sep).join('/')).sort();
+    assert.deepEqual(files, ['a.txt', 'sub/b.txt']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('BACKUP-10 walkFiles: คืน [] ถ้าโฟลเดอร์ไม่มีอยู่จริง (เช่น container ใหม่ยังไม่เคยมี uploads เลย)', () => {
+  assert.deepEqual(backupService.walkFiles(path.join(os.tmpdir(), 'iqc-does-not-exist-' + Date.now())), []);
+});

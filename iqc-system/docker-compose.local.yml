@@ -1,0 +1,33 @@
+﻿# ============================================================================
+# IQC System — Local Testing (build จาก code ปัจจุบัน + ทดสอบบนมือถือ WiFi เดียวกัน)
+#
+# ใช้งานง่ายๆ:
+#   .\run-local.ps1          (จาก root ของ project)
+#
+# หรือรันเอง (จาก iqc-system/):
+#   docker compose -f docker-compose.local.yml up --build
+#
+# เข้าถึงจากมือถือ (WiFi เดียวกัน): http://<IP เครื่อง>:3001
+# ============================================================================
+
+services:
+  app:
+    build: .                          # build จาก Dockerfile ใน iqc-system/
+    image: iqc-local:dev              # tag สำหรับ local เท่านั้น (ไม่กระทบ production)
+    container_name: iqc-local
+    ports:
+      - "3001:3001"
+    env_file:
+      - .env.local                    # JWT_SECRET + config (auto-create ด้วย run-local.ps1)
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      TZ: Asia/Bangkok
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
+      IQC_DB_PATH: /data/iqc.db
+      BCRYPT_ROUNDS: "12"
+    volumes:
+      - ./iqc.db:/data/iqc.db         # DB จริง (iqc-system/iqc.db)
+      - ./uploads:/app/uploads         # ไฟล์แนบจริง
+    shm_size: "512mb"
+    restart: unless-stopped

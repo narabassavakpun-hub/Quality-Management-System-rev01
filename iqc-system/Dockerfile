@@ -66,4 +66,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=25s --retries=3 \
 
 # dumb-init เป็น PID 1 → forward signal (SIGTERM ถึง node = graceful shutdown) + reap zombie Chromium
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["node", "index.js"]
+# bootstrap.js = restore-on-boot (เฉพาะ deployment ที่ตั้ง RESTORE_ON_BOOT=true เช่น Render free tier ที่ไม่มี
+# persistent disk — ดู DEPLOYMENT.md) แล้วค่อย require('./index.js') ต่อ — no-op ถ้าไม่ได้ตั้งค่านี้
+CMD ["node", "bootstrap.js"]

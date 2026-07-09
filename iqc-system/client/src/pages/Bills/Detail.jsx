@@ -2,7 +2,7 @@ import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import api from '../../utils/api';
+import api, { downloadExcel, downloadPdf } from '../../utils/api';
 import Badge from '../../components/UI/Badge';
 import Button from '../../components/UI/Button';
 import ConfirmDialog from '../../components/UI/ConfirmDialog';
@@ -33,6 +33,13 @@ export default function BillDetail() {
 
   return (
     <div className="space-y-4">
+      <button onClick={() => navigate(-1)}
+        className="inline-flex items-center gap-1.5 text-muted hover:text-text text-small min-h-[44px] -ml-1">
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+        </svg>
+        กลับ
+      </button>
       <div className="page-header">
         <div>
           <h1 className="page-title">บิล — {bill.invoice_no}</h1>
@@ -53,28 +60,24 @@ export default function BillDetail() {
           )}
           {bill.status === 'approved' && (
             <>
-              <a
-                href={`/api/bill/${id}/pdf`}
-                target="_blank"
-                rel="noreferrer"
+              <button
+                onClick={() => downloadPdf(`/bill/${id}/pdf`, {}, `${bill.invoice_no || id}.pdf`)}
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-surface hover:bg-bg text-small font-medium text-text transition-colors min-h-[40px]"
               >
                 <svg className="w-4 h-4 text-danger" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
                 Export PDF
-              </a>
-              <a
-                href={`/api/bill/${id}/excel`}
-                target="_blank"
-                rel="noreferrer"
+              </button>
+              <button
+                onClick={() => downloadExcel(`/bill/${id}/excel`, {}, `${bill.invoice_no || id}.xlsx`)}
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-surface hover:bg-bg text-small font-medium text-text transition-colors min-h-[40px]"
               >
                 <svg className="w-4 h-4 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
                 Export Excel
-              </a>
+              </button>
             </>
           )}
         </div>
@@ -118,29 +121,30 @@ export default function BillDetail() {
         <h2 className="text-h3 font-semibold text-primary mb-3">รายการสินค้า</h2>
         {bill.items?.map((item, i) => (
           <div key={item.id} className={`border rounded-lg mb-3 overflow-hidden ${item.qty_failed > 0 ? 'border-danger' : 'border-border'}`}>
-            <div className={`p-3 ${item.qty_failed > 0 ? 'bg-red-50' : 'bg-surface'}`}>
+            <div className={`p-3 ${item.qty_failed > 0 ? 'bg-red-50 dark:bg-red-900' : 'bg-surface'}`}>
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1">
                   <div className="font-medium text-body">{i + 1}. {item.product_name || item.item_name || '-'}</div>
                   <div className="text-small text-muted mt-0.5">{item.product_group_name}</div>
                 </div>
+                {/* ไม่ใช้ font-mono ตรงนี้โดยตั้งใจ — IBM Plex Mono แสดงเลข 0 แบบมีจุดกลาง ทำให้สับสนกับตัวเลขอื่นเวลาอ่านจำนวนเร็วๆ */}
                 <div className="flex gap-4 text-small text-center">
-                  <div><div className="text-muted">รับเข้า</div><div className="font-mono font-semibold">{item.qty_received}</div></div>
-                  <div><div className="text-muted">สุ่มตรวจ</div><div className="font-mono font-semibold">{item.qty_sampled}</div></div>
-                  <div><div className="text-muted">ผ่าน</div><div className="font-mono font-semibold text-success">{item.qty_passed}</div></div>
-                  <div><div className="text-muted">ไม่ผ่าน</div><div className={`font-mono font-semibold ${item.qty_failed > 0 ? 'text-danger' : ''}`}>{item.qty_failed}</div></div>
+                  <div><div className="text-muted">รับเข้า</div><div className="font-semibold">{(item.qty_received ?? 0).toLocaleString()}</div></div>
+                  <div><div className="text-muted">สุ่มตรวจ</div><div className="font-semibold">{(item.qty_sampled ?? 0).toLocaleString()}</div></div>
+                  <div><div className="text-muted">ผ่าน</div><div className="font-semibold text-success">{(item.qty_passed ?? 0).toLocaleString()}</div></div>
+                  <div><div className="text-muted">ไม่ผ่าน</div><div className={`font-semibold ${item.qty_failed > 0 ? 'text-danger' : ''}`}>{(item.qty_failed ?? 0).toLocaleString()}</div></div>
                 </div>
               </div>
             </div>
             {item.qty_failed > 0 && (
-              <div className="bg-red-50 border-t border-red-200 p-3 space-y-2">
+              <div className="bg-red-50 dark:bg-red-900 border-t border-red-200 dark:border-red-700 p-3 space-y-2">
                 <div className="text-small"><span className="text-muted">กลุ่มปัญหา: </span><span className="font-medium">{item.defect_category_name || '-'}</span></div>
                 <div className="text-small"><span className="text-muted">รายละเอียด: </span>{item.defect_detail || '-'}</div>
                 {item.images?.length > 0 && (
                   <div className="flex flex-wrap gap-2 mt-2">
                     {item.images.map(img => (
                       <a key={img.id} href={`/uploads/bill-items/${img.file_path}`} target="_blank" rel="noreferrer">
-                        <img src={`/uploads/bill-items/${img.file_path}`} alt="" className="h-20 w-20 object-cover rounded border border-red-200" />
+                        <img src={`/uploads/bill-items/${img.file_path}`} alt="" className="h-20 w-20 object-cover rounded border border-red-200 dark:border-red-700" />
                       </a>
                     ))}
                   </div>
@@ -150,7 +154,7 @@ export default function BillDetail() {
                     item.in_ncr ? (
                       <button
                         onClick={() => navigate(`/ncr/${item.in_ncr.id}`)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-accent text-accent bg-blue-50 hover:bg-blue-100 text-small font-mono font-semibold transition-colors"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-accent text-accent bg-blue-50 dark:bg-blue-900 hover:bg-blue-100 text-small font-mono font-semibold transition-colors"
                       >
                         <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />

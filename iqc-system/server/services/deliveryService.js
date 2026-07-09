@@ -1,0 +1,227 @@
+// ===== Delivery domain service (สกัดจาก routes/delivery.js — CLAUDE.md §2.2/§8) =====
+// business transaction ของ Delivery: create / unplanned / acknowledge / updateStatus
+// (edit + delete ยังอยู่ใน route — notification/file-heavy)
+const db = require('../db/database');
+const { getUsersByRole, getReceivingQCStaff, createNotification, sendTelegram } = require('../lib/notify');
+
+// Purchasing สร้างแผนส่ง (pending) + items + notify (off-hours/holiday) + audit → คืน scheduleId
+function createSchedule({ supplier_id, scheduled_date, time_slot, notes, items, has_sample, actorId, actorIp }) {
+  const createTx = db.transaction(() => {
+    const result = db.prepare(`
+      INSERT INTO delivery_schedules (supplier_id, scheduled_date, time_slot, notes, is_unplanned, status, has_sample, created_by)
+      VALUES (?, ?, ?, ?, 0, 'pending', ?, ?)
+    `).run(supplier_id, scheduled_date, time_slot, notes || null, has_sample ? 1 : 0, actorId);
+
+    const scheduleId = result.lastInsertRowid;
+
+    if (Array.isArray(items)) {
+      const insItem = db.prepare('INSERT INTO delivery_schedule_items (schedule_id, product_id, item_name, qty_expected, notes, is_urgent) VALUES (?, ?, ?, ?, ?, ?)');
+      for (const item of items) {
+        insItem.run(scheduleId, item.product_id || null, item.item_name || null, item.qty_expected || null, item.notes || null, item.is_urgent ? 1 : 0);
+      }
+    }
+
+    const supplier = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(supplier_id);
+
+    for (const u of [...getReceivingQCStaff(), ...getUsersByRole('qc_supervisor')]) {
+      createNotification(u.id, 'แจ้งกำหนดส่งสินค้า', `${supplier?.name} วันที่ ${scheduled_date} เวลา ${time_slot}`, `/delivery`);
+    }
+    sendTelegram(db.getSetting('telegram_group_qc'),
+      `[IQC] แจ้งกำหนดส่งสินค้า\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date} (${time_slot})\nหมายเหตุ: ${notes || '-'}`
+    );
+
+    // แจ้งเตือนพิเศษเมื่อนัดนอกเวลาทำงาน (07:xx หรือ 18:xx)
+    const slotHour = time_slot ? parseInt(time_slot.split(':')[0], 10) : -1;
+    if (slotHour === 7 || slotHour === 18) {
+      const offLabel = slotHour === 7 ? 'ก่อนเข้างาน (07:xx)' : 'หลังเลิกงาน (18:xx)';
+      const offMsg   = `${supplier?.name} นัดส่งวันที่ ${scheduled_date} เวลา ${time_slot} — ${offLabel}`;
+      for (const u of getUsersByRole('qc_supervisor')) createNotification(u.id, 'แจ้งนัดส่งนอกเวลาทำงาน', offMsg, `/delivery`);
+      for (const u of getUsersByRole('qc_manager'))   createNotification(u.id, 'แจ้งนัดส่งนอกเวลาทำงาน', offMsg, `/delivery`);
+      for (const u of getUsersByRole('purchasing'))   createNotification(u.id, 'แจ้งนัดส่งนอกเวลาทำงาน', offMsg, `/delivery`);
+      sendTelegram(db.getSetting('telegram_group_qc'),
+        `[IQC] แจ้งเตือน: นัดส่งสินค้านอกเวลาทำงาน\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date} เวลา: ${time_slot} (${offLabel})`
+      );
+      sendTelegram(db.getSetting('telegram_group_purchasing'),
+        `[IQC] แจ้งเตือน: นัดส่งสินค้านอกเวลาทำงาน\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date} เวลา: ${time_slot} (${offLabel})`
+      );
+    }
+
+    // แจ้งเตือนพิเศษเมื่อนัดส่งวันหยุด (เสาร์-อาทิตย์ หรือวันหยุดบริษัท)
+    const dow = new Date(scheduled_date).getDay(); // 0=Sun, 6=Sat
+    const companyHoliday = db.prepare("SELECT name FROM company_holidays WHERE holiday_date = ?").get(scheduled_date);
+    const isHoliday = dow === 0 || dow === 6 || !!companyHoliday;
+    if (isHoliday) {
+      let dayName = '';
+      if (dow === 0) dayName = 'วันอาทิตย์';
+      else if (dow === 6) dayName = 'วันเสาร์';
+      else dayName = `วันหยุดบริษัท (${companyHoliday.name})`;
+      const weekendMsg = `${supplier?.name} นัดส่งสินค้า${dayName} ${scheduled_date} เวลา ${time_slot}`;
+      for (const u of getReceivingQCStaff())      createNotification(u.id, `แจ้งนัดส่งวันหยุด`, weekendMsg, `/delivery`);
+      for (const u of getUsersByRole('qc_supervisor')) createNotification(u.id, `แจ้งนัดส่งวันหยุด`, weekendMsg, `/delivery`);
+      for (const u of getUsersByRole('qc_manager'))   createNotification(u.id, `แจ้งนัดส่งวันหยุด`, weekendMsg, `/delivery`);
+      for (const u of getUsersByRole('purchasing'))   createNotification(u.id, `แจ้งนัดส่งวันหยุด`, weekendMsg, `/delivery`);
+      sendTelegram(db.getSetting('telegram_group_qc'),
+        `[IQC] แจ้งเตือน: นัดส่งสินค้า${dayName}\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date} เวลา: ${time_slot}`
+      );
+      sendTelegram(db.getSetting('telegram_group_purchasing'),
+        `[IQC] แจ้งเตือน: นัดส่งสินค้า${dayName}\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date} เวลา: ${time_slot}`
+      );
+    }
+
+    db.auditLog('delivery_schedules', scheduleId, 'CREATE', null, { supplier_id, scheduled_date, time_slot }, actorId, actorIp);
+    return scheduleId;
+  });
+  return createTx();
+}
+
+// QC Staff/Supervisor บันทึกส่งนอกแผน (is_unplanned=1, on_time) → คืน scheduleId
+function createUnplanned({ supplier_id, scheduled_date, time_slot, notes, items, actorId, actorName, actorIp }) {
+  const createTx = db.transaction(() => {
+    const result = db.prepare(`
+      INSERT INTO delivery_schedules (supplier_id, scheduled_date, time_slot, notes, is_unplanned, status, created_by)
+      VALUES (?, ?, ?, ?, 1, 'on_time', ?)
+    `).run(supplier_id, scheduled_date, time_slot || 'fullday', notes || null, actorId);
+
+    const scheduleId = result.lastInsertRowid;
+
+    if (Array.isArray(items)) {
+      const insItem = db.prepare('INSERT INTO delivery_schedule_items (schedule_id, product_id, item_name, qty_expected, notes, is_urgent) VALUES (?, ?, ?, ?, ?, ?)');
+      for (const item of items) {
+        insItem.run(scheduleId, item.product_id || null, item.item_name || null, item.qty_expected || null, item.notes || null, item.is_urgent ? 1 : 0);
+      }
+    }
+
+    const purchasings = getUsersByRole('purchasing');
+    const supplier = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(supplier_id);
+    for (const u of purchasings) {
+      createNotification(u.id, 'สินค้าส่งนอกแผน', `มีสินค้าส่งนอกแผนจาก ${supplier?.name} — กรุณาตรวจสอบ`, `/delivery`);
+    }
+
+    sendTelegram(db.getSetting('telegram_group_purchasing'),
+      `[IQC] สินค้าส่งนอกแผน\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date}\nบันทึกโดย: ${actorName}`
+    );
+
+    db.auditLog('delivery_schedules', scheduleId, 'CREATE', null, { supplier_id, is_unplanned: 1 }, actorId, actorIp);
+    return scheduleId;
+  });
+  return createTx();
+}
+
+// QC รับทราบกำหนดส่ง (pending → acknowledged) + notify purchasing + audit
+function acknowledgeSchedule({ schedule, actorId, actorName, actorIp }) {
+  const ack = db.transaction(() => {
+    db.prepare(`UPDATE delivery_schedules SET status='acknowledged', acknowledged_at=CURRENT_TIMESTAMP, acknowledged_by=? WHERE id = ?`).run(actorId, schedule.id);
+
+    const purchasings = getUsersByRole('purchasing');
+    for (const u of purchasings) {
+      createNotification(u.id, 'QC รับทราบ Delivery', `${actorName} รับทราบกำหนดส่งวันที่ ${schedule.scheduled_date}`, `/delivery`);
+    }
+    db.auditLog('delivery_schedules', schedule.id, 'ACKNOWLEDGE', null, { acknowledged_by: actorId }, actorId, actorIp);
+  });
+  ack();
+}
+
+// อัปเดตสถานะจริง (on_time/late/cancelled/rescheduled) + notify (reschedule/holiday) + audit
+function updateStatus({ schedule, status, late_reason, rescheduled_date, actual_date, actorId, actorIp }) {
+  const upd = db.transaction(() => {
+    const newDate = status === 'rescheduled' && rescheduled_date ? rescheduled_date : schedule.scheduled_date;
+    db.prepare(`UPDATE delivery_schedules SET status=?, late_reason=?, rescheduled_date=?, actual_date=?, scheduled_date=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .run(status, late_reason || null, rescheduled_date || null, actual_date || null, newDate, schedule.id);
+
+    if (status === 'rescheduled') {
+      const supplier = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(schedule.supplier_id);
+      const reschedMsg = `${supplier?.name} เลื่อนวันส่งจาก ${schedule.scheduled_date} เป็น ${rescheduled_date}`;
+      for (const u of [...getReceivingQCStaff(), ...getUsersByRole('qc_supervisor')]) {
+        createNotification(u.id, 'เลื่อนวันส่งสินค้า', reschedMsg, `/delivery`);
+      }
+
+      // แจ้งเตือนพิเศษเมื่อวันใหม่ตรงกับวันหยุด
+      const dow = new Date(rescheduled_date).getDay();
+      const companyHoliday = db.prepare('SELECT name FROM company_holidays WHERE holiday_date = ?').get(rescheduled_date);
+      const isHoliday = dow === 0 || dow === 6 || !!companyHoliday;
+      if (isHoliday) {
+        let dayName = dow === 0 ? 'วันอาทิตย์' : dow === 6 ? 'วันเสาร์' : `วันหยุดบริษัท (${companyHoliday.name})`;
+        const holidayMsg = `${supplier?.name} เลื่อนวันส่งเป็น${dayName} ${rescheduled_date}`;
+        for (const u of [...getReceivingQCStaff(), ...getUsersByRole('qc_supervisor'), ...getUsersByRole('qc_manager'), ...getUsersByRole('purchasing')]) {
+          createNotification(u.id, `แจ้งเลื่อนวันส่ง (วันหยุด)`, holidayMsg, `/delivery`);
+        }
+        sendTelegram(db.getSetting('telegram_group_qc'),
+          `[IQC] แจ้งเตือน: เลื่อนวันส่งสินค้าเป็นวันหยุด\nSupplier: ${supplier?.name}\nวันที่ใหม่: ${rescheduled_date} (${dayName})\nเหตุผล: ${late_reason}`);
+        sendTelegram(db.getSetting('telegram_group_purchasing'),
+          `[IQC] แจ้งเตือน: เลื่อนวันส่งสินค้าเป็นวันหยุด\nSupplier: ${supplier?.name}\nวันที่ใหม่: ${rescheduled_date} (${dayName})\nเหตุผล: ${late_reason}`);
+      }
+    }
+    db.auditLog('delivery_schedules', schedule.id, 'STATUS_UPDATE',
+      { status: schedule.status, scheduled_date: schedule.scheduled_date },
+      { status, scheduled_date: newDate, rescheduled_date: rescheduled_date || null, late_reason: late_reason || null },
+      actorId, actorIp);
+  });
+  upd();
+}
+
+// Purchasing แก้ไขแผน (pending/acknowledged) — ถ้า acknowledged → reset เป็น pending ให้ QC รับทราบใหม่
+function updateSchedule({ schedule, scheduled_date, time_slot, notes, actorId, actorIp }) {
+  const newDate = scheduled_date || schedule.scheduled_date;
+  const newTime = time_slot || schedule.time_slot;
+  db.transaction(() => {
+    const resetAck = schedule.status === 'acknowledged';
+    db.prepare(`UPDATE delivery_schedules
+      SET scheduled_date=?, time_slot=?, notes=?,
+          status=CASE WHEN status='acknowledged' THEN 'pending' ELSE status END,
+          acknowledged_at=CASE WHEN status='acknowledged' THEN NULL ELSE acknowledged_at END,
+          acknowledged_by=CASE WHEN status='acknowledged' THEN NULL ELSE acknowledged_by END,
+          updated_at=CURRENT_TIMESTAMP
+      WHERE id=?`)
+      .run(newDate, newTime, notes !== undefined ? notes : schedule.notes, schedule.id);
+
+    const supplier = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(schedule.supplier_id);
+    const editMsg = `${supplier?.name} เปลี่ยนวันส่ง ${schedule.scheduled_date} ${schedule.time_slot} → ${newDate} ${newTime}${resetAck ? ' (กรุณารับทราบใหม่)' : ''}`;
+    const qcStaff = getReceivingQCStaff();
+    const qcSupervisors = getUsersByRole('qc_supervisor');
+    const title = resetAck ? 'กำหนดส่งสินค้าเปลี่ยนแปลง — กรุณารับทราบใหม่' : 'แก้ไขกำหนดส่งสินค้า';
+    for (const u of [...qcStaff, ...qcSupervisors]) {
+      createNotification(u.id, title, editMsg, `/delivery`);
+    }
+
+    // แจ้งเตือนพิเศษเมื่อวันใหม่ตรงกับวันหยุด
+    if (newDate !== schedule.scheduled_date) {
+      const dow = new Date(newDate).getDay();
+      const companyHoliday = db.prepare('SELECT name FROM company_holidays WHERE holiday_date = ?').get(newDate);
+      const isHoliday = dow === 0 || dow === 6 || !!companyHoliday;
+      if (isHoliday) {
+        let dayName = dow === 0 ? 'วันอาทิตย์' : dow === 6 ? 'วันเสาร์' : `วันหยุดบริษัท (${companyHoliday.name})`;
+        const holidayMsg = `${supplier?.name} แก้ไขวันส่งเป็น${dayName} ${newDate} เวลา ${newTime}`;
+        for (const u of [...getReceivingQCStaff(), ...getUsersByRole('qc_supervisor'), ...getUsersByRole('qc_manager'), ...getUsersByRole('purchasing')]) {
+          createNotification(u.id, `แจ้งแก้ไขวันส่ง (วันหยุด)`, holidayMsg, `/delivery`);
+        }
+        sendTelegram(db.getSetting('telegram_group_qc'),
+          `[IQC] แจ้งเตือน: แก้ไขวันส่งสินค้าเป็นวันหยุด\nSupplier: ${supplier?.name}\nวันที่ใหม่: ${newDate} (${dayName}) เวลา: ${newTime}`);
+        sendTelegram(db.getSetting('telegram_group_purchasing'),
+          `[IQC] แจ้งเตือน: แก้ไขวันส่งสินค้าเป็นวันหยุด\nSupplier: ${supplier?.name}\nวันที่ใหม่: ${newDate} (${dayName}) เวลา: ${newTime}`);
+      }
+    }
+
+    db.auditLog('delivery_schedules', schedule.id, 'UPDATE',
+      { scheduled_date: schedule.scheduled_date, time_slot: schedule.time_slot, notes: schedule.notes },
+      { scheduled_date: newDate, time_slot: newTime, notes: notes !== undefined ? notes : schedule.notes },
+      actorId, actorIp);
+  })();
+}
+
+// ลบแผน (pending, non-unplanned) — ไฟล์แนบลบใน controller หลัง commit
+function deleteSchedule({ schedule, actorId, actorIp }) {
+  db.transaction(() => {
+    db.prepare('DELETE FROM delivery_schedule_items WHERE schedule_id = ?').run(schedule.id);
+    db.prepare('DELETE FROM delivery_schedule_attachments WHERE schedule_id = ?').run(schedule.id);
+    db.prepare('DELETE FROM delivery_schedules WHERE id = ?').run(schedule.id);
+
+    const qcStaff = getReceivingQCStaff();
+    const qcSupervisors = getUsersByRole('qc_supervisor');
+    for (const u of [...qcStaff, ...qcSupervisors]) {
+      createNotification(u.id, 'ยกเลิกกำหนดส่งสินค้า', `กำหนดส่งวันที่ ${schedule.scheduled_date} ถูกยกเลิก`, `/delivery`);
+    }
+    db.auditLog('delivery_schedules', schedule.id, 'DELETE', schedule, null, actorId, actorIp);
+  })();
+}
+
+module.exports = { createSchedule, createUnplanned, acknowledgeSchedule, updateStatus, updateSchedule, deleteSchedule };

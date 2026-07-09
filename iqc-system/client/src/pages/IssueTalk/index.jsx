@@ -6,16 +6,16 @@ import { useAuth } from '../../contexts/AuthContext';
 import SearchableSelect from '../../components/UI/SearchableSelect';
 
 export const STATUS_CFG = {
-  open:             { label: 'เปิดอยู่',           cls: 'bg-green-100 text-green-800' },
-  waiting_info:     { label: 'รอข้อมูล',           cls: 'bg-blue-100 text-blue-800' },
-  waiting_action:   { label: 'รอดำเนินการ',        cls: 'bg-orange-100 text-orange-800' },
-  waiting_decision: { label: 'รอการตัดสินใจ',      cls: 'bg-purple-100 text-purple-800' },
-  resolved:         { label: 'แก้ไขแล้ว',          cls: 'bg-teal-100 text-teal-700' },
-  closed:           { label: 'ปิดแล้ว',            cls: 'bg-gray-100 text-gray-600' },
+  open:             { label: 'เปิดอยู่',           cls: 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' },
+  waiting_info:     { label: 'รอข้อมูล',           cls: 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200' },
+  waiting_action:   { label: 'รอดำเนินการ',        cls: 'bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200' },
+  waiting_decision: { label: 'รอการตัดสินใจ',      cls: 'bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200' },
+  resolved:         { label: 'แก้ไขแล้ว',          cls: 'bg-teal-100 dark:bg-teal-900 text-teal-700 dark:text-teal-200' },
+  closed:           { label: 'ปิดแล้ว',            cls: 'bg-gray-100 dark:bg-gray-900 text-gray-600 dark:text-gray-200' },
 };
 
 export function StatusBadge({ status }) {
-  const cfg = STATUS_CFG[status] || { label: status, cls: 'bg-gray-100 text-gray-600' };
+  const cfg = STATUS_CFG[status] || { label: status, cls: 'bg-gray-100 dark:bg-gray-900 text-gray-600 dark:text-gray-200' };
   return (
     <span className={`inline-block px-2 py-0.5 rounded text-small font-medium ${cfg.cls}`}>
       {cfg.label}
@@ -251,7 +251,7 @@ function IssueCard({ issue, onClick }) {
 
       {issue.supplier_name && (
         <div className="mt-1">
-          <span className="inline-flex items-center gap-1 bg-cyan-50 border border-cyan-200 text-cyan-800 text-small px-2 py-0.5 rounded-full">
+          <span className="inline-flex items-center gap-1 bg-cyan-50 dark:bg-cyan-900 border border-cyan-200 dark:border-cyan-700 text-cyan-800 dark:text-cyan-200 text-small px-2 py-0.5 rounded-full">
             {issue.supplier_code ? `[${issue.supplier_code}] ` : ''}{issue.supplier_name}
           </span>
         </div>

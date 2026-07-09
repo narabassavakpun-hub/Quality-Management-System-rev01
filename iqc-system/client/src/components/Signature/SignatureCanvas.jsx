@@ -19,11 +19,11 @@ export default function SignatureCanvas({ onConfirm, disabled = false }) {
     <div className="space-y-2">
       <div className={`border-2 rounded-lg overflow-hidden ${disabled ? 'border-border bg-bg' : 'border-success'}`}>
         {disabled ? (
-          <div className="h-32 flex items-center justify-center text-muted text-small">รอขั้นก่อนหน้า</div>
+          <div className="h-96 flex items-center justify-center text-muted text-small">รอขั้นก่อนหน้า</div>
         ) : (
           <SigCanvas
             ref={sigRef}
-            canvasProps={{ className: 'w-full', height: 128, style: { touchAction: 'none' } }}
+            canvasProps={{ className: 'w-full', height: 384, style: { touchAction: 'none' } }}
             backgroundColor="white"
           />
         )}

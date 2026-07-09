@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import api from '../../utils/api';
+import api, { downloadExcel } from '../../utils/api';
 import ExcelImportModal from '../../components/UI/ExcelImportModal';
 import Button from '../../components/UI/Button';
 import Modal from '../../components/UI/Modal';
@@ -21,7 +21,7 @@ function Form({ initial = {}, onSave, loading, error }) {
     <form onSubmit={e => { e.preventDefault(); onSave(form); }} className="space-y-3">
       {error && <div className="text-danger text-small">{error}</div>}
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className="label">รหัสสี</label>
           <input className="input" value={form.code} onChange={e => set('code', e.target.value)} placeholder="เช่น RED, BLU-01" />
@@ -39,7 +39,7 @@ function Form({ initial = {}, onSave, loading, error }) {
             type="color"
             value={form.hex_code || '#000000'}
             onChange={e => set('hex_code', e.target.value)}
-            className="w-12 h-10 rounded border border-border cursor-pointer p-0.5 bg-white"
+            className="w-12 h-10 rounded border border-border cursor-pointer p-0.5 bg-surface"
           />
           <input
             className="input flex-1 font-mono uppercase"
@@ -84,10 +84,7 @@ export default function Colors() {
 
   async function handleExport() {
     try {
-      const res = await api.get('/master/colors/export', { responseType: 'blob' });
-      const url = URL.createObjectURL(new Blob([res.data]));
-      const a = document.createElement('a'); a.href = url; a.download = 'colors_template.xlsx'; a.click();
-      URL.revokeObjectURL(url);
+      await downloadExcel('/master/colors/export', {}, 'colors_template.xlsx');
     } catch { alert('Export ไม่สำเร็จ'); }
   }
 
@@ -145,7 +142,45 @@ export default function Colors() {
         </div>
       </div>
 
-      <div className="table-container">
+      {/* ── Mobile cards ── */}
+      <div className="md:hidden space-y-2 mb-4">
+        {rows.length === 0 && <p className="text-center text-muted py-8 text-body">ไม่พบข้อมูลสี</p>}
+        {sorted.map(r => (
+          <div key={r.id} className="bg-surface border border-border rounded-lg p-3">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full border border-border shadow-inner flex-shrink-0"
+                  style={{ backgroundColor: r.hex_code || '#e5e7eb' }} />
+                <div>
+                  <span className={`font-semibold text-body ${r.is_active ? 'text-text' : 'text-muted'}`}>{r.name}</span>
+                  {r.code && <p className="font-mono text-[12px] text-muted">{r.code}</p>}
+                </div>
+              </div>
+              <span className={`badge flex-shrink-0 ${r.is_active ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-200' : 'bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-200'}`}>
+                {r.is_active ? 'ใช้งาน' : 'ปิด'}
+              </span>
+            </div>
+            {r.hex_code && (
+              <p className="font-mono text-[12px] text-muted mb-2">
+                <span className="inline-block w-3 h-3 rounded border border-border mr-1 align-middle" style={{ backgroundColor: r.hex_code }} />
+                {r.hex_code.toUpperCase()}
+              </p>
+            )}
+            <div className="flex gap-2 pt-2 border-t border-border">
+              <button onClick={() => { setEditing(r); setModalOpen(true); }}
+                className="flex-1 min-h-[44px] rounded-lg border border-border text-body text-text flex items-center justify-center hover:bg-bg">
+                แก้ไข
+              </button>
+              <div className="flex items-center justify-center min-w-[48px]">
+                <ToggleSwitch active={r.is_active} onClick={() => setConfirmToggle(r)} />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Desktop table ── */}
+      <div className="hidden md:block table-container">
         <table className="table">
           <thead>
             <tr>
@@ -178,7 +213,7 @@ export default function Colors() {
                   ) : '-'}
                 </td>
                 <td>
-                  <span className={`badge ${r.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                  <span className={`badge ${r.is_active ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-200' : 'bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-200'}`}>
                     {r.is_active ? 'ใช้งาน' : 'ปิดใช้งาน'}
                   </span>
                 </td>

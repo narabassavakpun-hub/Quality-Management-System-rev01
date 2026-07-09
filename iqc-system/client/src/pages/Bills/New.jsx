@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../utils/api';
 import Button from '../../components/UI/Button';
 import SearchableSelect from '../../components/UI/SearchableSelect';
+import ImageUploadPair from '../../components/UI/ImageUploadPair';
 
 // ย่อขนาดรูปก่อน upload — รองรับรูปจากกล้องมือถือที่ใหญ่กว่า 10MB
 async function compressImage(file, maxPx = 2000, quality = 0.85) {
@@ -42,6 +43,19 @@ function Step1({ form, setForm, onNext, billId, setBillId, existingImages, editI
   const queryClient = useQueryClient();
   const { data: suppliersRes } = useQuery({ queryKey: ['suppliers'], queryFn: () => api.get('/master/suppliers').then(r => r.data) });
   const suppliers = Array.isArray(suppliersRes) ? suppliersRes : (suppliersRes?.data ?? []);
+
+  const invoiceRef = useRef(null);
+  const poRef = useRef(null);
+  const containerRef = useRef(null);
+  const trackingRef = useRef(null);
+  const dateRef = useRef(null);
+
+  function focusNext(e, nextRef) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      nextRef?.current?.focus();
+    }
+  }
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
@@ -88,14 +102,14 @@ function Step1({ form, setForm, onNext, billId, setBillId, existingImages, editI
 
   return (
     <form onSubmit={handleNext} className="space-y-4 max-w-xl">
-      {error && <div className="text-danger text-small bg-red-50 px-3 py-2 rounded">{error}</div>}
+      {error && <div className="text-danger text-small bg-red-50 dark:bg-red-900 px-3 py-2 rounded">{error}</div>}
       <div className="grid grid-cols-2 gap-3">
-        <div><label className="label">Invoice No. *</label><input className="input font-mono" value={form.invoice_no} onChange={e => set('invoice_no', e.target.value)} required /></div>
-        <div><label className="label">PO No. *</label><input className="input font-mono" value={form.po_no} onChange={e => set('po_no', e.target.value)} required /></div>
-        <div><label className="label">Container No.</label><input className="input" value={form.container_no} onChange={e => set('container_no', e.target.value)} /></div>
-        <div><label className="label">Tracking No.</label><input className="input" value={form.tracking_no} onChange={e => set('tracking_no', e.target.value)} /></div>
+        <div><label className="label">Invoice No. *</label><input ref={invoiceRef} className="input font-mono" value={form.invoice_no} onChange={e => set('invoice_no', e.target.value)} required enterKeyHint="next" onKeyDown={e => focusNext(e, poRef)} /></div>
+        <div><label className="label">PO No. *</label><input ref={poRef} className="input font-mono" value={form.po_no} onChange={e => set('po_no', e.target.value)} required enterKeyHint="next" onKeyDown={e => focusNext(e, containerRef)} /></div>
+        <div><label className="label">Container No.</label><input ref={containerRef} className="input" value={form.container_no} onChange={e => set('container_no', e.target.value)} enterKeyHint="next" onKeyDown={e => focusNext(e, trackingRef)} /></div>
+        <div><label className="label">Tracking No.</label><input ref={trackingRef} className="input" value={form.tracking_no} onChange={e => set('tracking_no', e.target.value)} enterKeyHint="next" onKeyDown={e => focusNext(e, dateRef)} /></div>
       </div>
-      <div><label className="label">วันที่รับเข้า *</label><input type="date" className="input" value={form.received_date} onChange={e => set('received_date', e.target.value)} required /></div>
+      <div><label className="label">วันที่รับเข้า *</label><input ref={dateRef} type="date" className="input" value={form.received_date} onChange={e => set('received_date', e.target.value)} required enterKeyHint="done" /></div>
       <div>
         <label className="label">Supplier *</label>
         <SearchableSelect
@@ -120,8 +134,8 @@ function Step1({ form, setForm, onNext, billId, setBillId, existingImages, editI
                 <button
                   type="button"
                   onClick={() => handleDeleteExistingImg(img.id)}
-                  className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-danger text-white text-[10px] flex items-center justify-center"
-                >x</button>
+                  className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-danger text-white text-[12px] flex items-center justify-center shadow"
+                >×</button>
               </div>
             ))}
           </div>
@@ -132,11 +146,27 @@ function Step1({ form, setForm, onNext, billId, setBillId, existingImages, editI
         <label className="label">
           {existingImgs.length > 0
             ? 'เพิ่มรูปถ่ายบิล'
-            : <><span className="text-danger">*</span> รูปถ่ายบิล <span className="text-muted font-normal text-[11px]">(ถ่ายรูปหรือเลือกไฟล์)</span></>}
+            : <><span className="text-danger">*</span> รูปถ่ายบิล <span className="text-muted font-normal text-[12px]">(ถ่ายรูปหรือเลือกไฟล์)</span></>}
         </label>
-        <input type="file" multiple accept="image/*" capture="environment"
-          onChange={e => setImages(prev => [...prev, ...Array.from(e.target.files)])}
-          className="block w-full text-small text-muted file:mr-3 file:py-2 file:px-3 file:rounded file:border file:border-border file:bg-surface hover:file:bg-bg" />
+        <div className="flex gap-2">
+          <label className="flex-1 flex items-center justify-center gap-2 border border-border rounded-lg min-h-[44px] cursor-pointer bg-surface hover:bg-bg text-small text-text">
+            <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            ถ่ายรูป
+            <input type="file" multiple accept="image/*" capture="environment" className="hidden"
+              onChange={e => setImages(prev => [...prev, ...Array.from(e.target.files)])} />
+          </label>
+          <label className="flex-1 flex items-center justify-center gap-2 border border-border rounded-lg min-h-[44px] cursor-pointer bg-surface hover:bg-bg text-small text-text">
+            <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            คลังภาพ
+            <input type="file" multiple accept="image/*" className="hidden"
+              onChange={e => setImages(prev => [...prev, ...Array.from(e.target.files)])} />
+          </label>
+        </div>
         {images.length > 0 && (
           <div className="flex flex-wrap gap-2 mt-2">
             {images.map((f, i) => (
@@ -146,9 +176,9 @@ function Step1({ form, setForm, onNext, billId, setBillId, existingImages, editI
                 <button
                   type="button"
                   onClick={() => setImages(prev => prev.filter((_, j) => j !== i))}
-                  className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-danger text-white text-[10px] flex items-center justify-center"
-                >x</button>
-                <div className="text-[10px] text-muted mt-0.5 w-20 truncate">{f.name}</div>
+                  className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-danger text-white text-[12px] flex items-center justify-center shadow"
+                >×</button>
+                <div className="text-[12px] text-muted mt-0.5 w-20 truncate">{f.name}</div>
               </div>
             ))}
           </div>
@@ -222,27 +252,27 @@ function ItemRow({ item, index, products, defectCategories, onChange, onDelete, 
     const hasAny = totalCount > 0;
     return (
       <div className="space-y-1">
-        <label className={`w-full text-center text-[11px] py-1 rounded cursor-pointer border min-h-[40px] flex items-center justify-center gap-1 ${hasAny ? 'bg-green-50 border-success text-success' : 'bg-orange-50 border-warning text-warning'}`}>
+        <label className={`w-full text-center text-[12px] py-1 rounded cursor-pointer border min-h-[44px] flex items-center justify-center gap-1 ${hasAny ? 'bg-green-50 dark:bg-green-900 border-success text-success' : 'bg-orange-50 dark:bg-orange-900 border-warning text-warning'}`}>
           {hasAny ? `แนบแล้ว (${totalCount})` : 'แนบเอกสารตรวจ'}
           <input type="file" className="hidden" multiple accept=".pdf,image/*" onChange={e => onUploadDocs(index, Array.from(e.target.files))} />
         </label>
         {newDocs.map((f, fi) => (
-          <div key={`new-${fi}`} className="flex items-center gap-1 bg-green-50 border border-success rounded px-1.5 py-1">
+          <div key={`new-${fi}`} className="flex items-center gap-1 bg-green-50 dark:bg-green-900 border border-success rounded px-1.5 py-1">
             <svg className="w-3 h-3 text-success shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M4 18h12V6l-4-4H4v16zm8-14 2 2h-2V4z"/></svg>
-            <span className="text-[10px] text-success truncate">{f.name}</span>
+            <span className="text-[12px] text-success truncate">{f.name}</span>
           </div>
         ))}
         {existingDocs.map((doc, di) => (
-          <div key={`ex-${di}`} className="flex items-center gap-1 bg-green-50 border border-success rounded px-1.5 py-1">
+          <div key={`ex-${di}`} className="flex items-center gap-1 bg-green-50 dark:bg-green-900 border border-success rounded px-1.5 py-1">
             <a href={`/uploads/inspection-docs/${doc.file_path}`} target="_blank" rel="noreferrer"
               className="flex items-center gap-1 flex-1 min-w-0">
               <svg className="w-3 h-3 text-success shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M4 18h12V6l-4-4H4v16zm8-14 2 2h-2V4z"/></svg>
-              <span className="text-[10px] text-success truncate">{doc.original_name || doc.file_path}</span>
+              <span className="text-[12px] text-success truncate">{doc.original_name || doc.file_path}</span>
             </a>
             {onDeleteExistingDoc && (
               <button type="button" onClick={() => onDeleteExistingDoc(index, doc.id)}
-                className="w-4 h-4 rounded-full bg-danger text-white text-[9px] flex items-center justify-center shrink-0 hover:bg-red-700">
-                x
+                className="w-5 h-5 rounded-full bg-danger text-white text-[11px] flex items-center justify-center shrink-0 hover:bg-red-700">
+                ×
               </button>
             )}
           </div>
@@ -256,14 +286,14 @@ function ItemRow({ item, index, products, defectCategories, onChange, onDelete, 
     <div className="flex flex-wrap gap-2 mt-1">
       {product?.current_drawing && (
         <a href={`/api/master/products/${product.id}/drawing`} target="_blank" rel="noreferrer"
-          className="text-red-600 text-[11px] hover:underline flex items-center gap-0.5">
+          className="text-red-600 dark:text-red-200 text-[12px] hover:underline flex items-center gap-0.5">
           <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M4 18h12V6l-4-4H4v16zm8-14l2 2h-2V4z" /></svg>
           Drawing
         </a>
       )}
       {product?.quality_img_count > 0 && (
         <button type="button" onClick={viewQualityImages}
-          className="text-warning text-[11px] hover:underline flex items-center gap-0.5">
+          className="text-warning text-[12px] hover:underline flex items-center gap-0.5">
           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
           </svg>
@@ -275,7 +305,7 @@ function ItemRow({ item, index, products, defectCategories, onChange, onDelete, 
 
   // Defect detail section (shared between mobile/desktop)
   const defectSection = expanded && (
-    <div className="bg-red-50 border-t border-red-200 p-3 space-y-2">
+    <div className="bg-red-50 dark:bg-red-900 border-t border-red-200 dark:border-red-700 p-3 space-y-2">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className="label text-danger">กลุ่มปัญหา *</label>
@@ -286,16 +316,13 @@ function ItemRow({ item, index, products, defectCategories, onChange, onDelete, 
         </div>
         <div>
           <label className="label">รูปภาพปัญหา *</label>
-          <label className="flex items-center justify-center border border-dashed border-danger rounded min-h-[44px] cursor-pointer hover:bg-red-100 text-small text-danger">
-            + เลือกรูปภาพ
-            <input type="file" multiple accept="image/*" capture="environment" className="hidden" onChange={e => onUploadImages(index, Array.from(e.target.files))} />
-          </label>
+          <ImageUploadPair variant="danger" onChange={e => onUploadImages(index, Array.from(e.target.files))} />
           {item.images_files?.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1">
               {item.images_files.map((f, fi) => (
                 <div key={fi} className="relative group">
-                  <img src={URL.createObjectURL(f)} alt={f.name} className="h-14 w-14 object-cover rounded border border-red-200" />
-                  <div className="text-[9px] text-muted w-14 truncate">{f.name}</div>
+                  <img src={URL.createObjectURL(f)} alt={f.name} className="h-14 w-14 object-cover rounded border border-red-200 dark:border-red-700" />
+                  <div className="text-[12px] text-muted w-14 truncate leading-tight">{f.name}</div>
                 </div>
               ))}
             </div>
@@ -305,12 +332,12 @@ function ItemRow({ item, index, products, defectCategories, onChange, onDelete, 
               {item.images.map(img => (
                 <div key={img.id} className="relative group">
                   <a href={`/uploads/bill-items/${img.file_path}`} target="_blank" rel="noreferrer">
-                    <img src={`/uploads/bill-items/${img.file_path}`} alt="" className="h-14 w-14 object-cover rounded border border-red-200 hover:opacity-80" />
+                    <img src={`/uploads/bill-items/${img.file_path}`} alt="" className="h-14 w-14 object-cover rounded border border-red-200 dark:border-red-700 hover:opacity-80" />
                   </a>
                   {onDeleteExistingImage && (
                     <button type="button" onClick={() => onDeleteExistingImage(index, img.id)}
-                      className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-danger text-white text-[10px] items-center justify-center hidden group-hover:flex">
-                      x
+                      className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-danger text-white text-[12px] items-center justify-center hidden group-hover:flex shadow">
+                      ×
                     </button>
                   )}
                 </div>
@@ -330,7 +357,7 @@ function ItemRow({ item, index, products, defectCategories, onChange, onDelete, 
     <div className={`border rounded-lg overflow-hidden mb-2 ${expanded ? 'border-danger' : 'border-border'}`}>
 
       {/* ── MOBILE LAYOUT (< 640px) ── */}
-      <div className={`sm:hidden p-3 space-y-3 ${expanded ? 'bg-red-50' : 'bg-surface'}`}>
+      <div className={`sm:hidden p-3 space-y-3 ${expanded ? 'bg-red-50 dark:bg-red-900' : 'bg-surface'}`}>
         <div className="flex items-center justify-between">
           <span className="text-small font-semibold text-primary">รายการที่ {index + 1}</span>
           <button type="button" onClick={() => onDelete(index)}
@@ -339,7 +366,7 @@ function ItemRow({ item, index, products, defectCategories, onChange, onDelete, 
           </button>
         </div>
         <div>
-          <label className="label text-[11px]">สินค้า *</label>
+          <label className="label">สินค้า *</label>
           <SearchableSelect
             wrap
             options={availableProducts.map(p => ({ value: p.id, label: p.code ? `[${p.code}] ${p.name}` : p.name }))}
@@ -351,30 +378,30 @@ function ItemRow({ item, index, products, defectCategories, onChange, onDelete, 
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="label text-[11px]">รับเข้า</label>
+            <label className="label">รับเข้า</label>
             <input type="number" inputMode="numeric" min="0" className="input"
               value={Number(item.qty_received) === 0 ? '' : item.qty_received}
               onChange={e => handleQtyReceivedChange(e.target.value)}
               onFocus={e => e.target.select()} />
           </div>
           <div>
-            <label className="label text-[11px]">สุ่มตรวจ (AQL)</label>
-            <input type="number" inputMode="numeric" min="0" className="input bg-blue-50"
+            <label className="label">สุ่มตรวจ (AQL)</label>
+            <input type="number" inputMode="numeric" min="0" className="input bg-blue-50 dark:bg-blue-900"
               value={item.qty_sampled}
               onChange={e => onChange('qty_sampled', e.target.value)}
               onFocus={e => e.target.select()} />
           </div>
           <div>
-            <label className="label text-[11px]">ผ่าน</label>
+            <label className="label">ผ่าน</label>
             <input type="number" inputMode="numeric" min="0" className="input border-success"
               value={Number(item.qty_passed) === 0 ? '' : item.qty_passed}
               onChange={e => handleQtyPassedChange(e.target.value)}
               onFocus={e => e.target.select()} />
           </div>
           <div>
-            <label className="label text-[11px]">ไม่ผ่าน</label>
+            <label className="label">ไม่ผ่าน</label>
             <input type="number" inputMode="numeric" min="0"
-              className={`input ${expanded ? 'border-danger bg-red-100 text-danger font-bold' : ''}`}
+              className={`input ${expanded ? 'border-danger bg-red-100 dark:bg-red-900 text-danger font-bold' : ''}`}
               value={item.qty_failed} readOnly />
           </div>
         </div>
@@ -382,7 +409,7 @@ function ItemRow({ item, index, products, defectCategories, onChange, onDelete, 
       </div>
 
       {/* ── DESKTOP LAYOUT (≥ 640px) ── */}
-      <div className={`hidden sm:grid grid-cols-12 gap-2 p-3 items-start ${expanded ? 'bg-red-50' : 'bg-surface'}`}>
+      <div className={`hidden sm:grid grid-cols-12 gap-2 p-3 items-start ${expanded ? 'bg-red-50 dark:bg-red-900' : 'bg-surface'}`}>
         <div className="col-span-1 text-muted text-small pt-2">{index + 1}</div>
         <div className="col-span-3">
           <SearchableSelect
@@ -401,7 +428,7 @@ function ItemRow({ item, index, products, defectCategories, onChange, onDelete, 
             onFocus={e => e.target.select()} />
         </div>
         <div className="col-span-1">
-          <input placeholder="สุ่ม" type="number" min="0" className="input py-1 min-h-[40px] bg-blue-50"
+          <input placeholder="สุ่ม" type="number" min="0" className="input py-1 min-h-[40px] bg-blue-50 dark:bg-blue-900"
             value={item.qty_sampled}
             onChange={e => onChange('qty_sampled', e.target.value)}
             onFocus={e => e.target.select()} />
@@ -414,7 +441,7 @@ function ItemRow({ item, index, products, defectCategories, onChange, onDelete, 
         </div>
         <div className="col-span-1">
           <input placeholder="ไม่ผ่าน" type="number" min="0"
-            className={`input py-1 min-h-[40px] ${expanded ? 'border-danger bg-red-50 text-danger' : ''}`}
+            className={`input py-1 min-h-[40px] ${expanded ? 'border-danger bg-red-50 dark:bg-red-900 text-danger' : ''}`}
             value={item.qty_failed} readOnly />
         </div>
         <div className="col-span-2">{docsSection}</div>
@@ -481,8 +508,8 @@ function BillInfoBar({ form, supplierName, billId }) {
 
   return (
     <>
-      <div className="bg-[#F0F5FA] border border-[#B8D0E8] rounded-lg px-4 py-3 mb-5">
-        <p className="text-[11px] font-semibold text-primary uppercase tracking-wide mb-2">ข้อมูลบิล (หน้าที่ 1)</p>
+      <div className="bg-[#F0F5FA] dark:bg-blue-900 border border-[#B8D0E8] dark:border-blue-700 rounded-lg px-4 py-3 mb-5">
+        <p className="text-[12px] font-semibold text-primary uppercase tracking-wide mb-2">ข้อมูลบิล (หน้าที่ 1)</p>
         <div className="flex flex-wrap gap-x-6 gap-y-1.5">
           {fields.map(f => (
             <div key={f.label} className="flex items-center gap-1.5 text-small">
@@ -494,8 +521,8 @@ function BillInfoBar({ form, supplierName, billId }) {
 
         {/* รูปถ่ายบิล */}
         {billImages.length > 0 && (
-          <div className="mt-3 pt-3 border-t border-[#B8D0E8]">
-            <p className="text-[11px] text-primary font-medium mb-2">รูปถ่ายบิล ({billImages.length} รูป)</p>
+          <div className="mt-3 pt-3 border-t border-[#B8D0E8] dark:border-blue-700">
+            <p className="text-[12px] text-primary font-medium mb-2">รูปถ่ายบิล ({billImages.length} รูป)</p>
             <div className="flex flex-wrap gap-2">
               {billImages.map(img => {
                 const url = `/uploads/bills/${img.file_path}`;
@@ -510,7 +537,7 @@ function BillInfoBar({ form, supplierName, billId }) {
                     <img
                       src={url}
                       alt=""
-                      className="h-16 w-16 object-cover rounded border border-[#B8D0E8] group-hover:opacity-80 transition-opacity"
+                      className="h-16 w-16 object-cover rounded border border-[#B8D0E8] dark:border-blue-700 group-hover:opacity-80 transition-opacity"
                     />
                     <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                       <svg className="w-5 h-5 text-white drop-shadow" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -750,7 +777,7 @@ function Step2({ billId, navigate, initialItems, form, supplierName, onBack }) {
         );
       })}
 
-      {error && <div className="text-danger text-small bg-red-50 px-3 py-2 rounded mt-3">{error}</div>}
+      {error && <div className="text-danger text-small bg-red-50 dark:bg-red-900 px-3 py-2 rounded mt-3">{error}</div>}
 
       <div className="flex items-center justify-between mt-4">
         <button
@@ -851,14 +878,14 @@ export default function BillNew() {
       <div className="page-header">
         <h1 className="page-title">{isEdit ? 'แก้ไขบิล' : 'สร้างบิลใหม่'}</h1>
         <div className="flex gap-2">
-          <span className={`badge ${step === 1 ? 'bg-primary text-white' : 'bg-green-100 text-green-700'}`}>1. ข้อมูลบิล</span>
-          <span className={`badge ${step === 2 ? 'bg-primary text-white' : 'bg-gray-100 text-muted'}`}>2. รายการสินค้า</span>
+          <span className={`badge ${step === 1 ? 'bg-primary text-white' : 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-200'}`}>1. ข้อมูลบิล</span>
+          <span className={`badge ${step === 2 ? 'bg-primary text-white' : 'bg-gray-100 dark:bg-gray-900 text-muted'}`}>2. รายการสินค้า</span>
         </div>
       </div>
 
       {/* DEVMORE M8 — แจ้งเตือน draft ที่ยังไม่ได้บันทึก */}
       {draftFound && !isEdit && (
-        <div className="card mb-3 border-l-4 border-warning bg-yellow-50 flex items-center justify-between gap-3 flex-wrap">
+        <div className="card mb-3 border-l-4 border-warning bg-yellow-50 dark:bg-yellow-900 flex items-center justify-between gap-3 flex-wrap">
           <div className="text-small text-text">พบข้อมูลบิลที่ยังกรอกค้างไว้ ต้องการกู้คืนหรือไม่?</div>
           <div className="flex gap-2">
             <button

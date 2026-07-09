@@ -44,22 +44,22 @@ function LiveClock() {
 function StatusBadge({ row }) {
   if (!row.check_in_at) {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 text-[11px] font-medium">
-        <span className="w-1.5 h-1.5 rounded-full bg-gray-400 inline-block" />
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-200 text-[11px] font-medium">
+        <span className="w-1.5 h-1.5 rounded-full bg-gray-400 dark:bg-gray-700 inline-block" />
         ยังไม่เช็ค
       </span>
     );
   }
   if ((row.late_minutes || 0) > 0) {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 text-[11px] font-medium">
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900 text-orange-700 dark:text-orange-200 text-[11px] font-medium">
         <span className="w-1.5 h-1.5 rounded-full bg-orange-500 inline-block" />
         สาย {row.late_minutes} น.
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-[11px] font-medium">
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-200 text-[11px] font-medium">
       <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block animate-pulse" />
       มาแล้ว
     </span>
@@ -94,7 +94,7 @@ function SummaryBar({ summary }) {
           <div className="text-[11px] text-muted">เข้างานแล้ว</div>
         </div>
       </div>
-      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+      <div className="h-2 bg-gray-100 dark:bg-gray-900 rounded-full overflow-hidden">
         <div
           className="h-full rounded-full transition-all duration-700"
           style={{
@@ -118,7 +118,7 @@ function StationCard({ station, members, navigate, canViewHistory }) {
         <div className="flex items-center gap-2">
           <span className="font-semibold text-primary text-body">{station.label}</span>
           {late > 0 && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 font-medium">
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900 text-orange-700 dark:text-orange-200 font-medium">
               สาย {late}
             </span>
           )}
@@ -269,7 +269,7 @@ export default function QCAttendanceOverview() {
         }`}>
           <div className="flex-1 flex items-center gap-3">
             <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
-              myStatus.checked_in ? 'bg-green-100' : 'bg-gray-100'
+              myStatus.checked_in ? 'bg-green-100 dark:bg-green-900' : 'bg-gray-100 dark:bg-gray-900'
             }`}>
               {myStatus.checked_in ? (
                 <svg className="w-5 h-5 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">

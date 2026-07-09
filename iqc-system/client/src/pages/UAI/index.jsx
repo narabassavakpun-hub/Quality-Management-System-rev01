@@ -39,7 +39,27 @@ export default function UAIList() {
         </select>
       </div>
 
-      <div className="table-container">
+      {/* Mobile card list */}
+      <div className="md:hidden space-y-2">
+        {isLoading && <div className="text-center py-8 text-muted text-small">กำลังโหลด...</div>}
+        {!isLoading && uais.length === 0 && <div className="text-center py-8 text-muted text-small">ไม่พบข้อมูล</div>}
+        {uais.map(u => (
+          <div key={u.id} onClick={() => navigate(`/uai/${u.id}`)}
+            className="bg-surface border border-border rounded-lg p-3 active:bg-bg cursor-pointer"
+          >
+            <div className="flex items-start justify-between gap-2 mb-1">
+              <span className="font-mono font-semibold text-primary text-body">{u.uai_code}</span>
+              <Badge status={u.status} />
+            </div>
+            <div className="text-small text-muted">NCR: <span className="font-mono">{u.ncr_code}</span></div>
+            <div className="text-small font-medium text-text mb-0.5">{u.supplier_name}</div>
+            <div className="text-small text-muted">{u.created_at?.slice(0, 10)}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop table */}
+      <div className="hidden md:block table-container">
         <table className="table">
           <thead>
             <tr>

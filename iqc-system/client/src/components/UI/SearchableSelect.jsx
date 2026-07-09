@@ -107,7 +107,7 @@ export default function SearchableSelect({ options = [], value, onChange, placeh
             key={opt.value}
             type="button"
             onClick={() => select(opt)}
-            className={`w-full text-left px-3 py-2 text-body hover:bg-bg min-h-[44px] flex items-center ${String(opt.value) === String(value) ? 'bg-blue-50 text-accent font-medium' : 'text-text'}`}
+            className={`w-full text-left px-3 py-2 text-body hover:bg-bg min-h-[44px] flex items-center ${String(opt.value) === String(value) ? 'bg-blue-50 dark:bg-blue-900 text-accent font-medium' : 'text-text'}`}
           >
             {opt.label}
           </button>

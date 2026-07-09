@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import api from '../../utils/api';
+import api, { downloadExcel } from '../../utils/api';
 import ExcelImportModal from '../../components/UI/ExcelImportModal';
 import Button from '../../components/UI/Button';
 import Modal from '../../components/UI/Modal';
@@ -19,7 +19,7 @@ function Form({ initial = {}, onSave, loading, error }) {
   return (
     <form onSubmit={e => { e.preventDefault(); onSave(form); }} className="space-y-3">
       {error && <div className="text-danger text-small">{error}</div>}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div><label className="label">รหัส</label><input className="input" value={form.code} onChange={e => set('code', e.target.value)} /></div>
         <div><label className="label">ชื่อกลุ่มปัญหา *</label><input className="input" value={form.name} onChange={e => set('name', e.target.value)} required /></div>
       </div>
@@ -48,10 +48,7 @@ export default function DefectCategories() {
 
   async function handleExport() {
     try {
-      const res = await api.get('/master/defect-categories/export', { responseType: 'blob' });
-      const url = URL.createObjectURL(new Blob([res.data]));
-      const a = document.createElement('a'); a.href = url; a.download = 'defect_categories_template.xlsx'; a.click();
-      URL.revokeObjectURL(url);
+      await downloadExcel('/master/defect-categories/export', {}, 'defect_categories_template.xlsx');
     } catch { alert('Export ไม่สำเร็จ'); }
   }
 
@@ -94,7 +91,36 @@ export default function DefectCategories() {
           <Button onClick={() => { setEditing(null); setModalOpen(true); }}>+ เพิ่ม</Button>
         </div>
       </div>
-      <div className="table-container">
+      {/* ── Mobile cards ── */}
+      <div className="md:hidden space-y-2 mb-4">
+        {rows.length === 0 && <p className="text-center text-muted py-8 text-body">ไม่พบข้อมูล</p>}
+        {sorted.map(r => (
+          <div key={r.id} className="bg-surface border border-border rounded-lg p-3">
+            <div className="flex items-start justify-between gap-2 mb-1">
+              <div>
+                {r.code && <span className="font-mono text-[12px] text-muted mr-1">{r.code} ·</span>}
+                <span className={`font-semibold text-body ${r.is_active ? 'text-text' : 'text-muted'}`}>{r.name}</span>
+              </div>
+              <span className={`badge flex-shrink-0 ${r.is_active ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-200' : 'bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-200'}`}>
+                {r.is_active ? 'ใช้งาน' : 'ปิด'}
+              </span>
+            </div>
+            {r.notes && <p className="text-[12px] text-muted mb-2">{r.notes}</p>}
+            <div className="flex gap-2 pt-2 border-t border-border">
+              <button onClick={() => { setEditing(r); setModalOpen(true); }}
+                className="flex-1 min-h-[44px] rounded-lg border border-border text-body text-text flex items-center justify-center hover:bg-bg">
+                แก้ไข
+              </button>
+              <div className="flex items-center justify-center min-w-[48px]">
+                <ToggleSwitch active={r.is_active} onClick={() => setConfirmToggle(r)} />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Desktop table ── */}
+      <div className="hidden md:block table-container">
         <table className="table">
           <thead><tr>
             <SortTh col="code"      sortKey={sortKey} sortDir={sortDir} onSort={onSort}>รหัส</SortTh>
@@ -109,7 +135,7 @@ export default function DefectCategories() {
                 <td className="font-mono">{r.code || '-'}</td>
                 <td className={r.is_active ? '' : 'text-muted'}>{r.name}</td>
                 <td>{r.notes || '-'}</td>
-                <td><span className={`badge ${r.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{r.is_active ? 'ใช้งาน' : 'ปิดใช้งาน'}</span></td>
+                <td><span className={`badge ${r.is_active ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-200' : 'bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-200'}`}>{r.is_active ? 'ใช้งาน' : 'ปิดใช้งาน'}</span></td>
                 <td>
                   <div className="flex gap-2 items-center justify-center">
                     <EditButton onClick={() => { setEditing(r); setModalOpen(true); }} />

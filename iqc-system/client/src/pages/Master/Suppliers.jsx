@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import api from '../../utils/api';
+import api, { downloadExcel } from '../../utils/api';
 import Button from '../../components/UI/Button';
 import Modal from '../../components/UI/Modal';
 import ConfirmDialog from '../../components/UI/ConfirmDialog';
@@ -22,7 +22,7 @@ function SupplierForm({ initial = {}, onSave, loading }) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className="label">รหัสผู้ผลิต</label>
           <input className="input" value={form.code} onChange={e => set('code', e.target.value)} placeholder="SUP001" />
@@ -72,10 +72,7 @@ export default function Suppliers() {
 
   async function handleExport() {
     try {
-      const res = await api.get('/master/suppliers/export', { responseType: 'blob' });
-      const url = URL.createObjectURL(new Blob([res.data]));
-      const a = document.createElement('a'); a.href = url; a.download = 'suppliers_template.xlsx'; a.click();
-      URL.revokeObjectURL(url);
+      await downloadExcel('/master/suppliers/export', {}, 'suppliers_template.xlsx');
     } catch { alert('Export ไม่สำเร็จ'); }
   }
 
@@ -123,7 +120,42 @@ export default function Suppliers() {
         </div>
       </div>
 
-      <div className="table-container">
+      {/* ── Mobile cards ── */}
+      <div className="md:hidden space-y-2 mb-4">
+        {isLoading && <p className="text-center text-muted py-4 text-body">กำลังโหลด...</p>}
+        {!isLoading && rows.length === 0 && <p className="text-center text-muted py-8 text-body">ไม่พบข้อมูล</p>}
+        {sorted.map(r => (
+          <div key={r.id} className="bg-surface border border-border rounded-lg p-3">
+            <div className="flex items-start justify-between gap-2 mb-1">
+              <div>
+                {r.code && <span className="font-mono text-[12px] text-muted mr-1">{r.code} ·</span>}
+                <span className={`font-semibold text-body ${r.is_active ? 'text-text' : 'text-muted'}`}>{r.name}</span>
+              </div>
+              <span className={`badge flex-shrink-0 ${r.is_active ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-200' : 'bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-200'}`}>
+                {r.is_active ? 'ใช้งาน' : 'ปิด'}
+              </span>
+            </div>
+            {(r.email || r.phone) && (
+              <div className="text-[12px] text-muted mb-2 space-x-3">
+                {r.email && <span>{r.email}</span>}
+                {r.phone && <span>{r.phone}</span>}
+              </div>
+            )}
+            <div className="flex gap-2 pt-2 border-t border-border">
+              <button onClick={() => { setEditing(r); setModalOpen(true); }}
+                className="flex-1 min-h-[44px] rounded-lg border border-border text-body text-text flex items-center justify-center hover:bg-bg">
+                แก้ไข
+              </button>
+              <div className="flex items-center justify-center min-w-[48px]">
+                <ToggleSwitch active={r.is_active} onClick={() => setConfirmToggle(r)} />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Desktop table ── */}
+      <div className="hidden md:block table-container">
         <table className="table">
           <thead><tr>
             <SortTh col="code"  sortKey={sortKey} sortDir={sortDir} onSort={onSort}>รหัส</SortTh>
@@ -138,10 +170,10 @@ export default function Suppliers() {
             {sorted.map(r => (
               <tr key={r.id} className="cursor-default">
                 <td className="font-mono">{r.code || '-'}</td>
-                <td className={r.is_active ? '' : 'text-muted'}>{r.name} {!r.is_active && <span className="badge bg-gray-100 text-gray-500 ml-1">ปิดใช้งาน</span>}</td>
+                <td className={r.is_active ? '' : 'text-muted'}>{r.name} {!r.is_active && <span className="badge bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-200 ml-1">ปิดใช้งาน</span>}</td>
                 <td>{r.email || '-'}</td>
                 <td>{r.phone || '-'}</td>
-                <td><span className={`badge ${r.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{r.is_active ? 'ใช้งาน' : 'ปิดใช้งาน'}</span></td>
+                <td><span className={`badge ${r.is_active ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-200' : 'bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-200'}`}>{r.is_active ? 'ใช้งาน' : 'ปิดใช้งาน'}</span></td>
                 <td>
                   <div className="flex gap-2 items-center justify-center">
                     <EditButton onClick={() => { setEditing(r); setModalOpen(true); }} />

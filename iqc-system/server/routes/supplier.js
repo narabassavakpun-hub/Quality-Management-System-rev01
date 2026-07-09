@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../db/database');
 const uploads = require('../middleware/upload');
 const { getUsersByRole, createNotification, sendTelegram } = require('../lib/notify');
+const supplierService = require('../services/supplierService');
 
 // GET /api/supplier/ncr/:token  (no auth — public URL for supplier)
 router.get('/ncr/:token', (req, res) => {
@@ -47,7 +48,7 @@ router.get('/ncr/:token', (req, res) => {
 });
 
 // POST /api/supplier/ncr/:token/respond  (no auth)
-router.post('/ncr/:token/respond', uploads.supplierResponse.array('attachments', 10), uploads.verifyMagic, (req, res) => {
+router.post('/ncr/:token/respond', uploads.supplierResponse.array('attachments', 10), uploads.verifyMagic, uploads.compressImages, (req, res) => {
   const ncr = db.prepare('SELECT * FROM ncrs WHERE supplier_token = ?').get(req.params.token);
   if (!ncr) return res.status(404).json({ error: 'ไม่พบเอกสาร NCR' });
 
@@ -71,30 +72,10 @@ router.post('/ncr/:token/respond', uploads.supplierResponse.array('attachments',
     return res.status(400).json({ error: 'กรุณากรอกสาเหตุหลัก, การแก้ไข และการป้องกัน' });
   }
 
-  const respond = db.transaction(() => {
-    const result = db.prepare(`
-      INSERT INTO supplier_responses (ncr_id, respondent_name, root_cause, corrective_action, preventive_action, completion_date)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(ncr.id, respondent_name.trim(), root_cause, corrective_action, preventive_action, completion_date || null);
-
-    if (req.files?.length) {
-      const ins = db.prepare('INSERT INTO supplier_response_attachments (response_id, file_path) VALUES (?, ?)');
-      for (const file of req.files) ins.run(result.lastInsertRowid, file.filename);
-    }
-
-    db.prepare("UPDATE ncrs SET status='pending_manager_review' WHERE id=?").run(ncr.id);
-
-    for (const u of getUsersByRole('qc_manager')) {
-      createNotification(u.id, 'Supplier ตอบ NCR แล้ว', `${ncr.ncr_code} — รอ QC Manager ตรวจสอบ`, `/ncr/${ncr.id}`);
-    }
-    sendTelegram(db.getSetting('telegram_group_qc'), `[IQC] Supplier ตอบกลับ\n${ncr.ncr_code}\nรอ QC Manager ตรวจสอบ`);
-
-    db.auditLog('supplier_responses', result.lastInsertRowid, 'CREATE', null, { ncr_id: ncr.id }, null, null);
-    return result.lastInsertRowid;
-  });
-
   try {
-    respond();
+    supplierService.submitSupplierResponse({
+      ncr, respondent_name, root_cause, corrective_action, preventive_action, completion_date, files: req.files,
+    });
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });

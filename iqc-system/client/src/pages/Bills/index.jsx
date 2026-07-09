@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import api from '../../utils/api';
+import api, { downloadFile } from '../../utils/api';
 import Badge from '../../components/UI/Badge';
 import Button from '../../components/UI/Button';
 import SearchableSelect from '../../components/UI/SearchableSelect';
@@ -46,35 +46,35 @@ function daysElapsed(fromIso, toIso = null) {
 }
 
 function getOverallStatus(bill, ncrDocs) {
-  if (bill.status === 'draft')            return { label: 'ร่าง',                    cls: 'bg-gray-100 text-gray-600' };
-  if (bill.status === 'pending_approval') return { label: 'รออนุมัติ',               cls: 'bg-yellow-100 text-yellow-700' };
-  if (bill.status === 'cancelled')        return { label: 'ยกเลิก',                  cls: 'bg-red-100 text-red-600' };
+  if (bill.status === 'draft')            return { label: 'ร่าง',                    cls: 'bg-gray-100 dark:bg-gray-900 text-gray-600 dark:text-gray-200' };
+  if (bill.status === 'pending_approval') return { label: 'รออนุมัติ',               cls: 'bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-200' };
+  if (bill.status === 'cancelled')        return { label: 'ยกเลิก',                  cls: 'bg-red-100 dark:bg-red-900 text-red-600 dark:text-red-200' };
   // approved
-  if (bill.failed_item_count === 0)       return { label: 'เสร็จสิ้น',               cls: 'bg-green-100 text-green-700' };
-  if (ncrDocs.length === 0)               return { label: 'รอเปิดเอกสาร NCR/NCP',   cls: 'bg-amber-100 text-amber-700' };
+  if (bill.failed_item_count === 0)       return { label: 'เสร็จสิ้น',               cls: 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-200' };
+  if (ncrDocs.length === 0)               return { label: 'รอเปิดเอกสาร NCR/NCP',   cls: 'bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-200' };
   const allClosed = bill.uncovered_failed_count === 0 &&
     ncrDocs.every(d => d.status === 'closed' || d.status === 'ncp_closed');
-  if (allClosed)                          return { label: 'เสร็จสิ้น',               cls: 'bg-green-100 text-green-700' };
-  return                                         { label: 'รอดำเนินการ',             cls: 'bg-blue-100 text-blue-700' };
+  if (allClosed)                          return { label: 'เสร็จสิ้น',               cls: 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-200' };
+  return                                         { label: 'รอดำเนินการ',             cls: 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-200' };
 }
 
 function NextStepCell({ bill }) {
   const ncrDocs = parseNcrDocs(bill.ncr_docs);
 
   if (bill.status !== 'approved' || bill.failed_item_count === 0) {
-    return <span className="text-muted text-xs">-</span>;
+    return <span className="text-muted text-[12px]">-</span>;
   }
 
   return (
     <div className="flex flex-col gap-1.5 items-center text-center">
       {bill.uncovered_failed_count > 0 && (
-        <div className="text-xs text-amber-700 font-medium whitespace-nowrap">
+        <div className="text-xs text-amber-700 dark:text-amber-200 font-medium whitespace-nowrap">
           ออกเอกสาร NCR/NCP ({bill.uncovered_failed_count} รายการ)
         </div>
       )}
       {ncrDocs.map(doc => (
-        <div key={doc.code} className="text-xs leading-snug whitespace-nowrap">
-          <span className={`font-mono font-semibold ${doc.severity === 'major' ? 'text-danger' : 'text-yellow-700'}`}>
+        <div key={doc.code} className="text-[12px] leading-snug whitespace-nowrap">
+          <span className={`font-mono font-semibold ${doc.severity === 'major' ? 'text-danger' : 'text-yellow-700 dark:text-yellow-200'}`}>
             {doc.code}
           </span>
           <span className="text-muted"> — {NCR_STATUS_LABEL[doc.status] || doc.status}</span>
@@ -87,7 +87,7 @@ function NextStepCell({ bill }) {
 function OverallStatusBadge({ bill }) {
   const ncrDocs = parseNcrDocs(bill.ncr_docs);
   const { label, cls } = getOverallStatus(bill, ncrDocs);
-  return <span className={`badge ${cls} whitespace-nowrap !text-[10px]`}>{label}</span>;
+  return <span className={`badge ${cls} whitespace-nowrap`}>{label}</span>;
 }
 
 function ElapsedTag({ days, closed }) {
@@ -95,7 +95,7 @@ function ElapsedTag({ days, closed }) {
     ? 'text-muted'
     : days >= 30 ? 'text-danger' : days >= 14 ? 'text-warning' : 'text-muted';
   const label = closed ? `ใช้เวลา ${days} วัน` : `ผ่านมา ${days} วัน`;
-  return <div className={`text-xs ${cls}`}>({label})</div>;
+  return <div className={`text-[12px] ${cls}`}>({label})</div>;
 }
 
 function CloseDateCell({ bill }) {
@@ -112,7 +112,7 @@ function CloseDateCell({ bill }) {
             : daysElapsed(doc.created_at);
           return (
             <div key={doc.code} className="text-xs">
-              <div className="font-mono text-muted text-[11px]">{doc.code.split('-')[0]}</div>
+              <div className="font-mono text-muted text-[12px]">{doc.code.split('-')[0]}</div>
               {isClosed && (
                 <div className="whitespace-nowrap">{fmtDateTime(doc.closed_at)}</div>
               )}
@@ -126,7 +126,7 @@ function CloseDateCell({ bill }) {
 
   // ร่าง → -
   if (bill.status === 'draft') {
-    return <span className="text-muted text-xs">-</span>;
+    return <span className="text-muted text-[12px]">-</span>;
   }
 
   // เสร็จสิ้น (อนุมัติแล้ว ไม่มีรายการ fail) → ใช้เวลา x วัน
@@ -205,10 +205,11 @@ export default function BillList() {
   });
 
   const setExp = (k, v) => setExportForm(p => ({ ...p, [k]: v }));
-  const runExport = () => {
-    const qs = new URLSearchParams();
-    Object.entries(exportForm).forEach(([k, v]) => { if (v) qs.set(k, v); });
-    window.open(`/api/reports/bills/excel?${qs.toString()}`, '_blank');
+  const runExport = async () => {
+    const params = Object.fromEntries(Object.entries(exportForm).filter(([, v]) => v));
+    try {
+      await downloadFile('/reports/bills/excel', params, 'bills_report.xlsx');
+    } catch { alert('Export ไม่สำเร็จ กรุณาลองใหม่'); }
     setExportOpen(false);
   };
 
@@ -250,52 +251,43 @@ export default function BillList() {
               onClick={() => setReportMenuOpen(o => !o)}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-surface hover:bg-bg text-small font-medium text-text transition-colors min-h-[44px]"
             >
-              <svg className="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-4 h-4 text-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
-              สรุปรับเข้าวันนี้
-              <svg className={`w-3 h-3 transition-transform ${reportMenuOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <span className="hidden sm:inline">สรุปรับเข้าวันนี้</span>
+              <svg className={`w-3 h-3 transition-transform hidden sm:block ${reportMenuOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
               </svg>
             </button>
             {reportMenuOpen && (
               <div className="absolute right-0 top-full mt-1 z-50 bg-surface border border-border rounded-lg shadow-lg overflow-hidden min-w-[150px]">
-                <a
-                  href="/api/reports/receiving/today/jpg"
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={() => setReportMenuOpen(false)}
-                  className="flex items-center gap-2 px-4 py-2.5 text-small text-text hover:bg-bg transition-colors"
+                <button
+                  onClick={() => { setReportMenuOpen(false); downloadFile('/reports/receiving/today/jpg', {}, 'receiving_today.jpg'); }}
+                  className="flex items-center gap-2 px-4 py-2.5 text-small text-text hover:bg-bg transition-colors w-full text-left"
                 >
                   <svg className="w-4 h-4 flex-shrink-0 text-warning" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                   </svg>
                   Export JPG
-                </a>
-                <a
-                  href="/api/reports/receiving/today/pdf"
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={() => setReportMenuOpen(false)}
-                  className="flex items-center gap-2 px-4 py-2.5 text-small text-text hover:bg-bg transition-colors border-t border-border"
+                </button>
+                <button
+                  onClick={() => { setReportMenuOpen(false); downloadFile('/reports/receiving/today/pdf', {}, 'receiving_today.pdf'); }}
+                  className="flex items-center gap-2 px-4 py-2.5 text-small text-text hover:bg-bg transition-colors border-t border-border w-full text-left"
                 >
                   <svg className="w-4 h-4 flex-shrink-0 text-danger" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                   </svg>
                   Export PDF
-                </a>
-                <a
-                  href="/api/reports/receiving/today/excel"
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={() => setReportMenuOpen(false)}
-                  className="flex items-center gap-2 px-4 py-2.5 text-small text-text hover:bg-bg transition-colors border-t border-border"
+                </button>
+                <button
+                  onClick={() => { setReportMenuOpen(false); downloadFile('/reports/receiving/today/excel', {}, 'receiving_today.xlsx'); }}
+                  className="flex items-center gap-2 px-4 py-2.5 text-small text-text hover:bg-bg transition-colors border-t border-border w-full text-left"
                 >
                   <svg className="w-4 h-4 flex-shrink-0 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                   </svg>
                   Export Excel
-                </a>
+                </button>
               </div>
             )}
           </div>
@@ -303,12 +295,17 @@ export default function BillList() {
             onClick={() => setExportOpen(true)}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-surface hover:bg-bg text-small font-medium text-text transition-colors min-h-[44px]"
           >
-            <svg className="w-4 h-4 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-4 h-4 text-success flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
-            Export ข้อมูลบิล
+            <span className="hidden sm:inline">Export ข้อมูลบิล</span>
           </button>
-          {user?.role === 'qc_staff' && <Button onClick={() => navigate('/bills/new')}>+ สร้างบิลใหม่</Button>}
+          {user?.role === 'qc_staff' && (
+            <Button onClick={() => navigate('/bills/new')}>
+              <span className="hidden sm:inline">+ สร้างบิลใหม่</span>
+              <span className="sm:hidden text-lg leading-none">+</span>
+            </Button>
+          )}
         </div>
       </div>
 
@@ -335,66 +332,120 @@ export default function BillList() {
         </label>
       </div>
 
-      <div className="table-container">
-        <table className="table">
-          <thead>
-            <tr>
-              <th className="w-10 text-center">No.</th>
-              <th>Invoice No.</th>
-              <th>PO No.</th>
-              <th>Container No.</th>
-              <th>Supplier</th>
-              <th>วันที่รับ</th>
-              <th>รายการ</th>
-              <th>ผู้ออกเอกสาร</th>
-              <th>วันที่ออกเอกสาร</th>
-              <th>ขั้นตอนถัดไป</th>
-              <th>วันที่ปิดเอกสาร</th>
-              <th>สถานะ</th>
-              {user?.role === 'qc_staff' && <th className="w-10"></th>}
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading && <tr><td colSpan={user?.role === 'qc_staff' ? 13 : 12} className="text-center py-6 text-muted">กำลังโหลด...</td></tr>}
-            {!isLoading && filtered.length === 0 && <tr><td colSpan={user?.role === 'qc_staff' ? 13 : 12} className="text-center py-6 text-muted">ไม่พบข้อมูล</td></tr>}
-            {pageRows.map((b, i) => (
-              <tr key={b.id} onClick={() => navigate(`/bills/${b.id}`)}>
-                <td className="text-center text-muted text-small">{(safePage - 1) * PAGE_SIZE + i + 1}</td>
-                <td className="font-mono text-small">{b.invoice_no}</td>
-                <td className="font-mono text-small">{b.po_no}</td>
-                <td className="font-mono text-small">{b.container_no || '-'}</td>
-                <td className="text-small">{b.supplier_name}</td>
-                <td className="text-small whitespace-nowrap">{b.received_date}</td>
-                <td className="text-small">{b.item_count || 0}</td>
-                <td className="text-small">{b.created_by_name || '-'}</td>
-                <td className="text-small whitespace-nowrap">{b.created_at ? new Date(b.created_at).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' }) : '-'}</td>
-                <td><NextStepCell bill={b} /></td>
-                <td><CloseDateCell bill={b} /></td>
-                <td><OverallStatusBadge bill={b} /></td>
-                {user?.role === 'qc_staff' && (
-                  <td className="text-center" onClick={e => e.stopPropagation()}>
-                    {b.status === 'draft' && (
-                      <button
-                        onClick={() => setDeleteConfirmId(b.id)}
-                        className="p-1.5 rounded text-danger hover:bg-red-50 transition-colors"
-                        title="ลบบิล"
-                      >
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </button>
-                    )}
-                  </td>
+      {/* Mobile card list */}
+      <div className="md:hidden space-y-2 mb-4">
+        {isLoading && <div className="text-center py-8 text-muted text-small">กำลังโหลด...</div>}
+        {!isLoading && pageRows.length === 0 && <div className="text-center py-8 text-muted text-small">ไม่พบข้อมูล</div>}
+        {pageRows.map((b) => {
+          const ncrDocs = parseNcrDocs(b.ncr_docs);
+          const { label, cls } = getOverallStatus(b, ncrDocs);
+          return (
+            <div key={b.id} onClick={() => navigate(`/bills/${b.id}`)}
+              className="bg-surface border border-border rounded-lg p-3 active:bg-bg cursor-pointer"
+            >
+              <div className="flex items-start justify-between gap-2 mb-1">
+                <span className="font-mono font-semibold text-primary text-body">{b.invoice_no}</span>
+                <span className={`badge ${cls} whitespace-nowrap flex-shrink-0`}>{label}</span>
+              </div>
+              <div className="text-small font-medium text-text mb-0.5">{b.supplier_name}</div>
+              <div className="flex items-center justify-between">
+                <div className="flex gap-3 text-small text-muted flex-wrap">
+                  {b.po_no && <span>PO: {b.po_no}</span>}
+                  <span>{b.received_date}</span>
+                  <span>{b.item_count || 0} รายการ</span>
+                </div>
+                {user?.role === 'qc_staff' && b.status === 'draft' && (
+                  <button
+                    onClick={e => { e.stopPropagation(); setDeleteConfirmId(b.id); }}
+                    className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg text-danger hover:bg-red-50 flex-shrink-0"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
                 )}
+              </div>
+              {(ncrDocs.length > 0 || b.uncovered_failed_count > 0) && (
+                <div className="mt-2 pt-2 border-t border-border space-y-0.5">
+                  {b.uncovered_failed_count > 0 && (
+                    <div className="text-[12px] text-amber-700 dark:text-amber-200">รอเปิด NCR/NCP: {b.uncovered_failed_count} รายการ</div>
+                  )}
+                  {ncrDocs.map(doc => (
+                    <div key={doc.code} className="text-[12px]">
+                      <span className={`font-mono font-semibold ${doc.severity === 'major' ? 'text-danger' : 'text-warning'}`}>{doc.code}</span>
+                      <span className="text-muted"> — {NCR_STATUS_LABEL[doc.status] || doc.status}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Desktop table */}
+      <div className="hidden md:block">
+        <div className="table-container">
+          <table className="table">
+            <thead>
+              <tr>
+                <th className="w-10 text-center">No.</th>
+                <th>Invoice No.</th>
+                <th>PO No.</th>
+                <th>Container No.</th>
+                <th>Supplier</th>
+                <th>วันที่รับ</th>
+                <th>รายการ</th>
+                <th>ผู้ออกเอกสาร</th>
+                <th>วันที่ออกเอกสาร</th>
+                <th>ขั้นตอนถัดไป</th>
+                <th>วันที่ปิดเอกสาร</th>
+                <th>สถานะ</th>
+                {user?.role === 'qc_staff' && <th className="w-10"></th>}
               </tr>
-            ))}
-            {!isLoading && Array.from({ length: PAGE_SIZE - pageRows.length }, (_, i) => (
-              <tr key={`pad-${i}`} aria-hidden="true" className="pointer-events-none">
-                <td colSpan={user?.role === 'qc_staff' ? 13 : 12} className="h-[41px] p-0 border-b border-border" />
-              </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {isLoading && <tr><td colSpan={user?.role === 'qc_staff' ? 13 : 12} className="text-center py-6 text-muted">กำลังโหลด...</td></tr>}
+              {!isLoading && filtered.length === 0 && <tr><td colSpan={user?.role === 'qc_staff' ? 13 : 12} className="text-center py-6 text-muted">ไม่พบข้อมูล</td></tr>}
+              {pageRows.map((b, i) => (
+                <tr key={b.id} onClick={() => navigate(`/bills/${b.id}`)}>
+                  <td className="text-center text-muted text-small">{(safePage - 1) * PAGE_SIZE + i + 1}</td>
+                  <td className="font-mono text-small">{b.invoice_no}</td>
+                  <td className="font-mono text-small">{b.po_no}</td>
+                  <td className="font-mono text-small">{b.container_no || '-'}</td>
+                  <td className="text-small">{b.supplier_name}</td>
+                  <td className="text-small whitespace-nowrap">{b.received_date}</td>
+                  <td className="text-small">{b.item_count || 0}</td>
+                  <td className="text-small">{b.created_by_name || '-'}</td>
+                  <td className="text-small whitespace-nowrap">{b.created_at ? new Date(b.created_at).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' }) : '-'}</td>
+                  <td><NextStepCell bill={b} /></td>
+                  <td><CloseDateCell bill={b} /></td>
+                  <td><OverallStatusBadge bill={b} /></td>
+                  {user?.role === 'qc_staff' && (
+                    <td className="text-center" onClick={e => e.stopPropagation()}>
+                      {b.status === 'draft' && (
+                        <button
+                          onClick={() => setDeleteConfirmId(b.id)}
+                          className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded text-danger hover:bg-red-50 transition-colors mx-auto"
+                          title="ลบบิล"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      )}
+                    </td>
+                  )}
+                </tr>
+              ))}
+              {!isLoading && Array.from({ length: PAGE_SIZE - pageRows.length }, (_, i) => (
+                <tr key={`pad-${i}`} aria-hidden="true" className="pointer-events-none">
+                  <td colSpan={user?.role === 'qc_staff' ? 13 : 12} className="h-[41px] p-0 border-b border-border" />
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {!isLoading && filtered.length > 0 && (
@@ -404,7 +455,7 @@ export default function BillList() {
           </div>
           <div className="flex items-center gap-1">
             <button
-              className="px-3 py-1.5 rounded border border-border text-small text-text bg-surface disabled:opacity-40 disabled:cursor-not-allowed hover:bg-bg"
+              className="px-3 min-h-[44px] rounded border border-border text-small text-text bg-surface disabled:opacity-40 disabled:cursor-not-allowed hover:bg-bg"
               onClick={() => setPage(p => Math.max(1, p - 1))}
               disabled={safePage === 1}
             >
@@ -419,10 +470,10 @@ export default function BillList() {
               }, [])
               .map((n, i) =>
                 n === '…'
-                  ? <span key={`ellipsis-${i}`} className="px-2 text-muted text-small">…</span>
+                  ? <span key={`ellipsis-${i}`} className="px-2 text-muted text-small self-center">…</span>
                   : <button
                       key={n}
-                      className={`px-3 py-1.5 rounded border text-small ${safePage === n ? 'bg-primary text-white border-primary font-semibold' : 'border-border text-text bg-surface hover:bg-bg'}`}
+                      className={`px-3 min-h-[44px] rounded border text-small ${safePage === n ? 'bg-primary text-white border-primary font-semibold' : 'border-border text-text bg-surface hover:bg-bg'}`}
                       onClick={() => setPage(n)}
                     >
                       {n}
@@ -430,7 +481,7 @@ export default function BillList() {
               )
             }
             <button
-              className="px-3 py-1.5 rounded border border-border text-small text-text bg-surface disabled:opacity-40 disabled:cursor-not-allowed hover:bg-bg"
+              className="px-3 min-h-[44px] rounded border border-border text-small text-text bg-surface disabled:opacity-40 disabled:cursor-not-allowed hover:bg-bg"
               onClick={() => setPage(p => Math.min(totalPages, p + 1))}
               disabled={safePage === totalPages}
             >
@@ -465,7 +516,7 @@ export default function BillList() {
                   <input type="date" className="input" value={exportForm.to} onChange={e => setExp('to', e.target.value)} />
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="label">Invoice No.</label>
                   <input className="input" value={exportForm.invoice} onChange={e => setExp('invoice', e.target.value)} placeholder="บางส่วนได้" />

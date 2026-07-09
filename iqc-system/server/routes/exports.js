@@ -27,6 +27,11 @@ function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+// วันที่แบบไทย DD/MM/BE (พ.ศ.) เช่น 2026-07-03 -> 03/07/2569 — ใช้ในหัวข้อ "รับเมื่อวันที่"
+function thShortDate(dateStr) {
+  if (!dateStr) return '-';
+  return new Date(dateStr + 'T00:00:00').toLocaleDateString('th-TH', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
 // อนุญาตเฉพาะ data-url รูปภาพจริงสำหรับ <img src> ของลายเซ็น (กัน attribute breakout/SSRF)
 function safeSig(dataUrl) {
   return /^data:image\/(png|jpe?g);base64,[A-Za-z0-9+/=]+$/.test(dataUrl || '') ? dataUrl : '';
@@ -203,22 +208,27 @@ function docHeaderTemplate(title, dateRange) {
             <div style="font-size:8px;color:#6B7280;">${dateRange ? `ช่วงวันที่: ${esc(dateRange)} &nbsp;|&nbsp; ` : ''}Export: ${new Date().toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Bangkok' })}</div>
           </div>
         </div>
-        <div style="font-size:12px;font-weight:700;color:#1A3A5C;text-align:right;white-space:nowrap;">${esc(title)}</div>
+        <div style="font-size:11px;font-weight:700;color:#1A3A5C;text-align:right;white-space:nowrap;">${esc(title)}</div>
       </div>
     </div>`;
 }
 // เลขหน้า current/total เช่น "หน้า 1/2"
 const PAGE_FOOTER_TEMPLATE = `<div style="font-family:'IBM Plex Sans Thai','Tahoma','Leelawadee UI',sans-serif;font-size:9px;color:#6B7280;width:100%;text-align:center;">หน้า <span class="pageNumber"></span>/<span class="totalPages"></span></div>`;
 
+// ชื่อเอกสารตัวใหญ่กลางหน้า บนสุดของ body (ไม่มีเลขที่เอกสาร — เลขที่แสดงที่หัวกระดาษ/running header อยู่แล้ว)
+function docTitleHtml(name) {
+  return `<div style="font-size:22px;font-weight:700;color:#1A3A5C;text-align:center;margin:0 0 18px;">${esc(name)}</div>`;
+}
+
 async function renderDocPdf({ title, dateRange = '', bodyHtml, landscape = false }) {
-  const html = `<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8"><style>
+  const html = `<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8"><title>${esc(title)}</title><style>
     ${FONT_FACE_CSS}
     body { font-family: 'IBM Plex Sans Thai', sans-serif; font-size: 12px; color: #1F2937; margin: 0; }
     h1, h2 { color: #1A3A5C; }
     table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
     thead { display: table-header-group; }
     th { background: #1A3A5C; color: #fff; padding: 6px 8px; font-size: 11px; text-align: left; }
-    td { padding: 5px 8px; border-bottom: 1px solid #E5E7EB; font-size: 11px; }
+    td { padding: 5px 8px; border-bottom: 1px solid #E5E7EB; font-size: 11px; word-break: break-word; overflow-wrap: break-word; }
     tr { page-break-inside: avoid; }
     tr:nth-child(even) td { background: #F9FAFB; }
     .badge-pass { color: #16A34A; font-weight: 600; }
@@ -226,7 +236,7 @@ async function renderDocPdf({ title, dateRange = '', bodyHtml, landscape = false
     .section-title { font-size: 14px; font-weight: 700; color: #1A3A5C; margin: 16px 0 8px; border-bottom: 2px solid #1A3A5C; padding-bottom: 4px; page-break-after: avoid; }
     .section-title:first-child { margin-top: 0; }
     .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; margin-bottom: 12px; }
-    .info-row { font-size: 11px; } .info-label { color: #6B7280; } .info-value { font-weight: 600; }
+    .info-row { font-size: 11px; } .info-label { color: #6B7280; } .info-value { font-weight: 600; white-space: pre-wrap; word-break: break-word; overflow-wrap: break-word; }
     .signature-box { border: 1px solid #D1D5DB; padding: 8px; text-align: center; min-height: 80px; }
     .sig-img { max-width: 160px; max-height: 60px; }
   </style></head><body>${bodyHtml}</body></html>`;
@@ -453,11 +463,12 @@ router.get('/bill/:id/excel', auth, async (req, res) => {
 router.get('/ncr/:id/pdf', auth, pdfRateLimit, async (req, res) => {
   const ncr = db.prepare(`
     SELECT n.*, s.name as supplier_name, u.full_name as created_by_name,
-           b.invoice_no, b.po_no, b.received_date
+           b.invoice_no, b.po_no, b.received_date, bu.full_name as bill_received_by_name
     FROM ncrs n
     LEFT JOIN bills b ON b.id = n.bill_id
     LEFT JOIN suppliers s ON s.id = b.supplier_id
     LEFT JOIN users u ON u.id = n.created_by
+    LEFT JOIN users bu ON bu.id = b.created_by
     WHERE n.id = ?
   `).get(req.params.id);
   if (!ncr) return res.status(404).json({ error: 'ไม่พบ NCR' });
@@ -471,11 +482,13 @@ router.get('/ncr/:id/pdf', auth, pdfRateLimit, async (req, res) => {
     ncr.link_copied_by_name = lu?.full_name || null;
   }
 
-  // ncr_items พร้อม defect category และรูปจาก bill_item_images
+  // ncr_items พร้อม defect category, รหัสสินค้า และรูปจาก bill_item_images
   const ncrItems = db.prepare(`
-    SELECT ni.*, dc.name as defect_category_name
+    SELECT ni.*, dc.name as defect_category_name, p.code as product_code
     FROM ncr_items ni
     LEFT JOIN defect_categories dc ON dc.id = ni.defect_category_id
+    LEFT JOIN bill_items bi ON bi.id = ni.bill_item_id
+    LEFT JOIN products p ON p.id = bi.product_id
     WHERE ni.ncr_id = ?
   `).all(ncr.id);
 
@@ -528,7 +541,8 @@ router.get('/ncr/:id/pdf', auth, pdfRateLimit, async (req, res) => {
         <div><span style="color:#6B7280;">ไม่ผ่าน: </span><strong style="color:#DC2626;">${esc(item.qty_failed)}</strong></div>
       </div>
       ${item.defect_category_name ? `<div style="font-size:11px;margin-top:2px;"><span style="color:#6B7280;">กลุ่มปัญหา: </span>${esc(item.defect_category_name)}</div>` : ''}
-      ${item.defect_detail ? `<div style="font-size:11px;"><span style="color:#6B7280;">รายละเอียด: </span>${esc(item.defect_detail)}</div>` : ''}`;
+      ${item.defect_detail ? `<div style="font-size:11px;"><span style="color:#6B7280;">รายละเอียด: </span>${esc(item.defect_detail)}</div>` : ''}
+      ${item.product_code ? `<div style="font-size:11px;font-weight:700;margin-top:2px;">(รหัสสินค้า: ${esc(item.product_code)})</div>` : ''}`;
 
     if (sideBySide) {
       const sideImgs = imgs.map(src => `<img src="${src}" style="width:130px;max-height:${ncrImgMaxHeight}px;object-fit:cover;border:1px solid #E5E7EB;border-radius:4px;" />`).join('');
@@ -635,6 +649,7 @@ router.get('/ncr/:id/pdf', auth, pdfRateLimit, async (req, res) => {
   const docType = ncr.severity === 'minor' ? 'NCP' : 'NCR';
 
   const body = `
+    ${docTitleHtml('เอกสาร Non-Conformance Report(NCR)')}
     <div class="section-title">ข้อมูล ${docType}</div>
     <div class="info-grid">
       <div class="info-row"><span class="info-label">รหัส ${docType}: </span><span class="info-value">${esc(ncr.ncr_code)}</span></div>
@@ -645,6 +660,8 @@ router.get('/ncr/:id/pdf', auth, pdfRateLimit, async (req, res) => {
       <div class="info-row"><span class="info-label">ระดับความรุนแรง: </span><span class="info-value">${ncr.severity === 'major' ? 'Major' : 'Minor'}</span></div>
       <div class="info-row"><span class="info-label">วันที่เปิด: </span><span class="info-value">${esc(ncr.created_at?.slice(0, 10) || '-')}</span></div>
       <div class="info-row"><span class="info-label">ผู้เปิด ${docType}: </span><span class="info-value">${esc(ncr.created_by_name || '-')}</span></div>
+      <div class="info-row"><span class="info-label">พนักงานรับเข้า: </span><span class="info-value">${esc(ncr.bill_received_by_name || '-')}</span></div>
+      <div class="info-row"><span class="info-label">รับเมื่อวันที่: </span><span class="info-value">${thShortDate(ncr.received_date)}</span></div>
     </div>
     <div class="section-title">รายการสินค้า (${ncrItems.length} รายการ)</div>
     ${itemsHtml || '<p style="color:#6B7280;">ไม่มีข้อมูลรายการ</p>'}
@@ -657,7 +674,7 @@ router.get('/ncr/:id/pdf', auth, pdfRateLimit, async (req, res) => {
   try {
     const pdf = await renderDocPdf({ title: `เอกสาร ${docType} — ${ncr.ncr_code}`, bodyHtml: body });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${docType}-${ncr.ncr_code}.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${ncr.ncr_code}.pdf"`);
     res.send(pdf);
   } catch (e) {
     res.status(500).json({ error: 'ไม่สามารถ export PDF ได้: ' + e.message });
@@ -751,7 +768,7 @@ router.get('/ncr/:id/excel', auth, async (req, res) => {
   autoWidth(ws3);
 
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', `attachment; filename="${docType}-${ncr.ncr_code}.xlsx"`);
+  res.setHeader('Content-Disposition', `attachment; filename="${ncr.ncr_code}.xlsx"`);
   await wb.xlsx.write(res);
   res.end();
 });
@@ -760,20 +777,26 @@ router.get('/ncr/:id/excel', auth, async (req, res) => {
 router.get('/uai/:id/pdf', auth, pdfRateLimit, async (req, res) => {
   const uai = db.prepare(`
     SELECT u.*, n.ncr_code, n.severity, n.invoice_no, n.po_no, n.bill_id,
-           s.name as supplier_name
+           s.name as supplier_name, cu.full_name as created_by_name,
+           b.received_date as bill_received_date, bu.full_name as bill_received_by_name
     FROM uai_documents u
     LEFT JOIN ncrs n ON n.id = u.ncr_id
     LEFT JOIN bills b ON b.id = n.bill_id
     LEFT JOIN suppliers s ON s.id = b.supplier_id
+    LEFT JOIN users cu ON cu.id = u.created_by
+    LEFT JOIN users bu ON bu.id = b.created_by
     WHERE u.id = ?
   `).get(req.params.id);
   if (!uai) return res.status(404).json({ error: 'ไม่พบ UAI' });
   if (uai.status !== 'uai_completed') return res.status(400).json({ error: 'UAI ยังไม่เสร็จสมบูรณ์' });
 
-  // ncr_items จาก NCR ที่อ้างอิง
+  // ncr_items จาก NCR ที่อ้างอิง (รวมรหัสสินค้า)
   const ncrItems = db.prepare(`
-    SELECT ni.*, dc.name as defect_category_name
-    FROM ncr_items ni LEFT JOIN defect_categories dc ON dc.id = ni.defect_category_id
+    SELECT ni.*, dc.name as defect_category_name, p.code as product_code
+    FROM ncr_items ni
+    LEFT JOIN defect_categories dc ON dc.id = ni.defect_category_id
+    LEFT JOIN bill_items bi ON bi.id = ni.bill_item_id
+    LEFT JOIN products p ON p.id = bi.product_id
     WHERE ni.ncr_id = (SELECT ncr_id FROM uai_documents WHERE id = ?)
   `).all(req.params.id);
 
@@ -785,47 +808,48 @@ router.get('/uai/:id/pdf', auth, pdfRateLimit, async (req, res) => {
 
   const signatures = db.prepare('SELECT us.*, usr.full_name FROM uai_signatures us LEFT JOIN users usr ON usr.id = us.user_id WHERE us.uai_id = ? ORDER BY us.signed_at').all(req.params.id);
 
-  const roleLabels = {
-    purchasing: 'จัดซื้อ (ผู้ออกเอกสาร)', cco: 'CCO (อนุมัติ)', cmo: 'CMO (อนุมัติ)',
-    cpo: 'CPO (อนุมัติ)', qc_manager: 'QC Manager (รับทราบ)', production_manager: 'ผู้จัดการผลิต (รับทราบ)', qmr: 'QMR (รับทราบ)',
-  };
+  // อ่าน UAI layout settings — ความสูงสูงสุดกำหนดตรงๆ ไม่ derive จาก width อีกต่อไป
+  const uaiImgCols          = parseInt(db.getSetting('uai_img_cols')             || '3');
+  const uaiImgMaxHeight     = parseInt(db.getSetting('uai_img_max_height')      || '160');
+  const uaiImgInboxMaxHeight = parseInt(db.getSetting('uai_img_inbox_max_height') || '200');
 
-  const sigsHtml = signatures.map(s => {
-    const safe = sigDataUrl(s.signature_image);
-    const sigImg = safe ? `<img class="sig-img" src="${safe}" />` : '';
-    return `<td><div class="signature-box">${sigImg}<br/><strong>${esc(s.full_name || '-')}</strong><br/>${esc(roleLabels[s.role] || s.role)}<br/><small>${new Date(s.signed_at + 'Z').toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok' })}</small></div></td>`;
-  }).join('');
-
-  // อ่าน UAI layout settings
-  const uaiImgCols     = parseInt(db.getSetting('uai_img_cols')      || '3');
-  const uaiImgMaxWidth = parseInt(db.getSetting('uai_img_max_width') || '160');
-  const uaiImgMaxHeight = Math.round(uaiImgMaxWidth * 0.75);
-
-  // รูปปัญหาจาก bill_item_images
+  // รูปปัญหาจาก bill_item_images — object-fit:contain ให้เห็นรูปเต็มไม่ครอบตัด
+  // รูป ≤2 → อยู่ข้อมูลด้านขวา, รูป >2 → อยู่ด้านล่าง (grid) — pattern เดียวกับ NCR PDF
   const itemsWithImagesHtml = ncrItems.map((item, i) => {
-    const uaiImgTags = item.bill_item_images
-      .map(img => {
-        const src = imgToBase64('bill-items', img.file_path);
-        return src ? `<img src="${src}" style="width:100%;max-height:${uaiImgMaxHeight}px;object-fit:cover;border:1px solid #E5E7EB;border-radius:4px;" />` : '';
-      })
+    const imgs = item.bill_item_images
+      .map(img => imgToBase64('bill-items', img.file_path))
       .filter(Boolean);
-    const imgsHtml = uaiImgTags.length
-      ? `<div style="display:grid;grid-template-columns:repeat(${uaiImgCols},1fr);gap:6px;">${uaiImgTags.join('')}</div>`
-      : '';
+    const sideBySide = imgs.length >= 1 && imgs.length <= 2;
 
-    return `
-      <div style="border:1px solid #E5E7EB;border-radius:6px;margin-bottom:10px;">
-        <div style="background:#FEF2F2;padding:8px 12px;">
-          <div style="font-weight:700;font-size:11px;">${i + 1}. ${esc(item.item_name)}</div>
-          <div style="font-size:11px;margin-top:2px;">
-            รับ: <strong>${esc(item.qty_received)}</strong> &nbsp;|&nbsp;
-            สุ่ม: <strong>${esc(item.qty_sampled)}</strong> &nbsp;|&nbsp;
-            ไม่ผ่าน: <strong style="color:#DC2626;">${esc(item.qty_failed)}</strong>
+    const infoHtml = `
+      <div style="font-weight:700;font-size:11px;">${i + 1}. ${esc(item.item_name)}</div>
+      <div style="font-size:11px;margin-top:2px;">
+        รับ: <strong>${esc(item.qty_received)}</strong> &nbsp;|&nbsp;
+        สุ่ม: <strong>${esc(item.qty_sampled)}</strong> &nbsp;|&nbsp;
+        ไม่ผ่าน: <strong style="color:#DC2626;">${esc(item.qty_failed)}</strong>
+      </div>
+      ${item.defect_category_name ? `<div style="font-size:11px;">กลุ่มปัญหา: ${esc(item.defect_category_name)}</div>` : ''}
+      ${item.defect_detail ? `<div style="font-size:11px;">รายละเอียด: ${esc(item.defect_detail)}</div>` : ''}
+      ${item.product_code ? `<div style="font-size:11px;font-weight:700;margin-top:2px;">(รหัสสินค้า: ${esc(item.product_code)})</div>` : ''}`;
+
+    if (sideBySide) {
+      const sideImgs = imgs.map(src => `<img src="${src}" style="width:130px;max-height:${uaiImgMaxHeight}px;object-fit:contain;background:#F9FAFB;border:1px solid #E5E7EB;border-radius:4px;" />`).join('');
+      return `
+        <div style="border:1px solid #E5E7EB;border-radius:6px;margin-bottom:10px;overflow:hidden;">
+          <div style="background:#FEF2F2;padding:8px 12px;display:flex;gap:12px;align-items:flex-start;">
+            <div style="flex:1;min-width:0;">${infoHtml}</div>
+            <div style="display:flex;gap:6px;flex-shrink:0;">${sideImgs}</div>
           </div>
-          ${item.defect_category_name ? `<div style="font-size:11px;">กลุ่มปัญหา: ${esc(item.defect_category_name)}</div>` : ''}
-          ${item.defect_detail ? `<div style="font-size:11px;">รายละเอียด: ${esc(item.defect_detail)}</div>` : ''}
-        </div>
-        ${imgsHtml ? `<div style="padding:8px 12px;">${imgsHtml}</div>` : ''}
+        </div>`;
+    }
+
+    const belowImgs = imgs.length
+      ? `<div style="padding:8px 12px;"><div style="display:grid;grid-template-columns:repeat(${uaiImgCols},1fr);gap:6px;">${imgs.map(src => `<img src="${src}" style="width:100%;max-height:${uaiImgMaxHeight}px;object-fit:contain;background:#F9FAFB;border:1px solid #E5E7EB;border-radius:4px;" />`).join('')}</div></div>`
+      : '';
+    return `
+      <div style="border:1px solid #E5E7EB;border-radius:6px;margin-bottom:10px;overflow:hidden;">
+        <div style="background:#FEF2F2;padding:8px 12px;">${infoHtml}</div>
+        ${belowImgs}
       </div>`;
   }).join('');
 
@@ -834,11 +858,71 @@ router.get('/uai/:id/pdf', auth, pdfRateLimit, async (req, res) => {
   const extraUaiImgTags = ncrImages
     .map(img => {
       const src = imgToBase64('ncr', img.file_path);
-      return src ? `<img src="${src}" style="width:100%;max-height:${uaiImgMaxHeight}px;object-fit:cover;border:1px solid #E5E7EB;border-radius:4px;" />` : '';
+      return src ? `<img src="${src}" style="width:100%;max-height:${uaiImgMaxHeight}px;object-fit:contain;background:#F9FAFB;border:1px solid #E5E7EB;border-radius:4px;" />` : '';
     })
     .filter(Boolean);
   const extraImgsHtml = extraUaiImgTags.length
     ? `<div style="display:grid;grid-template-columns:repeat(${uaiImgCols},1fr);gap:6px;">${extraUaiImgTags.join('')}</div>`
+    : '';
+
+  // รูปภาพประกอบจากผู้ผลิต (uai_images) — รูปเดียวย้ายเข้ากล่องข้อมูลฝั่งขวา, หลายรูปแสดงเป็น grid แยกหัวข้อ
+  const uaiImages = db.prepare('SELECT * FROM uai_images WHERE uai_id = ? ORDER BY id').all(req.params.id);
+  const producerImgSrcs = uaiImages.map(img => imgToBase64('uai', img.file_path)).filter(Boolean);
+  let producerImagesInboxHtml = '';
+  let producerImagesSectionHtml = '';
+  if (producerImgSrcs.length === 1) {
+    producerImagesInboxHtml = `<img src="${producerImgSrcs[0]}" style="width:100%;max-height:${uaiImgInboxMaxHeight}px;object-fit:contain;background:#F9FAFB;border:1px solid #E5E7EB;border-radius:4px;" />`;
+  } else {
+    const grid = producerImgSrcs.length
+      ? `<div style="display:grid;grid-template-columns:repeat(${uaiImgCols},1fr);gap:6px;">${producerImgSrcs.map(src => `<img src="${src}" style="width:100%;max-height:${uaiImgMaxHeight}px;object-fit:contain;background:#F9FAFB;border:1px solid #E5E7EB;border-radius:4px;" />`).join('')}</div>`
+      : `<p style="color:#6B7280;font-size:11px;margin-left:16px;">ยังไม่มีรูปภาพ</p>`;
+    producerImagesSectionHtml = `
+      <div style="margin-top:8px;">
+        <div style="font-size:12px;font-weight:700;color:#1A3A5C;margin-bottom:6px;">รูปภาพประกอบจากผู้ผลิต</div>
+        ${grid}
+      </div>`;
+  }
+
+  // ข้อมูลการขอยอมรับใช้ — mirror ตรงกับ UAI/Detail.jsx Section 2
+  const requestInfoGridHtml = `
+    <div class="info-grid">
+      <div class="info-row"><span class="info-label">ประเภทผลิตภัณฑ์: </span><span class="info-value">${esc(uai.product_type || '-')}</span></div>
+      <div class="info-row"><span class="info-label">ประเภทงาน: </span><span class="info-value">${esc(uai.work_type || '-')}</span></div>
+      <div class="info-row"><span class="info-label">เหตุผล: </span><span class="info-value">${esc(uai.reason || '-')}</span></div>
+      <div class="info-row"><span class="info-label">เงื่อนไข: </span><span class="info-value">${esc(uai.conditions || '-')}</span></div>
+      <div class="info-row"><span class="info-label">แผนก: </span><span class="info-value">${esc(uai.department || '-')}</span></div>
+      <div class="info-row"><span class="info-label">วันที่ออกเอกสาร: </span><span class="info-value">${esc(uai.issued_date || '-')}</span></div>
+    </div>`;
+
+  const producerRespItems = [
+    ['ข้อบกพร่องที่เกิดขึ้น', uai.defect_description],
+    ['สาเหตุของปัญหา', uai.root_cause_purchasing],
+    ['การดำเนินการแก้ไข', uai.corrective_action_purchasing],
+    ['วิธีการป้องกัน', uai.preventive_action_purchasing],
+  ].filter(([, v]) => v);
+  const producerRespHtml = producerRespItems.length ? `
+    <div style="margin-top:8px;">
+      <div style="font-size:12px;font-weight:700;color:#1A3A5C;margin-bottom:6px;">ข้อมูลที่ได้รับจากผู้ผลิต</div>
+      <div class="info-grid">
+        ${producerRespItems.map(([label, value]) => `
+          <div class="info-row">
+            <div class="info-label">${esc(label)}</div>
+            <div class="info-value">${esc(value)}</div>
+          </div>`).join('')}
+      </div>
+    </div>` : '';
+
+  const requestInfoBoxHtml = producerImagesInboxHtml ? `
+    <div style="display:flex;gap:12px;align-items:flex-start;">
+      <div style="flex:1;min-width:0;">${requestInfoGridHtml}${producerRespHtml}</div>
+      <div style="width:180px;flex-shrink:0;">
+        <div style="font-size:12px;font-weight:700;color:#1A3A5C;margin-bottom:6px;">รูปภาพประกอบจากผู้ผลิต</div>
+        ${producerImagesInboxHtml}
+      </div>
+    </div>` : `${requestInfoGridHtml}${producerRespHtml}`;
+
+  const requesterLineHtml = uai.created_by_name
+    ? `<div style="margin-top:10px;font-size:11px;color:#6B7280;">ผู้ขอยอมรับใช้: <strong style="color:#1F2937;">${esc(uai.created_by_name)}</strong></div>`
     : '';
 
   const actionLabels = {
@@ -857,17 +941,22 @@ router.get('/uai/:id/pdf', auth, pdfRateLimit, async (req, res) => {
     .sort((a, b) => new Date(a.signed_at) - new Date(b.signed_at))
     .map(s => {
       const isNeg = s.action === 'rejected' || s.action === 'review_rejected';
+      // ขั้น QC Manager อนุมัติ/ไม่อนุมัติคำขอ UAI เป็นการคลิกปุ่มตัดสินใจเท่านั้น ไม่มีการเซ็นจริง — ไม่แสดงกรอบลายเซ็น
+      const isReviewStep = s.action === 'review_approved' || s.action === 'review_rejected';
       const color = isNeg ? '#DC2626' : '#16A34A';
       const safe = sigDataUrl(s.signature_image);
-      const sigCell = safe
-        ? `<img src="${safe}" style="max-height:36px;max-width:100px;object-fit:contain;" />`
-        : '-';
+      // mix-blend-mode:multiply — รูปลายเซ็นที่เก็บไว้มีพื้นหลังขาวทึบเสมอ (มาจาก signature pad)
+      // multiply ทำให้พื้นขาวนั้น "หายไป" กลืนกับสีพื้นหลังของแถว/ตาราง (ไม่ว่าจะเป็นสีอะไร) แทนที่จะทับเป็นสี่เหลี่ยมขาวทึบ
+      const sigInner = safe ? `<img src="${safe}" style="max-width:100%;max-height:100%;object-fit:contain;mix-blend-mode:multiply;" />` : '';
+      const sigCell = isReviewStep
+        ? ''
+        : `<div style="width:90px;height:40px;border:1px solid #D1D5DB;border-radius:3px;display:flex;align-items:center;justify-content:center;margin:0 auto;overflow:hidden;">${sigInner}</div>`;
       return `
         <tr>
           <td style="color:${color};font-weight:600;font-size:10px;">${esc(actionLabels[s.action] || s.action)}</td>
           <td style="font-size:10px;">${esc(roleLabelsFull[s.role] || s.role)}</td>
           <td style="font-size:10px;">${esc(s.full_name || '-')}</td>
-          <td style="font-size:10px;font-style:italic;color:#6B7280;">${esc(s.comment || '-')}</td>
+          <td style="font-size:10px;font-style:italic;color:#6B7280;white-space:pre-wrap;">${esc(s.comment || '-')}</td>
           <td style="font-size:10px;">${new Date(s.signed_at + 'Z').toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Bangkok' })}</td>
           <td style="text-align:center;">${sigCell}</td>
         </tr>`;
@@ -890,6 +979,7 @@ router.get('/uai/:id/pdf', auth, pdfRateLimit, async (req, res) => {
     </table>`;
 
   const body = `
+    ${docTitleHtml('เอกสารขอใช้พิเศษ(UAI)')}
     <div class="section-title">ข้อมูล UAI</div>
     <div class="info-grid">
       <div class="info-row"><span class="info-label">รหัส UAI: </span><span class="info-value">${esc(uai.uai_code)}</span></div>
@@ -897,26 +987,24 @@ router.get('/uai/:id/pdf', auth, pdfRateLimit, async (req, res) => {
       <div class="info-row"><span class="info-label">Invoice No.: </span><span class="info-value">${esc(uai.invoice_no)}</span></div>
       <div class="info-row"><span class="info-label">PO No.: </span><span class="info-value">${esc(uai.po_no)}</span></div>
       <div class="info-row"><span class="info-label">Supplier: </span><span class="info-value">${esc(uai.supplier_name || '-')}</span></div>
-      <div class="info-row"><span class="info-label">วันที่ออกเอกสาร: </span><span class="info-value">${esc(uai.issued_date || '-')}</span></div>
+      <div class="info-row"><span class="info-label">ระดับความรุนแรง: </span><span class="info-value">${uai.severity === 'major' ? 'Major' : 'Minor'}</span></div>
+      <div class="info-row"><span class="info-label">พนักงานรับเข้า: </span><span class="info-value">${esc(uai.bill_received_by_name || '-')}</span></div>
+      <div class="info-row"><span class="info-label">รับเมื่อวันที่: </span><span class="info-value">${thShortDate(uai.bill_received_date)}</span></div>
     </div>
     <div class="section-title">รายการสินค้า + รูปภาพปัญหา</div>
     ${itemsWithImagesHtml || '<p style="color:#6B7280;">ไม่มีข้อมูลรายการ</p>'}
     ${extraImgsHtml ? `<div class="section-title">รูปภาพเพิ่มเติม</div><div>${extraImgsHtml}</div>` : ''}
-    <div class="section-title">เหตุผลที่ขอยอมรับใช้</div>
-    <p>${esc(uai.reason || '-')}</p>
-    <div class="info-grid">
-      <div class="info-row"><span class="info-label">เงื่อนไขการใช้งาน: </span><span class="info-value">${esc(uai.conditions || '-')}</span></div>
-      <div class="info-row"><span class="info-label">แผนกที่นำไปใช้: </span><span class="info-value">${esc(uai.department || '-')}</span></div>
-    </div>
-    <div class="section-title">ลายเซ็น</div>
-    <table><tr>${sigsHtml || '<td style="color:#6B7280;">ยังไม่มีลายเซ็น</td>'}</tr></table>
+    <div class="section-title">ข้อมูลการขอยอมรับใช้</div>
+    ${requestInfoBoxHtml}
+    ${producerImagesSectionHtml}
+    ${requesterLineHtml}
     ${timelineHtml}
   `;
 
   try {
     const pdf = await renderDocPdf({ title: `เอกสาร UAI — ${uai.uai_code}`, bodyHtml: body });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="UAI-${uai.uai_code}.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${uai.uai_code}.pdf"`);
     res.send(pdf);
   } catch (e) {
     res.status(500).json({ error: 'ไม่สามารถ export PDF ได้: ' + e.message });
@@ -962,7 +1050,7 @@ router.get('/uai/:id/excel', auth, async (req, res) => {
     autoWidth(ws2);
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="UAI-${uai.uai_code}.xlsx"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${uai.uai_code}.xlsx"`);
     await wb.xlsx.write(res);
     res.end();
   } catch (e) {
@@ -2022,6 +2110,286 @@ router.get('/powerbi', auth, requireRole(['admin']), pdfRateLimit, async (req, r
   } catch (e) {
     console.error('[POWERBI EXPORT]', e);
     if (!res.headersSent) res.status(500).json({ error: 'Export ไม่สำเร็จ: ' + e.message });
+  }
+});
+
+// ===== GET /api/kpi/action-plans/:id/pdf — Action Plan PDF (หัวกระดาษบริษัท) =====
+const AP_MONTH_TH = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+const MONTH_FULL_TH = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+
+function fmtThaiTs(s) {
+  if (!s) return '—';
+  return new Date(s.includes('T') ? s : s.replace(' ', 'T') + 'Z')
+    .toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Bangkok' });
+}
+
+router.get('/kpi/action-plans/:id/pdf', auth, pdfRateLimit, async (req, res) => {
+  try {
+    const ap = db.prepare(`
+      SELECT ap.*,
+        ki.kpi_no, ki.name as kpi_name, ki.unit, ki.target_direction,
+        kg.name as group_name,
+        u1.full_name as created_by_name,
+        u2.full_name as qcm_signed_by_name,
+        u3.full_name as cpo_signed_by_name,
+        u4.full_name as qmr_signed_by_name,
+        u5.full_name as rejected_by_name,
+        kt.target_value,
+        ka.actual_value
+      FROM kpi_action_plans ap
+      JOIN kpi_items ki ON ki.id = ap.kpi_item_id
+      JOIN kpi_groups kg ON kg.id = ki.group_id
+      LEFT JOIN users u1 ON u1.id = ap.created_by
+      LEFT JOIN users u2 ON u2.id = ap.qcm_signed_by
+      LEFT JOIN users u3 ON u3.id = ap.cpo_signed_by
+      LEFT JOIN users u4 ON u4.id = ap.qmr_signed_by
+      LEFT JOIN users u5 ON u5.id = ap.rejected_by
+      LEFT JOIN kpi_targets kt ON kt.kpi_item_id = ap.kpi_item_id AND kt.year = ap.year AND kt.month = ap.month
+      LEFT JOIN kpi_actuals ka ON ka.kpi_item_id = ap.kpi_item_id AND ka.year = ap.year AND ka.month = ap.month
+      WHERE ap.id = ?
+    `).get(req.params.id);
+    if (!ap) return res.status(404).json({ error: 'ไม่พบเอกสาร' });
+
+    const dirLabel = ap.target_direction === 'lte' ? 'ไม่เกิน' : 'ไม่ต่ำกว่า';
+    const monthName = MONTH_FULL_TH[ap.month - 1] ?? '';
+
+    const AP_STATUS_LABEL = { draft: 'แบบร่าง', pending_qcm: 'รอ QC Manager', pending_cpo: 'รอ CPO', pending_qmr: 'รอ QMR', approved: 'อนุมัติแล้ว' };
+    const statusLabel = AP_STATUS_LABEL[ap.status] ?? ap.status;
+    const statusColor = ap.status === 'approved' ? '#16A34A' : '#D97706';
+
+    // helper: แถว label : value แบบไม่มีกรอบ
+    const LBL = 'color:#6B7280;font-weight:400;white-space:nowrap;padding:3px 6px 3px 0;vertical-align:top;border:none;font-size:12px;';
+    const VAL = 'font-weight:600;padding:3px 20px 3px 0;vertical-align:top;border:none;font-size:12px;';
+
+    function signRow(role, name, at) {
+      const tdS = 'padding:5px 8px;border:1px solid #E5E7EB;font-size:11px;';
+      return `<tr>
+        <td style="${tdS}">${esc(role)}</td>
+        <td style="${tdS}">${esc(name || '—')}</td>
+        <td style="${tdS}">${fmtThaiTs(at)}</td>
+        <td style="${tdS}color:${at ? '#16A34A' : '#6B7280'}">${at ? '✓ อนุมัติแล้ว' : 'รอลงนาม'}</td>
+      </tr>`;
+    }
+
+    function infoBlock(text) {
+      return `<div style="border-left:3px solid #E5E7EB;padding:5px 10px;margin-bottom:6px;background:#FAFAFA;font-size:12px;min-height:28px;">${text || '<span style="color:#D1D5DB">—</span>'}</div>`;
+    }
+
+    const body = `
+      <h2 style="text-align:center;font-size:16px;margin:0 0 2px;">แบบฟอร์ม Action Plan KPI</h2>
+      <div style="text-align:center;color:#6B7280;font-size:11px;margin-bottom:16px;">${esc(ap.kpi_no)} — ${esc(monthName)} ${ap.year + 543}</div>
+
+      <div class="section-title">1. ข้อมูล KPI</div>
+      <table style="border:none;border-collapse:collapse;margin-bottom:12px;">
+        <tr>
+          <td style="${LBL}width:110px">KPI No. :</td>
+          <td style="${VAL}width:130px">${esc(ap.kpi_no ?? '—')}</td>
+          <td style="${LBL}width:90px">กลุ่ม KPI :</td>
+          <td style="${VAL}">${esc(ap.group_name ?? '—')}</td>
+        </tr>
+        <tr>
+          <td style="${LBL}">ชื่อ KPI :</td>
+          <td style="${VAL}" colspan="3">${esc(ap.kpi_name)}</td>
+        </tr>
+        <tr>
+          <td style="${LBL}">ปี / เดือน :</td>
+          <td style="${VAL}">${ap.year + 543} / ${esc(monthName)}</td>
+          <td style="${LBL}">หน่วย :</td>
+          <td style="${VAL}">${esc(ap.unit ?? '—')}</td>
+        </tr>
+        <tr>
+          <td style="${LBL}">เงื่อนไขผ่าน :</td>
+          <td style="${VAL}">${esc(dirLabel)}</td>
+          <td style="${LBL}">เป้าหมาย :</td>
+          <td style="${VAL}">${ap.target_value ?? '—'}</td>
+        </tr>
+        <tr>
+          <td style="${LBL}">ค่าจริง :</td>
+          <td style="color:#DC2626;font-weight:700;padding:3px 20px 3px 0;border:none;font-size:12px;">${ap.actual_value ?? '—'}</td>
+          <td style="${LBL}">ผล :</td>
+          <td style="color:#DC2626;font-weight:700;padding:3px 0;border:none;font-size:12px;">ไม่ผ่านเป้าหมาย</td>
+        </tr>
+      </table>
+
+      <div class="section-title">2. การวิเคราะห์และแก้ไขปัญหา</div>
+      <div style="margin-bottom:12px;">
+        <div style="color:#6B7280;font-size:11px;margin-bottom:2px;font-weight:600;">สาเหตุที่ไม่ผ่าน</div>
+        ${infoBlock(ap.fail_cause ? esc(ap.fail_cause).replace(/\n/g,'<br>') : '')}
+        <div style="color:#6B7280;font-size:11px;margin-bottom:2px;font-weight:600;margin-top:6px;">วิธีการแก้ไข <span style="font-weight:400">(Corrective Action)</span></div>
+        ${infoBlock(ap.corrective_action ? esc(ap.corrective_action).replace(/\n/g,'<br>') : '')}
+        <div style="color:#6B7280;font-size:11px;margin-bottom:2px;font-weight:600;margin-top:6px;">วิธีการป้องกัน <span style="font-weight:400">(Preventive Action)</span></div>
+        ${infoBlock(ap.preventive_action ? esc(ap.preventive_action).replace(/\n/g,'<br>') : '')}
+        ${ap.remark ? `<div style="color:#6B7280;font-size:11px;margin-bottom:2px;font-weight:600;margin-top:6px;">หมายเหตุ</div>${infoBlock(esc(ap.remark).replace(/\n/g,'<br>'))}` : ''}
+      </div>
+
+      <div class="section-title">3. การลงนามอนุมัติ (Online)</div>
+      <table style="border-collapse:collapse;margin-bottom:8px;">
+        <thead><tr>
+          ${['บทบาท','ชื่อ','วันที่/เวลา','สถานะ'].map(h => `<th style="background:#F3F4F6;color:#374151;font-weight:700;padding:5px 8px;border:1px solid #E5E7EB;font-size:11px;text-align:left;">${h}</th>`).join('')}
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td style="padding:5px 8px;border:1px solid #E5E7EB;font-size:11px;">Admin (ผู้จัดทำ)</td>
+            <td style="padding:5px 8px;border:1px solid #E5E7EB;font-size:11px;">${esc(ap.created_by_name ?? '—')}</td>
+            <td style="padding:5px 8px;border:1px solid #E5E7EB;font-size:11px;">${fmtThaiTs(ap.submitted_at)}</td>
+            <td style="padding:5px 8px;border:1px solid #E5E7EB;font-size:11px;color:${ap.submitted_at ? '#16A34A' : '#6B7280'}">${ap.submitted_at ? '✓ ส่งอนุมัติแล้ว' : 'ยังไม่ส่ง'}</td>
+          </tr>
+          ${signRow('QC Manager', ap.qcm_signed_by_name, ap.qcm_signed_at)}
+          ${signRow('CPO', ap.cpo_signed_by_name, ap.cpo_signed_at)}
+          ${signRow('QMR', ap.qmr_signed_by_name, ap.qmr_signed_at)}
+        </tbody>
+      </table>
+      <div style="text-align:right;font-weight:700;color:${statusColor};margin-top:4px;font-size:12px;">สถานะ: ${esc(statusLabel)}</div>
+    `;
+
+    const pdf = await renderDocPdf({ title: `Action Plan — ${ap.kpi_no}`, bodyHtml: body });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="ActionPlan-${encodeURIComponent(ap.kpi_no)}-${ap.year}-${String(ap.month).padStart(2,'0')}.pdf"`);
+    res.send(pdf);
+  } catch (e) {
+    console.error('[KPI AP PDF]', e);
+    if (!res.headersSent) res.status(500).json({ error: 'สร้าง PDF ไม่สำเร็จ: ' + e.message });
+  }
+});
+
+// ── GET /api/fg-fncp/:id/pdf — FNCP PDF export (closed only) ─────────────────
+router.get('/fg-fncp/:id/pdf', auth, pdfRateLimit, async (req, res) => {
+  try {
+    const row = db.prepare(`
+      SELECT fn.*,
+             pl.name AS line_name,
+             pcs.product_no, pcs.product_desc,
+             dg.name AS defect_group_name,
+             dt.name AS defect_type_name,
+             ou.full_name AS opened_by_name,
+             vu.full_name AS verified_by_name,
+             cu.full_name AS closed_by_name,
+             dr.initial_cause, dr.found_date AS dr_found_date, dr.found_time AS dr_found_time, dr.lot_no AS ref_doc_no,
+             sh.name AS shift_name
+      FROM fg_fncp fn
+      LEFT JOIN production_lines pl   ON pl.id = fn.production_line_id
+      LEFT JOIN pro_code_sap pcs      ON pcs.id = fn.pro_code_sap_id
+      LEFT JOIN fg_defect_groups dg   ON dg.id = fn.defect_group_id
+      LEFT JOIN fg_defect_types dt    ON dt.id = fn.defect_type_id
+      LEFT JOIN fg_defect_records dr  ON dr.id = fn.defect_record_id
+      LEFT JOIN shifts sh             ON sh.id = dr.shift_id
+      LEFT JOIN users ou ON ou.id = fn.opened_by
+      LEFT JOIN users vu ON vu.id = fn.verified_by
+      LEFT JOIN users cu ON cu.id = fn.closed_by
+      WHERE fn.id=?
+    `).get(req.params.id);
+
+    if (!row) return res.status(404).json({ error: 'ไม่พบ FNCP' });
+    if (row.status !== 'closed') return res.status(409).json({ error: 'ออก PDF ได้เฉพาะ FNCP ที่ปิดแล้ว' });
+
+    const images    = row.defect_record_id
+      ? db.prepare('SELECT * FROM fg_defect_images WHERE defect_record_id=? ORDER BY sort_order,id').all(row.defect_record_id)
+      : [];
+    const fixImages = db.prepare('SELECT * FROM fg_fncp_fix_images WHERE fncp_id=? ORDER BY sort_order,id').all(row.id);
+    const timeline  = db.prepare(`SELECT tl.*, u.full_name AS actor_name FROM fg_fncp_timeline tl LEFT JOIN users u ON u.id=tl.created_by WHERE tl.fncp_id=? ORDER BY tl.created_at`).all(row.id);
+
+    db.auditLog('fg_fncp', row.id, 'EXPORT', null, { format: 'pdf' }, req.user.id, req.ip);
+
+    // ── คำนวณ ──
+    const sevLabel = { minor: 'Minor', major: 'Major', critical: 'Critical' };
+    const daysToReply = row.submit_verify_at && row.opened_at
+      ? Math.round((new Date(row.submit_verify_at) - new Date(row.opened_at)) / 86400000)
+      : null;
+
+    // ── รูปภาพ → base64 ──
+    function imgHtml(folder, filename, size = 100) {
+      const src = imgToBase64(folder, filename);
+      return src ? `<img src="${src}" style="width:${size}px;height:${size}px;object-fit:cover;border-radius:6px;border:1px solid #E5E7EB;" />` : '';
+    }
+
+    const problemImgHtml = images.map(i => imgHtml('fg-defect', i.filename)).join('');
+    const fixImgHtml     = fixImages.map(i => imgHtml('fg-fix',   i.filename)).join('');
+
+    const tlRows = timeline.map(t => `
+      <tr>
+        <td style="color:#6B7280;white-space:nowrap;">${esc(t.created_at?.slice(0,16).replace('T',' ') || '')}</td>
+        <td>${esc(t.actor_name || 'ระบบ')}</td>
+        <td>${esc(t.comment || t.action || '')}</td>
+      </tr>`).join('');
+
+    const body = `
+      <div style="margin-top:-12mm;">
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div style="font-size:20px;font-weight:700;color:#1A3A5C;">${esc(row.fncp_no)}</div>
+        <div style="text-align:right;">
+          <span style="background:#D1FAE5;color:#065F46;padding:4px 10px;border-radius:9999px;font-size:11px;font-weight:700;">ปิดแล้ว</span>
+          ${row.severity ? `<span style="margin-left:6px;background:${row.severity==='critical'?'#FEE2E2':row.severity==='major'?'#FFEDD5':'#FEF9C3'};color:${row.severity==='critical'?'#991B1B':row.severity==='major'?'#9A3412':'#713F12'};padding:4px 10px;border-radius:9999px;font-size:11px;font-weight:700;">${esc(sevLabel[row.severity]||row.severity)}</span>` : ''}
+        </div>
+      </div>
+
+      <div style="font-size:15px;font-weight:700;color:#1A3A5C;border-bottom:2px solid #1A3A5C;padding-bottom:4px;margin-bottom:8px;">ข้อมูลของเสีย</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;margin-bottom:12px;">
+        <div class="info-row"><span class="info-label">สินค้า: </span><span class="info-value">${esc(row.product_no||'—')} ${esc(row.product_desc||'')}</span></div>
+        <div class="info-row"><span class="info-label">สายการผลิต: </span><span class="info-value">${esc(row.line_name||'—')}</span></div>
+        <div class="info-row"><span class="info-label">Doc. No. อ้างอิง: </span><span class="info-value">${esc(row.ref_doc_no||row.doc_no||'—')}</span></div>
+        <div class="info-row"><span class="info-label">กลุ่มอาการเสีย: </span><span class="info-value">${esc(row.defect_group_name||'—')}</span></div>
+        <div class="info-row"><span class="info-label">อาการเสีย: </span><span class="info-value">${esc(row.defect_type_name||'—')}</span></div>
+        <div class="info-row"><span class="info-label">จำนวนของเสีย: </span><span class="info-value" style="color:#DC2626;">${esc(String(row.defect_qty||0))} ${esc(row.defect_unit||'')}</span></div>
+        <div class="info-row"><span class="info-label">วันที่พบปัญหา: </span><span class="info-value">${esc(row.dr_found_date||'—')} ${esc(row.dr_found_time||'')} ${row.shift_name?`(${esc(row.shift_name)})`:''}</span></div>
+        <div></div>
+        <div class="info-row"><span class="info-label">ผู้เปิดเอกสาร: </span><span class="info-value">${esc(row.opened_by_name||'—')} (${esc(row.opened_at?.slice(0,10)||'—')})</span></div>
+      </div>
+
+      ${row.initial_cause ? `
+      <div class="section-title">ปัญหาที่พบ</div>
+      <div style="background:#F9FAFB;border:1px solid #E5E7EB;border-radius:6px;padding:10px;font-size:11px;margin-bottom:12px;">${esc(row.initial_cause)}</div>
+      ` : ''}
+
+      ${problemImgHtml ? `
+      <div class="section-title">รูปภาพงานเสีย (${images.length})</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">${problemImgHtml}</div>
+      ` : ''}
+
+      <div class="section-title">Root Cause Analysis — ฝ่ายผลิต</div>
+      ${row.respondent_name ? `
+      <div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:6px;padding:10px;margin-bottom:10px;">
+        <div style="font-size:11px;color:#1D4ED8;font-weight:700;">ผู้ตอบกลับ: ${esc(row.respondent_name)}</div>
+        ${row.submit_verify_at ? `<div style="font-size:10px;color:#3B82F6;margin-top:2px;">วันเวลาที่ตอบ: ${esc(row.submit_verify_at.slice(0,16).replace('T',' '))}${daysToReply!==null ? ` &nbsp;|&nbsp; ใช้เวลา ${daysToReply} วัน` : ''}</div>` : ''}
+      </div>` : ''}
+      ${[['Root Cause', row.root_cause],['Corrective Action', row.corrective_action],['Preventive Action', row.preventive_action]].map(([l,v]) => v ? `
+      <div style="margin-bottom:8px;">
+        <div style="font-size:10px;color:#6B7280;margin-bottom:2px;">${esc(l)}</div>
+        <div style="background:#F9FAFB;border:1px solid #E5E7EB;border-radius:4px;padding:8px;font-size:11px;">${esc(v)}</div>
+      </div>` : '').join('')}
+
+      ${fixImgHtml ? `
+      <div class="section-title">รูปภาพการแก้ไข (${fixImages.length})</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">${fixImgHtml}</div>
+      ` : ''}
+
+      ${row.verification_result ? `
+      <div class="section-title">ผลการตรวจสอบ QC</div>
+      <div style="background:#F9FAFB;border:1px solid #E5E7EB;border-radius:6px;padding:10px;font-size:11px;margin-bottom:12px;">${esc(row.verification_result)}</div>
+      <div class="info-grid" style="margin-bottom:12px;">
+        <div class="info-row"><span class="info-label">QC ยืนยันโดย: </span><span class="info-value">${esc(row.verified_by_name||'—')}</span></div>
+        <div class="info-row"><span class="info-label">วันที่ยืนยัน: </span><span class="info-value">${esc(row.verified_at?.slice(0,10)||'—')}</span></div>
+        <div class="info-row"><span class="info-label">ปิดโดย: </span><span class="info-value">${esc(row.closed_by_name||'—')}</span></div>
+        <div class="info-row"><span class="info-label">วันที่ปิด: </span><span class="info-value">${esc(row.closed_at?.slice(0,10)||'—')}</span></div>
+      </div>` : ''}
+
+      ${tlRows ? `
+      <div class="section-title">Timeline การดำเนินการ</div>
+      <table>
+        <thead><tr><th style="width:140px;">วันเวลา</th><th style="width:140px;">ผู้ดำเนินการ</th><th>รายละเอียด</th></tr></thead>
+        <tbody>${tlRows}</tbody>
+      </table>` : ''}
+
+      </div>
+    `;
+
+    const pdf = await renderDocPdf({ title: `FNCP — ${row.fncp_no}`, bodyHtml: body });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="FNCP-${encodeURIComponent(row.fncp_no)}.pdf"`);
+    res.send(pdf);
+  } catch (e) {
+    console.error('[FNCP PDF]', e);
+    if (!res.headersSent) res.status(500).json({ error: 'สร้าง PDF ไม่สำเร็จ: ' + e.message });
   }
 });
 

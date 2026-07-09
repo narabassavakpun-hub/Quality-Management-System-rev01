@@ -169,7 +169,7 @@ router.get('/', auth, (req, res) => {
 });
 
 // POST / — create issue (multipart/form-data)
-router.post('/', auth, uploads.issueTalk.array('files', 10), uploads.verifyMagic, (req, res) => {
+router.post('/', auth, uploads.issueTalk.array('files', 10), uploads.verifyMagic, uploads.compressImages, (req, res) => {
   const { title, body, participant_ids, supplier_id } = req.body;
   if (!title?.trim()) return res.status(400).json({ error: 'กรุณากรอกหัวเรื่อง' });
 
@@ -303,7 +303,7 @@ router.get('/:id', auth, (req, res) => {
 });
 
 // POST /:id/messages — post reply (multipart/form-data)
-router.post('/:id/messages', auth, uploads.issueTalk.array('files', 10), uploads.verifyMagic, (req, res) => {
+router.post('/:id/messages', auth, uploads.issueTalk.array('files', 10), uploads.verifyMagic, uploads.compressImages, (req, res) => {
   const access = getAccess(+req.params.id, req.user.id);
   if (!access) return res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึง' });
 

@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import Modal from '../../components/UI/Modal';
 import Button from '../../components/UI/Button';
 import SearchableSelect from '../../components/UI/SearchableSelect';
+import ImageUploadPair from '../../components/UI/ImageUploadPair';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -14,11 +15,11 @@ const MINUTES = ['00', '15', '30', '45'];
 function timeOfDay(h) {
   if (!h) return null;
   const n = parseInt(h, 10);
-  if (n === 7)            return { label: 'ก่อนเข้างาน', cls: 'bg-orange-100 text-orange-700', warning: 'ช่วงเวลาก่อนเข้างาน', warnCls: 'text-orange-600' };
-  if (n >= 8  && n <= 11) return { label: 'เช้า',   cls: 'bg-orange-100 text-orange-700', warning: null };
-  if (n === 12)           return { label: 'เที่ยง', cls: 'bg-red-100 text-red-700 font-bold', warning: 'ช่วงเวลาพักเที่ยง', warnCls: 'text-red-600 font-semibold' };
-  if (n >= 13 && n <= 17) return { label: 'บ่าย',   cls: 'bg-blue-100 text-blue-700', warning: null };
-  if (n === 18)           return { label: 'หลังเลิกงาน', cls: 'bg-blue-100 text-blue-700', warning: 'ช่วงเวลาหลังเลิกงาน', warnCls: 'text-blue-600' };
+  if (n === 7)            return { label: 'ก่อนเข้างาน', cls: 'bg-orange-100 dark:bg-orange-900 text-orange-700 dark:text-orange-200', warning: 'ช่วงเวลาก่อนเข้างาน', warnCls: 'text-orange-600 dark:text-orange-200' };
+  if (n >= 8  && n <= 11) return { label: 'เช้า',   cls: 'bg-orange-100 dark:bg-orange-900 text-orange-700 dark:text-orange-200', warning: null };
+  if (n === 12)           return { label: 'เที่ยง', cls: 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-200 font-bold', warning: 'ช่วงเวลาพักเที่ยง', warnCls: 'text-red-600 dark:text-red-200 font-semibold' };
+  if (n >= 13 && n <= 17) return { label: 'บ่าย',   cls: 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-200', warning: null };
+  if (n === 18)           return { label: 'หลังเลิกงาน', cls: 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-200', warning: 'ช่วงเวลาหลังเลิกงาน', warnCls: 'text-blue-600 dark:text-blue-200' };
   return null;
 }
 
@@ -32,7 +33,7 @@ function TimePicker({ value, onChange, minHour }) {
     <div className="space-y-1.5">
       <div className="flex items-center gap-2">
         {/* Badge ช่วงเวลา — อยู่หน้า dropdown */}
-        <span className={`inline-flex items-center justify-center px-2 py-1 rounded text-small font-medium min-w-[48px] min-h-[44px] ${tod ? tod.cls : 'bg-gray-100 text-gray-400'}`}>
+        <span className={`inline-flex items-center justify-center px-2 py-1 rounded text-small font-medium min-w-[48px] min-h-[44px] ${tod ? tod.cls : 'bg-gray-100 dark:bg-gray-900 text-gray-400'}`}>
           {tod ? tod.label : '—'}
         </span>
         <select
@@ -80,20 +81,20 @@ function isPastDelivery(scheduledDate, timeSlot) {
 }
 
 const STATUS_CFG = {
-  pending:      { label: 'รอดำเนินการ',            cls: 'bg-blue-100 text-blue-800' },
-  acknowledged: { label: 'QC รับทราบแล้ว',         cls: 'bg-teal-100 text-teal-800' },
-  on_time:      { label: 'ส่งตรงเวลา',              cls: 'bg-green-100 text-green-800' },
-  late:         { label: 'ส่งล่าช้า / ไม่ตรงแผน',  cls: 'bg-red-100 text-red-800' },
-  cancelled:    { label: 'ยกเลิก',                  cls: 'bg-gray-100 text-gray-500' },
-  rescheduled:  { label: 'เลื่อนวันส่ง',            cls: 'bg-orange-100 text-orange-800' },
+  pending:      { label: 'รอดำเนินการ',            cls: 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200' },
+  acknowledged: { label: 'QC รับทราบแล้ว',         cls: 'bg-teal-100 dark:bg-teal-900 text-teal-800 dark:text-teal-200' },
+  on_time:      { label: 'ส่งตรงเวลา',              cls: 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' },
+  late:         { label: 'ส่งล่าช้า / ไม่ตรงแผน',  cls: 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200' },
+  cancelled:    { label: 'ยกเลิก',                  cls: 'bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-200' },
+  rescheduled:  { label: 'เลื่อนวันส่ง',            cls: 'bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200' },
 };
 
 function StatusBadge({ status, isUnplanned }) {
-  const cfg = STATUS_CFG[status] || { label: status, cls: 'bg-gray-100 text-gray-600' };
+  const cfg = STATUS_CFG[status] || { label: status, cls: 'bg-gray-100 dark:bg-gray-900 text-gray-600 dark:text-gray-200' };
   return (
     <span className="flex flex-wrap gap-1">
-      <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium ${cfg.cls}`}>{cfg.label}</span>
-      {!!isUnplanned && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-yellow-100 text-yellow-800">ไม่ได้แจ้งล่วงหน้า</span>}
+      <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[12px] font-medium ${cfg.cls}`}>{cfg.label}</span>
+      {!!isUnplanned && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[12px] font-medium bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200">ไม่ได้แจ้งล่วงหน้า</span>}
     </span>
   );
 }
@@ -210,7 +211,7 @@ function DetailModal({ schedule, onClose, suppliers, role, holidays = [] }) {
           <div className="flex flex-col items-end gap-1">
             <StatusBadge status={schedule.status} isUnplanned={schedule.is_unplanned} />
             {!!detail.has_sample && (
-              <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-blue-100 text-blue-800">ส่งงานตัวอย่าง</span>
+              <span className="inline-flex items-center px-2 py-0.5 rounded text-[12px] font-medium bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200">ส่งงานตัวอย่าง</span>
             )}
           </div>
         </div>
@@ -257,14 +258,14 @@ function DetailModal({ schedule, onClose, suppliers, role, holidays = [] }) {
               </div>
             </div>
             {editHolidayConfirm && editHoliday && (
-              <div className="border-2 border-orange-300 bg-orange-50 rounded-lg p-3 space-y-2">
+              <div className="border-2 border-orange-300 dark:border-orange-600 bg-orange-50 dark:bg-orange-900 rounded-lg p-3 space-y-2">
                 <div className="flex items-start gap-2">
-                  <svg className="w-4 h-4 text-orange-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-4 h-4 text-orange-500 dark:text-orange-200 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
                   </svg>
                   <div>
-                    <p className="text-small font-semibold text-orange-800">วันที่เลือกเป็นวันหยุด: {editHoliday}</p>
-                    <p className="text-small text-orange-700">ระบบจะแจ้งเตือนไปยัง QC Staff, QC Supervisor, QC Manager และจัดซื้อ</p>
+                    <p className="text-small font-semibold text-orange-800 dark:text-orange-200">วันที่เลือกเป็นวันหยุด: {editHoliday}</p>
+                    <p className="text-small text-orange-700 dark:text-orange-200">ระบบจะแจ้งเตือนไปยัง QC Staff, QC Supervisor, QC Manager และจัดซื้อ</p>
                   </div>
                 </div>
                 <div className="flex gap-2 justify-end">
@@ -274,7 +275,7 @@ function DetailModal({ schedule, onClose, suppliers, role, holidays = [] }) {
               </div>
             )}
             {!editHolidayConfirm && editHoliday && (
-              <p className="text-small text-orange-600 flex items-center gap-1">
+              <p className="text-small text-orange-600 dark:text-orange-200 flex items-center gap-1">
                 <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
                 </svg>
@@ -313,7 +314,7 @@ function DetailModal({ schedule, onClose, suppliers, role, holidays = [] }) {
                   <input type="date" className="input" value={statusForm.rescheduled_date}
                     onChange={e => { setStatusForm(p => ({ ...p, rescheduled_date: e.target.value })); setStatusHolidayConfirm(false); }} />
                   {statusHoliday && (
-                    <p className="mt-1 text-small text-orange-600 flex items-center gap-1">
+                    <p className="mt-1 text-small text-orange-600 dark:text-orange-200 flex items-center gap-1">
                       <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
                       </svg>
@@ -336,14 +337,14 @@ function DetailModal({ schedule, onClose, suppliers, role, holidays = [] }) {
               </div>
             )}
             {statusHolidayConfirm && statusHoliday && (
-              <div className="border-2 border-orange-300 bg-orange-50 rounded-lg p-3 space-y-2">
+              <div className="border-2 border-orange-300 dark:border-orange-600 bg-orange-50 dark:bg-orange-900 rounded-lg p-3 space-y-2">
                 <div className="flex items-start gap-2">
-                  <svg className="w-4 h-4 text-orange-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-4 h-4 text-orange-500 dark:text-orange-200 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
                   </svg>
                   <div>
-                    <p className="text-small font-semibold text-orange-800">วันใหม่ที่เลือกเป็นวันหยุด: {statusHoliday}</p>
-                    <p className="text-small text-orange-700">ระบบจะแจ้งเตือนไปยัง QC Staff, QC Supervisor, QC Manager และจัดซื้อ</p>
+                    <p className="text-small font-semibold text-orange-800 dark:text-orange-200">วันใหม่ที่เลือกเป็นวันหยุด: {statusHoliday}</p>
+                    <p className="text-small text-orange-700 dark:text-orange-200">ระบบจะแจ้งเตือนไปยัง QC Staff, QC Supervisor, QC Manager และจัดซื้อ</p>
                   </div>
                 </div>
                 <div className="flex gap-2 justify-end">
@@ -377,12 +378,12 @@ function DetailModal({ schedule, onClose, suppliers, role, holidays = [] }) {
                 </thead>
                 <tbody>
                   {detail.items.map(item => (
-                    <tr key={item.id} className={`border-t border-border ${item.is_urgent ? 'bg-red-50' : ''}`}>
+                    <tr key={item.id} className={`border-t border-border ${item.is_urgent ? 'bg-red-50 dark:bg-red-900' : ''}`}>
                       <td className="px-3 py-2">
                         <span className="flex items-center gap-2">
                           {item.item_name || '—'}
                           {!!item.is_urgent && (
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-bold bg-danger text-white">ด่วน! ห้ามขาดส่ง</span>
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[12px] font-bold bg-danger text-white">ด่วน! ห้ามขาดส่ง</span>
                           )}
                         </span>
                       </td>
@@ -410,7 +411,7 @@ function DetailModal({ schedule, onClose, suppliers, role, holidays = [] }) {
               )}
             </div>
             {uploadSuccess && (
-              <div className="flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded text-small text-green-700 mb-1">
+              <div className="flex items-center gap-2 px-3 py-2 bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-700 rounded text-small text-green-700 dark:text-green-200 mb-1">
                 <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
@@ -428,7 +429,7 @@ function DetailModal({ schedule, onClose, suppliers, role, holidays = [] }) {
                         <button
                           onClick={() => { if (window.confirm(`ลบไฟล์ "${a.original_name}" ออกจากระบบ?`)) delAttach.mutate(a.id); }}
                           disabled={delAttach.isPending}
-                          className="text-muted hover:text-danger text-[11px] disabled:opacity-50"
+                          className="text-muted hover:text-danger text-[12px] disabled:opacity-50"
                         >ลบ</button>
                       )}
                     </li>
@@ -443,23 +444,19 @@ function DetailModal({ schedule, onClose, suppliers, role, holidays = [] }) {
             const samples = (detail.attachments || []).filter(a => a.file_type === 'sample_image');
             if (!detail.has_sample && samples.length === 0) return null;
             return (
-              <div className="border border-accent/30 bg-blue-50 rounded-lg p-3 space-y-2">
+              <div className="border border-accent/30 bg-blue-50 dark:bg-blue-900 rounded-lg p-3 space-y-2">
                 <div className="flex items-center justify-between">
                   <p className="text-small font-medium text-accent">รูปงานตัวอย่าง</p>
                   {role === 'purchasing' && (
-                    <label className="text-accent text-small cursor-pointer hover:underline">
-                      + แนบรูป
-                      <input type="file" multiple accept="image/*" className="hidden"
-                        onChange={e => {
-                          if (e.target.files?.length) {
-                            const fd = new FormData();
-                            Array.from(e.target.files).forEach(f => fd.append('files', f));
-                            api.post(`/delivery/${schedule.id}/attachments?type=sample`, fd)
-                              .then(() => qc.invalidateQueries(['delivery']));
-                          }
-                          e.target.value = '';
-                        }} />
-                    </label>
+                    <ImageUploadPair onChange={e => {
+                      if (e.target.files?.length) {
+                        const fd = new FormData();
+                        Array.from(e.target.files).forEach(f => fd.append('files', f));
+                        api.post(`/delivery/${schedule.id}/attachments?type=sample`, fd)
+                          .then(() => qc.invalidateQueries(['delivery']));
+                      }
+                      e.target.value = '';
+                    }} />
                   )}
                 </div>
                 {samples.length > 0 ? (
@@ -472,7 +469,7 @@ function DetailModal({ schedule, onClose, suppliers, role, holidays = [] }) {
                         {role === 'purchasing' && (
                           <button
                             onClick={() => delAttach.mutate(a.id)}
-                            className="absolute top-0.5 right-0.5 bg-danger text-white rounded-full w-4 h-4 text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                            className="absolute -top-1.5 -right-1.5 bg-danger text-white rounded-full w-6 h-6 text-[12px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow"
                           >×</button>
                         )}
                       </div>
@@ -647,33 +644,33 @@ function CreateModal({ onClose, suppliers, defaultDate, holidays = [] }) {
   return (
     <Modal open onClose={onClose} title="เพิ่มแผนส่งของ" size="lg">
       <div className="space-y-4">
-        {error && <div className="text-danger text-small bg-red-50 px-3 py-2 rounded">{error}</div>}
+        {error && <div className="text-danger text-small bg-red-50 dark:bg-red-900 px-3 py-2 rounded">{error}</div>}
 
         {/* Weekend / Off-hours confirmation step */}
         {offHoursConfirm && (offHours || weekend || holiday) && (
-          <div className="border-2 border-orange-300 bg-orange-50 rounded-lg p-4 space-y-3">
+          <div className="border-2 border-orange-300 dark:border-orange-600 bg-orange-50 dark:bg-orange-900 rounded-lg p-4 space-y-3">
             <div className="flex items-start gap-2">
-              <svg className="w-5 h-5 text-orange-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-5 h-5 text-orange-500 dark:text-orange-200 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
               </svg>
               <div className="space-y-1.5">
-                <p className="font-semibold text-orange-800">แจ้งเตือน: การนัดส่งสินค้าพิเศษ</p>
+                <p className="font-semibold text-orange-800 dark:text-orange-200">แจ้งเตือน: การนัดส่งสินค้าพิเศษ</p>
                 {holiday && (
-                  <p className="text-small text-orange-700">
+                  <p className="text-small text-orange-700 dark:text-orange-200">
                     <span className="font-semibold">วันหยุด:</span> {holiday} — กรุณายืนยันว่ามีเจ้าหน้าที่รับของ
                   </p>
                 )}
                 {weekend && !holiday && (
-                  <p className="text-small text-orange-700">
+                  <p className="text-small text-orange-700 dark:text-orange-200">
                     <span className="font-semibold">วันหยุด:</span> {weekend} — กรุณายืนยันว่ามีเจ้าหน้าที่รับของ
                   </p>
                 )}
                 {offHours && (
-                  <p className="text-small text-orange-700">
+                  <p className="text-small text-orange-700 dark:text-orange-200">
                     <span className="font-semibold">นอกเวลาทำงาน:</span> {offHours}
                   </p>
                 )}
-                <p className="text-small text-orange-700">ระบบจะส่งแจ้งเตือนไปยัง <strong>QC Staff, QC Supervisor, QC Manager และจัดซื้อ</strong> ทันที</p>
+                <p className="text-small text-orange-700 dark:text-orange-200">ระบบจะส่งแจ้งเตือนไปยัง <strong>QC Staff, QC Supervisor, QC Manager และจัดซื้อ</strong> ทันที</p>
               </div>
             </div>
             <div className="flex gap-2 justify-end">
@@ -811,10 +808,10 @@ function CreateModal({ onClose, suppliers, defaultDate, holidays = [] }) {
               </label>
 
               {form.has_sample && (
-                <div className="border border-accent/30 bg-blue-50 rounded-lg p-3 space-y-2">
+                <div className="border border-accent/30 bg-blue-50 dark:bg-blue-900 rounded-lg p-3 space-y-2">
                   <p className="text-small font-medium text-accent">แนบรูปงานตัวอย่าง</p>
                   <div className="flex items-center gap-3">
-                    <label className="inline-flex items-center gap-2 px-3 py-2 border border-accent/40 bg-white rounded cursor-pointer hover:bg-blue-50 text-small text-accent">
+                    <label className="inline-flex items-center gap-2 px-3 py-2 border border-accent/40 bg-surface rounded cursor-pointer hover:bg-blue-50 text-small text-accent">
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                       </svg>
@@ -835,7 +832,7 @@ function CreateModal({ onClose, suppliers, defaultDate, holidays = [] }) {
                   {pendingSampleFiles.length > 0 && (
                     <div className="flex flex-wrap gap-2 mt-1">
                       {pendingSampleFiles.map((f, idx) => (
-                        <div key={idx} className="relative w-16 h-16 rounded overflow-hidden border border-border bg-white">
+                        <div key={idx} className="relative w-16 h-16 rounded overflow-hidden border border-border bg-surface">
                           <img src={URL.createObjectURL(f)} alt="" className="w-full h-full object-cover" />
                         </div>
                       ))}
@@ -874,10 +871,10 @@ function UnplannedModal({ onClose, suppliers, defaultDate }) {
   return (
     <Modal open onClose={onClose} title="บันทึกการส่งของนอกแผน">
       <div className="space-y-4">
-        <div className="bg-yellow-50 border border-yellow-200 rounded px-3 py-2 text-small text-yellow-800">
+        <div className="bg-yellow-50 dark:bg-yellow-900 border border-yellow-200 dark:border-yellow-700 rounded px-3 py-2 text-small text-yellow-800 dark:text-yellow-200">
           ใช้สำหรับบันทึกเมื่อ Supplier มาส่งของโดยไม่มีการแจ้งล่วงหน้า หรือไม่มีในแผนจัดส่ง
         </div>
-        {error && <div className="text-danger text-small bg-red-50 px-3 py-2 rounded">{error}</div>}
+        {error && <div className="text-danger text-small bg-red-50 dark:bg-red-900 px-3 py-2 rounded">{error}</div>}
         <div className="grid grid-cols-2 gap-3">
           <div className="col-span-2">
             <label className="label">ผู้ผลิต (Supplier) *</label>
@@ -919,23 +916,23 @@ function EntryChip({ s, onClick }) {
   const past = isPastDelivery(s.scheduled_date, s.time_slot);
   const hasUrgent = Array.isArray(s.items) && s.items.some(it => it.is_urgent);
   const colors = {
-    pending:      past ? 'bg-gray-200 text-gray-500' : 'bg-blue-100 text-blue-800 hover:bg-blue-200',
-    acknowledged: 'bg-teal-100 text-teal-800 hover:bg-teal-200',
-    on_time:      'bg-green-100 text-green-800 hover:bg-green-200',
-    late:         'bg-red-100 text-red-800 hover:bg-red-200',
-    cancelled:    'bg-gray-100 text-gray-400',
-    rescheduled:  'bg-orange-100 text-orange-800 hover:bg-orange-200',
+    pending:      past ? 'bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-200' : 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 hover:bg-blue-200',
+    acknowledged: 'bg-teal-100 dark:bg-teal-900 text-teal-800 dark:text-teal-200 hover:bg-teal-200',
+    on_time:      'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 hover:bg-green-200',
+    late:         'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 hover:bg-red-200',
+    cancelled:    'bg-gray-100 dark:bg-gray-900 text-gray-400',
+    rescheduled:  'bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200 hover:bg-orange-200',
   };
   const strikeStatuses = new Set(['on_time', 'late', 'cancelled']);
   const pastPending = s.status === 'pending' && past;
   const shouldStrike = strikeStatuses.has(s.status) || pastPending;
-  const unplannedCls = s.is_unplanned ? 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200' : '';
-  const baseCls = s.is_unplanned ? unplannedCls : (colors[s.status] || 'bg-gray-100 text-gray-600');
+  const unplannedCls = s.is_unplanned ? 'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 hover:bg-yellow-200' : '';
+  const baseCls = s.is_unplanned ? unplannedCls : (colors[s.status] || 'bg-gray-100 dark:bg-gray-900 text-gray-600 dark:text-gray-200');
   const cls = hasUrgent ? 'bg-red-500 text-white hover:bg-red-600' : baseCls;
   const isDone = ['on_time', 'late'].includes(s.status);
   return (
     <button onClick={onClick}
-      className={`w-full text-left rounded px-1.5 py-0.5 text-[11px] leading-snug font-medium truncate ${cls}`}
+      className={`w-full text-left rounded px-1.5 py-0.5 text-[12px] leading-snug font-medium truncate ${cls}`}
       title={`${s.supplier_name} ${s.time_slot || ''}${hasUrgent ? ' — มีรายการด่วน!' : ''}${isDone ? ' (ส่งของแล้ว)' : ''}`}>
       {s.time_slot && <span className="mr-1 opacity-70">{timeOfDay(s.time_slot.split(':')[0])?.label ?? s.time_slot}</span>}
       {hasUrgent && <span className="mr-1">(ด่วน!)</span>}
@@ -1097,17 +1094,17 @@ export default function DeliveryCalendar() {
           </div>
           <div className="flex gap-2 flex-wrap ml-auto">
             {[
-              { label: 'รอดำเนินการ', status: 'pending',    cls: 'bg-blue-100 text-blue-800' },
-              { label: 'ส่งตรงเวลา',  status: 'on_time',    cls: 'bg-green-100 text-green-800' },
-              { label: 'ล่าช้า',      status: 'late',       cls: 'bg-red-100 text-red-800' },
-              { label: 'นอกแผน',      status: '_unplanned', cls: 'bg-yellow-100 text-yellow-800' },
+              { label: 'รอดำเนินการ', status: 'pending',    cls: 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200' },
+              { label: 'ส่งตรงเวลา',  status: 'on_time',    cls: 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' },
+              { label: 'ล่าช้า',      status: 'late',       cls: 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200' },
+              { label: 'นอกแผน',      status: '_unplanned', cls: 'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200' },
             ].map(b => {
               const count = b.status === '_unplanned'
                 ? schedules.filter(s => s.is_unplanned).length
                 : schedules.filter(s => s.status === b.status && !s.is_unplanned).length;
               if (!count) return null;
               return (
-                <span key={b.status} className={`px-2 py-0.5 rounded text-[11px] font-medium ${b.cls}`}>
+                <span key={b.status} className={`px-2 py-0.5 rounded text-[12px] font-medium ${b.cls}`}>
                   {b.label} {count}
                 </span>
               );
@@ -1118,17 +1115,17 @@ export default function DeliveryCalendar() {
         {/* Summary badges บน mobile */}
         <div className="flex gap-1.5 flex-wrap sm:hidden">
           {[
-            { label: 'รอ',      status: 'pending',    cls: 'bg-blue-100 text-blue-800' },
-            { label: 'ตรงเวลา', status: 'on_time',   cls: 'bg-green-100 text-green-800' },
-            { label: 'ล่าช้า',  status: 'late',      cls: 'bg-red-100 text-red-800' },
-            { label: 'นอกแผน',  status: '_unplanned',cls: 'bg-yellow-100 text-yellow-800' },
+            { label: 'รอ',      status: 'pending',    cls: 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200' },
+            { label: 'ตรงเวลา', status: 'on_time',   cls: 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' },
+            { label: 'ล่าช้า',  status: 'late',      cls: 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200' },
+            { label: 'นอกแผน',  status: '_unplanned',cls: 'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200' },
           ].map(b => {
             const count = b.status === '_unplanned'
               ? schedules.filter(s => s.is_unplanned).length
               : schedules.filter(s => s.status === b.status && !s.is_unplanned).length;
             if (!count) return null;
             return (
-              <span key={b.status} className={`px-2 py-0.5 rounded text-[11px] font-medium ${b.cls}`}>
+              <span key={b.status} className={`px-2 py-0.5 rounded text-[12px] font-medium ${b.cls}`}>
                 {b.label} {count}
               </span>
             );
@@ -1142,7 +1139,7 @@ export default function DeliveryCalendar() {
           {/* Day headers */}
           <div className="grid grid-cols-7 border-b border-border">
             {DAYS_TH.map((d, i) => (
-              <div key={d} className={`py-1.5 text-center text-[11px] sm:text-small font-semibold ${i===0?'text-red-500':i===6?'text-blue-500':'text-muted'}`}>{d}</div>
+              <div key={d} className={`py-1.5 text-center text-[12px] sm:text-small font-semibold ${i===0?'text-red-500 dark:text-red-200':i===6?'text-blue-500 dark:text-blue-200':'text-muted'}`}>{d}</div>
             ))}
           </div>
           {/* Calendar cells */}
@@ -1164,15 +1161,15 @@ export default function DeliveryCalendar() {
                 return (
                   <div key={dateStr}
                     className={`border-b border-r border-border min-h-[52px] sm:min-h-[100px] p-1 cursor-pointer transition-colors
-                      ${isToday ? 'bg-blue-50' : isHoliday ? 'bg-red-50' : 'hover:bg-blue-50'} ${isSelected ? 'ring-1 ring-inset ring-accent' : ''}`}
+                      ${isToday ? 'bg-blue-50 dark:bg-blue-900' : isHoliday ? 'bg-red-50 dark:bg-red-900' : 'hover:bg-blue-50'} ${isSelected ? 'ring-1 ring-inset ring-accent' : ''}`}
                     onClick={() => openDay(dateStr)}>
                     <div className="flex items-start justify-between mb-0.5">
-                      <div className={`text-[11px] sm:text-[12px] font-semibold w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full flex-shrink-0
-                        ${isToday ? 'bg-primary text-white' : dow===0?'text-red-500':dow===6?'text-blue-500':'text-text'}`}>
+                      <div className={`text-[12px] sm:text-[12px] font-semibold w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full flex-shrink-0
+                        ${isToday ? 'bg-primary text-white' : dow===0?'text-red-500 dark:text-red-200':dow===6?'text-blue-500 dark:text-blue-200':'text-text'}`}>
                         {day}
                       </div>
                       {isHoliday && (
-                        <span className="hidden sm:block text-[9px] font-medium text-red-500 leading-tight text-right max-w-[48px] truncate" title={holidayLabel}>
+                        <span className="hidden sm:block text-[12px] font-medium text-red-500 dark:text-red-200 leading-tight text-right max-w-[48px] truncate" title={holidayLabel}>
                           {isCompanyHoliday && !isSunday ? holidayLabel : 'หยุด'}
                         </span>
                       )}
@@ -1185,13 +1182,13 @@ export default function DeliveryCalendar() {
                           const dotCls = hasUrgent ? 'bg-red-500' :
                             s.is_unplanned ? 'bg-yellow-500' :
                             s.status === 'on_time' ? 'bg-green-500' :
-                            s.status === 'late' ? 'bg-red-400' :
+                            s.status === 'late' ? 'bg-red-400 dark:bg-red-700' :
                             s.status === 'acknowledged' ? 'bg-teal-500' :
                             s.status === 'rescheduled' ? 'bg-orange-500' :
-                            s.status === 'cancelled' ? 'bg-gray-400' : 'bg-blue-500';
+                            s.status === 'cancelled' ? 'bg-gray-400 dark:bg-gray-700' : 'bg-blue-500';
                           return <span key={s.id} className={`w-2 h-2 rounded-full flex-shrink-0 ${dotCls}`} title={s.supplier_name} />;
                         })}
-                        {entries.length > 5 && <span className="text-[9px] text-muted leading-tight">+{entries.length-5}</span>}
+                        {entries.length > 5 && <span className="text-[12px] text-muted leading-tight">+{entries.length-5}</span>}
                       </div>
                     )}
                     {/* Desktop: text chips */}
@@ -1200,7 +1197,7 @@ export default function DeliveryCalendar() {
                         <EntryChip key={s.id} s={s} onClick={e => { e.stopPropagation(); openDetail(s); }} />
                       ))}
                       {entries.length > 3 && (
-                        <p className="text-[10px] text-muted pl-1">+{entries.length-3} เพิ่มเติม</p>
+                        <p className="text-[12px] text-muted pl-1">+{entries.length-3} เพิ่มเติม</p>
                       )}
                     </div>
                   </div>
@@ -1244,7 +1241,7 @@ export default function DeliveryCalendar() {
                     {/* Time column */}
                     <div className="text-center min-w-[48px] flex-shrink-0">
                       <p className="text-[15px] sm:text-h3 font-bold text-primary font-mono">{s.time_slot || '—'}</p>
-                      {past && <p className="text-[10px] text-muted mt-0.5">ผ่านแล้ว</p>}
+                      {past && <p className="text-[12px] text-muted mt-0.5">ผ่านแล้ว</p>}
                     </div>
                     {/* Content */}
                     <div className="flex-1 min-w-0">

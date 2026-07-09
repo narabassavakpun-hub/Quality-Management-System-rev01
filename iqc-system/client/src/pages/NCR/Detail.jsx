@@ -2,11 +2,12 @@ import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import api from '../../utils/api';
+import api, { downloadFile } from '../../utils/api';
 import Badge from '../../components/UI/Badge';
 import Button from '../../components/UI/Button';
 import Modal from '../../components/UI/Modal';
 import ConfirmDialog from '../../components/UI/ConfirmDialog';
+import ImageUploadPair from '../../components/UI/ImageUploadPair';
 
 const DISPOSITION_LABELS = {
   return: 'ส่งคืน Supplier (Return)',
@@ -62,7 +63,7 @@ function ApprovalTimeline({ approvals, ncr }) {
                 {connector}
               </div>
               <div className="pb-4 flex-1">
-                <div className="text-[11px] font-semibold text-teal-700 uppercase tracking-wide mb-0.5">จัดซื้อได้รับเอกสาร NCR</div>
+                <div className="text-[12px] font-semibold text-teal-700 dark:text-teal-200 uppercase tracking-wide mb-0.5">จัดซื้อได้รับเอกสาร NCR</div>
                 <div className="text-body font-medium">{ev.data.name || 'จัดซื้อ'} <span className="text-small text-muted">(purchasing)</span></div>
                 <div className="text-small text-muted">{new Date(ev.ts + 'Z').toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })}</div>
               </div>
@@ -78,7 +79,7 @@ function ApprovalTimeline({ approvals, ncr }) {
                 {connector}
               </div>
               <div className="pb-4 flex-1">
-                <div className="text-[11px] font-semibold text-amber-600 uppercase tracking-wide mb-0.5">จัดซื้อ Copy Link ให้ Supplier</div>
+                <div className="text-[12px] font-semibold text-amber-600 dark:text-amber-200 uppercase tracking-wide mb-0.5">จัดซื้อ Copy Link ให้ Supplier</div>
                 <div className="text-body font-medium">{ev.data.name || 'จัดซื้อ'} <span className="text-small text-muted">(purchasing)</span></div>
                 <div className="text-small text-muted">{new Date(ev.ts + 'Z').toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })}</div>
                 {ev.data.count > 1 && <div className="text-small text-muted mt-0.5">คัดลอกทั้งหมด {ev.data.count} ครั้ง</div>}
@@ -96,10 +97,10 @@ function ApprovalTimeline({ approvals, ncr }) {
                 {connector}
               </div>
               <div className="pb-4 flex-1">
-                <div className="text-[11px] font-semibold text-orange-600 uppercase tracking-wide mb-0.5">Supplier ตอบกลับ</div>
+                <div className="text-[12px] font-semibold text-orange-600 dark:text-orange-200 uppercase tracking-wide mb-0.5">Supplier ตอบกลับ</div>
                 <div className="text-body font-medium">{sr.respondent_name || ncr.supplier_name || 'Supplier'}{sr.respondent_name && ncr.supplier_name ? <span className="text-small text-muted font-normal"> ({ncr.supplier_name})</span> : null}</div>
                 <div className="text-small text-muted">{new Date(sr.submitted_at + 'Z').toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })}</div>
-                <div className="mt-2 bg-orange-50 border border-orange-200 rounded px-3 py-2 space-y-1">
+                <div className="mt-2 bg-orange-50 dark:bg-orange-900 border border-orange-200 dark:border-orange-700 rounded px-3 py-2 space-y-1">
                   {sr.root_cause && <div className="text-small"><span className="text-muted">สาเหตุหลัก: </span>{sr.root_cause}</div>}
                   {sr.corrective_action && <div className="text-small"><span className="text-muted">การแก้ไข: </span>{sr.corrective_action}</div>}
                   {sr.preventive_action && <div className="text-small"><span className="text-muted">การป้องกัน: </span>{sr.preventive_action}</div>}
@@ -125,12 +126,12 @@ function ApprovalTimeline({ approvals, ncr }) {
               {connector}
             </div>
             <div className="pb-4 flex-1">
-              <div className={`text-[11px] font-semibold uppercase tracking-wide mb-0.5 ${isRejection ? 'text-danger' : isResubmit ? 'text-amber-600' : 'text-accent'}`}>{processLabel}</div>
+              <div className={`text-[12px] font-semibold uppercase tracking-wide mb-0.5 ${isRejection ? 'text-danger' : isResubmit ? 'text-amber-600 dark:text-amber-200' : 'text-accent'}`}>{processLabel}</div>
               <div className="text-body font-medium">{a.full_name || a.role} <span className="text-small text-muted">({a.role})</span></div>
               <div className="text-small text-muted">{new Date(a.created_at + 'Z').toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })}</div>
-              {a.comment && <div className={`text-small mt-1 px-2 py-1 rounded ${isRejection ? 'bg-red-50 text-danger' : 'text-text bg-bg'}`}>{a.comment}</div>}
+              {a.comment && <div className={`text-small mt-1 px-2 py-1 rounded ${isRejection ? 'bg-red-50 dark:bg-red-900 text-danger' : 'text-text bg-bg'}`}>{a.comment}</div>}
               {showDisposition && (
-                <div className="mt-2 bg-blue-50 border border-blue-200 rounded px-3 py-2 space-y-0.5">
+                <div className="mt-2 bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded px-3 py-2 space-y-0.5">
                   <div className="text-small font-medium text-primary mb-1">ผลการวินิจฉัย (Disposition)</div>
                   <div className="text-small"><span className="text-muted">การจัดการ: </span><span className="font-medium">{DISPOSITION_LABELS[ncr.disposition] || ncr.disposition}</span></div>
                   {ncr.disposition_note && <div className="text-small"><span className="text-muted">หมายเหตุ: </span>{ncr.disposition_note}</div>}
@@ -244,11 +245,27 @@ export default function NCRDetail() {
   });
 
   const copyToClipboard = (text) => {
-    navigator.clipboard.writeText(text).then(() => {
+    const onDone = () => {
       setCopyToast(true);
-      setTimeout(() => setCopyToast(false), 2000);
+      setTimeout(() => setCopyToast(false), 2500);
       recordLinkCopy.mutate();
-    });
+    };
+    const fallback = () => {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      try { document.execCommand('copy'); } catch {}
+      document.body.removeChild(ta);
+      onDone();
+    };
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(onDone).catch(fallback);
+    } else {
+      fallback();
+    }
   };
 
   const rejectResponse = useMutation({
@@ -312,7 +329,7 @@ export default function NCRDetail() {
   const canRejectResponse = !isNCP && user?.role === 'qc_manager' && ncr.status === 'pending_manager_review';
   const canResubmit = !isNCP && user?.role === 'purchasing' && ncr.status === 'pending_supplier_resubmit';
   const canRequestUAI = !isNCP && user?.role === 'purchasing' && ncr.status === 'pending_supplier';
-  const canCopyLink = !isNCP && user?.role === 'purchasing' && ['pending_supplier', 'pending_uai'].includes(ncr.status);
+  const canCopyLink = !isNCP && user?.role === 'purchasing' && ['pending_purchasing_review', 'pending_supplier', 'uai_pending_qc_manager'].includes(ncr.status);
   const canAcknowledge = !isNCP && user?.role === 'purchasing' && ncr.status === 'pending_supplier' && !ncr.purchasing_received_at;
   const canReview = !isNCP && user?.role === 'purchasing' && ncr.status === 'pending_purchasing_review';
   const tokenExpired = ncr.token_expires_at && new Date(ncr.token_expires_at) < new Date();
@@ -329,12 +346,19 @@ export default function NCRDetail() {
 
   return (
     <div className="space-y-4">
+      <button onClick={() => navigate(-1)}
+        className="inline-flex items-center gap-1.5 text-muted hover:text-text text-small min-h-[44px] -ml-1">
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+        </svg>
+        กลับ
+      </button>
       <div className="page-header flex-wrap gap-3">
         <div>
           <h1 className="page-title">{ncr.ncr_code}</h1>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             <Badge status={ncr.status} />
-            <span className={`badge ${isNCP ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>
+            <span className={`badge ${isNCP ? 'bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-200' : 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-200'}`}>
               {isNCP ? 'NCP Minor — บันทึกภายใน' : 'NCR Major'}
             </span>
           </div>
@@ -372,8 +396,8 @@ export default function NCRDetail() {
             </Button>
           )}
           {canApprove && <Button variant="success" onClick={() => setConfirmApprove(true)}>{approveLabel}</Button>}
-          <a href={`/api/ncr/${id}/excel`} download className="btn-secondary btn text-small">Export Excel</a>
-          <a href={`/api/ncr/${id}/pdf`} download className="btn-primary btn text-small">Export PDF</a>
+          <button onClick={() => downloadFile(`/ncr/${id}/excel`, {}, `${ncr.ncr_code || id}.xlsx`)} className="btn-secondary btn text-small">Export Excel</button>
+          <button onClick={() => downloadFile(`/ncr/${id}/pdf`, {}, `${ncr.ncr_code || id}.pdf`)} className="btn-primary btn text-small">Export PDF</button>
         </div>
       </div>
 
@@ -394,7 +418,9 @@ export default function NCRDetail() {
           {[
             ['PO No.', ncr.po_no, 'font-mono'],
             ['Supplier', ncr.supplier_name || '-', ''],
-            ['วันที่เปิด', ncr.created_at?.slice(0, 10), ''],
+            ['รับเข้าโดย', ncr.bill_received_by_name || '-', ''],
+            ['รับเข้าเมื่อ', ncr.bill_received_date || '-', ''],
+            ['วันที่ออกเอกสาร', ncr.created_at?.slice(0, 10), ''],
           ].map(([label, value, cls]) => (
             <div key={label}><div className="text-small text-muted">{label}</div><div className={`text-body font-medium ${cls}`}>{value}</div></div>
           ))}
@@ -406,7 +432,7 @@ export default function NCRDetail() {
             {ncr.items.map((item, i) => (
               <div key={i} className="border border-border rounded-lg overflow-hidden">
                 {/* ข้อมูลรายการ */}
-                <div className="bg-red-50 px-3 py-2 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1">
+                <div className="bg-red-50 dark:bg-red-900 px-3 py-2 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1">
                   <div className="col-span-2 sm:col-span-3">
                     <span className="font-medium text-body">{item.item_name}</span>
                   </div>
@@ -445,7 +471,7 @@ export default function NCRDetail() {
                           <img
                             src={`/uploads/bill-items/${img.file_path}`}
                             alt=""
-                            className="h-24 w-24 object-cover rounded border border-red-200 hover:opacity-80"
+                            className="h-24 w-24 object-cover rounded border border-red-200 dark:border-red-700 hover:opacity-80"
                           />
                         </a>
                       ))}
@@ -475,12 +501,12 @@ export default function NCRDetail() {
       {ncr.status === 'pending_supplier_resubmit' && (() => {
         const rejection = [...(ncr.approvals || [])].reverse().find(a => a.action === 'rejected_response');
         return (
-          <div className="card bg-red-50 border border-red-200">
+          <div className="card bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700">
             <div className="text-small font-semibold text-danger mb-1">QC Manager ไม่อนุมัติคำตอบ Supplier</div>
             {rejection && (
               <>
                 <div className="text-small text-muted">โดย: {rejection.full_name} — {new Date(rejection.created_at + 'Z').toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })}</div>
-                {rejection.comment && <div className="text-small text-text mt-1 bg-white border border-red-200 rounded px-2 py-1">{rejection.comment}</div>}
+                {rejection.comment && <div className="text-small text-text mt-1 bg-surface border border-red-200 dark:border-red-700 rounded px-2 py-1">{rejection.comment}</div>}
               </>
             )}
             {user?.role === 'purchasing' && (
@@ -491,8 +517,8 @@ export default function NCRDetail() {
       })()}
 
       {isNCP && ncr.status === 'ncp_closed' && (
-        <div className="card bg-teal-50 border border-teal-200">
-          <div className="text-small font-medium text-teal-700">เอกสาร NCP ปิดแล้ว — บันทึกไว้เพื่อวิเคราะห์จุดบกพร่องสะสมของ Supplier</div>
+        <div className="card bg-teal-50 dark:bg-teal-900 border border-teal-200 dark:border-teal-700">
+          <div className="text-small font-medium text-teal-700 dark:text-teal-200">เอกสาร NCP ปิดแล้ว — บันทึกไว้เพื่อวิเคราะห์จุดบกพร่องสะสมของ Supplier</div>
         </div>
       )}
 
@@ -593,7 +619,7 @@ export default function NCRDetail() {
             <textarea className="input" rows={2} value={comment} onChange={e => setComment(e.target.value)} />
           </div>
 
-          {approveError && <div className="text-danger text-small bg-red-50 px-2 py-1 rounded">{approveError}</div>}
+          {approveError && <div className="text-danger text-small bg-red-50 dark:bg-red-900 px-2 py-1 rounded">{approveError}</div>}
 
           <div className="flex gap-2 justify-end">
             <Button variant="secondary" onClick={() => { setConfirmApprove(false); setApproveError(''); }}>ยกเลิก</Button>
@@ -605,13 +631,13 @@ export default function NCRDetail() {
       {/* Modal: Purchasing Review + คำแปลภาษาอังกฤษ */}
       <Modal open={reviewOpen} onClose={() => setReviewOpen(false)} title="Review NCR + เพิ่มคำแปลภาษาอังกฤษสำหรับ Supplier" size="lg">
         <div className="space-y-4">
-          <div className="bg-blue-50 border border-blue-200 rounded px-3 py-2 text-small text-blue-800">
+          <div className="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded px-3 py-2 text-small text-blue-800 dark:text-blue-200">
             กรุณาตรวจสอบข้อมูลและเพิ่มคำแปลภาษาอังกฤษให้ครบถ้วน ก่อนส่ง Link ให้ Supplier ตอบกลับ
           </div>
 
           {reviewItems.map((item, idx) => (
             <div key={item.id} className="border border-border rounded-lg overflow-hidden">
-              <div className="bg-red-50 px-4 py-2 text-small font-medium text-primary border-b border-border">
+              <div className="bg-red-50 dark:bg-red-900 px-4 py-2 text-small font-medium text-primary border-b border-border">
                 รายการ {idx + 1}: {item.item_name}
               </div>
               <div className="px-4 py-3 grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -647,7 +673,7 @@ export default function NCRDetail() {
             </div>
           ))}
 
-          {reviewError && <div className="text-danger text-small bg-red-50 px-3 py-2 rounded">{reviewError}</div>}
+          {reviewError && <div className="text-danger text-small bg-red-50 dark:bg-red-900 px-3 py-2 rounded">{reviewError}</div>}
 
           <div className="flex gap-2 justify-end pt-1">
             <Button variant="secondary" onClick={() => setReviewOpen(false)}>ยกเลิก</Button>
@@ -661,7 +687,7 @@ export default function NCRDetail() {
       {/* Modal: ขอ UAI — purchasing กรอกข้อมูลครบก่อนส่ง */}
       <Modal open={uaiOpen} onClose={() => setUaiOpen(false)} title="ขอยอมรับใช้พิเศษ (UAI)" size="lg">
         <div className="space-y-4">
-          <div className="bg-yellow-50 border border-yellow-200 rounded px-3 py-2 text-small text-yellow-800">
+          <div className="bg-yellow-50 dark:bg-yellow-900 border border-yellow-200 dark:border-yellow-700 rounded px-3 py-2 text-small text-yellow-800 dark:text-yellow-200">
             กรอกข้อมูลให้ครบทุกช่องที่มีเครื่องหมาย * ก่อนส่งให้ QC Manager ตรวจสอบ
           </div>
 
@@ -743,21 +769,14 @@ export default function NCRDetail() {
           {/* รูปภาพประกอบจากผู้ผลิต */}
           <div className="pt-2 border-t border-border">
             <p className="text-small font-semibold text-primary mb-2">รูปภาพประกอบจากผู้ผลิต (ถ้ามี)</p>
-            <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-border cursor-pointer hover:border-accent transition-colors text-small text-muted">
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-              เลือกรูปภาพ
-              <input type="file" accept="image/*" multiple className="hidden"
-                onChange={e => setUaiImages(prev => [...prev, ...Array.from(e.target.files)])} />
-            </label>
+            <ImageUploadPair onChange={e => setUaiImages(prev => [...prev, ...Array.from(e.target.files)])} />
             {uaiImages.length > 0 && (
               <div className="flex flex-wrap gap-2 mt-2">
                 {uaiImages.map((f, i) => (
                   <div key={i} className="relative group">
                     <img src={URL.createObjectURL(f)} alt="" className="h-16 w-16 object-cover rounded border border-border" />
                     <button onClick={() => setUaiImages(prev => prev.filter((_, j) => j !== i))}
-                      className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-danger text-white text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100">
+                      className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-danger text-white text-[12px] flex items-center justify-center opacity-0 group-hover:opacity-100 shadow">
                       ×
                     </button>
                   </div>
@@ -780,7 +799,7 @@ export default function NCRDetail() {
       {/* Modal: QC Manager ไม่อนุมัติคำตอบ Supplier */}
       <Modal open={rejectOpen} onClose={() => setRejectOpen(false)} title="ไม่อนุมัติคำตอบ Supplier" size="sm">
         <div className="space-y-3">
-          <div className="bg-red-50 border border-red-200 rounded px-3 py-2 text-small text-danger">
+          <div className="bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded px-3 py-2 text-small text-danger">
             เมื่อไม่อนุมัติ เอกสารจะถูกส่งกลับไปยังจัดซื้อ เพื่อให้ส่ง Supplier ตอบใหม่
           </div>
           <div>
@@ -793,7 +812,7 @@ export default function NCRDetail() {
               placeholder="ระบุเหตุผลหรือสิ่งที่ต้องแก้ไข"
             />
           </div>
-          {rejectError && <div className="text-danger text-small bg-red-50 px-2 py-1 rounded">{rejectError}</div>}
+          {rejectError && <div className="text-danger text-small bg-red-50 dark:bg-red-900 px-2 py-1 rounded">{rejectError}</div>}
           <div className="flex gap-2 justify-end">
             <Button variant="secondary" onClick={() => setRejectOpen(false)}>ยกเลิก</Button>
             <Button variant="danger" onClick={() => rejectResponse.mutate()} loading={rejectResponse.isPending}>ยืนยัน — ไม่อนุมัติ</Button>

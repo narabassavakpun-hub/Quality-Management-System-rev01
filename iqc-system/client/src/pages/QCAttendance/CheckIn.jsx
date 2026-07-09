@@ -181,7 +181,7 @@ export default function QCCheckIn() {
           {/* Already completed (checked in AND checked out) */}
           {status?.checked_in && status?.checked_out && !checkIn.isSuccess && !checkOut.isSuccess && (
             <div className="card p-6 text-center mb-4">
-              <div className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center mx-auto mb-3">
+              <div className="w-16 h-16 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center mx-auto mb-3">
                 <svg className="w-8 h-8 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
                 </svg>
@@ -216,11 +216,11 @@ export default function QCCheckIn() {
                 </div>
                 <div className="text-right">
                   {(status.late_minutes || 0) > 0 ? (
-                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-orange-100 text-orange-700 text-small font-semibold">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-orange-100 dark:bg-orange-900 text-orange-700 dark:text-orange-200 text-small font-semibold">
                       สาย {status.late_minutes} นาที
                     </span>
                   ) : (
-                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-green-100 text-green-700 text-small font-semibold">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-200 text-small font-semibold">
                       ตรงเวลา
                     </span>
                   )}
@@ -246,7 +246,7 @@ export default function QCCheckIn() {
           {/* Success result after action */}
           {isSuccess && (
             <div className="card p-6 text-center mb-4">
-              <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-3">
+              <div className="w-16 h-16 rounded-full bg-green-100 dark:bg-green-900 flex items-center justify-center mx-auto mb-3">
                 <svg className="w-8 h-8 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
                 </svg>
@@ -284,14 +284,14 @@ export default function QCCheckIn() {
                 </div>
               )}
               {gpsState === 'ok' && (
-                <div className="flex items-start gap-3 p-3 bg-green-50 rounded-lg">
+                <div className="flex items-start gap-3 p-3 bg-green-50 dark:bg-green-900 rounded-lg">
                   <svg className="w-5 h-5 text-success flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                   </svg>
                   <div>
                     <div className="font-medium text-success text-small">อยู่ในเขตโรงงาน</div>
                     {position?.dist !== null && (
-                      <div className="text-[11px] text-green-700 mt-0.5">
+                      <div className="text-[11px] text-green-700 dark:text-green-200 mt-0.5">
                         ห่างจากศูนย์กลาง {position.dist} เมตร (รัศมี {status?.factory_radius_m} เมตร)
                       </div>
                     )}
@@ -302,20 +302,20 @@ export default function QCCheckIn() {
                 </div>
               )}
               {gpsState === 'outside' && (
-                <div className="flex items-start gap-3 p-3 bg-red-50 rounded-lg">
+                <div className="flex items-start gap-3 p-3 bg-red-50 dark:bg-red-900 rounded-lg">
                   <svg className="w-5 h-5 text-danger flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
                   </svg>
                   <div>
                     <div className="font-medium text-danger text-small">อยู่นอกเขตโรงงาน</div>
-                    <div className="text-[11px] text-red-700 mt-0.5">
+                    <div className="text-[11px] text-red-700 dark:text-red-200 mt-0.5">
                       ห่างจากศูนย์กลาง {position?.dist} เมตร (รัศมี {status?.factory_radius_m} เมตร)
                     </div>
                   </div>
                 </div>
               )}
               {gpsState === 'denied' && (
-                <div className="flex items-start gap-3 p-3 bg-orange-50 rounded-lg">
+                <div className="flex items-start gap-3 p-3 bg-orange-50 dark:bg-orange-900 rounded-lg">
                   <svg className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                   </svg>
@@ -342,7 +342,7 @@ export default function QCCheckIn() {
                     ? mode === 'checkout'
                       ? 'bg-accent text-white hover:opacity-90 active:scale-[0.98]'
                       : 'bg-primary text-white hover:opacity-90 active:scale-[0.98]'
-                    : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                    : 'bg-gray-100 dark:bg-gray-900 text-gray-400 cursor-not-allowed'
                   }`}
               >
                 {mutate.isPending ? (
@@ -356,7 +356,7 @@ export default function QCCheckIn() {
               </button>
 
               {isError && (
-                <div className="mt-3 p-3 bg-red-50 rounded-lg text-small text-danger text-center">
+                <div className="mt-3 p-3 bg-red-50 dark:bg-red-900 rounded-lg text-small text-danger text-center">
                   {errMsg}
                 </div>
               )}

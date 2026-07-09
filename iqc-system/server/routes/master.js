@@ -53,6 +53,21 @@ function parseBool(v) {
   return ['ใช่','yes','y','1','true'].includes(String(v ?? '').trim().toLowerCase());
 }
 
+// ── Header validation ────────────────────────────────────────────────────────
+// ตรวจ row 1 ว่าตรงกับ template ที่กำหนด (strip *, trim, lowercase ก่อนเปรียบเทียบ)
+function checkHeaders(ws, expectedHeaders) {
+  const norm = s => String(s ?? '').replace(/\*/g, '').trim().toLowerCase();
+  const headerRow = ws.getRow(1);
+  const mismatches = [];
+  expectedHeaders.forEach((exp, i) => {
+    const actual = norm(headerRow.getCell(i + 1).value);
+    if (actual !== norm(exp)) {
+      mismatches.push(`คอลัมน์ ${i + 1}: คาดหวัง "${exp}" แต่พบ "${actual || '(ว่าง)'}" `);
+    }
+  });
+  return mismatches;
+}
+
 // ===== SUPPLIERS =====
 router.get('/suppliers/export', ...adminOnly, async (req, res) => {
   const wb = new ExcelJS.Workbook(); wb.creator = 'IQC System';
@@ -77,6 +92,9 @@ router.post('/suppliers/import', ...adminOnly, excelMemUpload.single('file'), as
   let wb; try { wb = await parseImportFile(req.file.buffer); } catch { return res.status(400).json({ error: 'ไฟล์ไม่ถูกต้อง' }); }
   const ws = wb.getWorksheet('ผู้ผลิต') || wb.worksheets[0];
   if (!ws) return res.status(400).json({ error: 'ไม่พบ Sheet ในไฟล์' });
+
+  const hErr = checkHeaders(ws, ['รหัสผู้ผลิต', 'ชื่อผู้ผลิต *', 'อีเมล', 'เบอร์โทร', 'หมายเหตุ']);
+  if (hErr.length) return res.status(400).json({ error: 'Header ไม่ตรงกับ template — กรุณาใช้ไฟล์ที่ดาวน์โหลดจากระบบ', headerErrors: hErr });
 
   const existingCodes = new Set(db.prepare('SELECT code FROM suppliers WHERE code IS NOT NULL').all().map(r => r.code.toLowerCase()));
   const existingNames = new Set(db.prepare('SELECT LOWER(name) as n FROM suppliers').all().map(r => r.n));
@@ -306,6 +324,9 @@ router.post('/product-groups/import', ...adminOnly, excelMemUpload.single('file'
   const ws = wb.getWorksheet('กลุ่มสินค้า') || wb.worksheets[0];
   if (!ws) return res.status(400).json({ error: 'ไม่พบ Sheet ในไฟล์' });
 
+  const hErr = checkHeaders(ws, ['รหัสกลุ่ม', 'ชื่อกลุ่มสินค้า *', 'บังคับเอกสารตรวจ', 'บังคับ Lot Number', 'บังคับวันหมดอายุ', 'บังคับ Certificate']);
+  if (hErr.length) return res.status(400).json({ error: 'Header ไม่ตรงกับ template — กรุณาใช้ไฟล์ที่ดาวน์โหลดจากระบบ', headerErrors: hErr });
+
   const existingNames = new Set(db.prepare('SELECT LOWER(name) as n FROM product_groups').all().map(r => r.n));
   const existingCodes = new Set(db.prepare('SELECT code FROM product_groups WHERE code IS NOT NULL').all().map(r => r.code.toLowerCase()));
   const seenNames = new Set(), seenCodes = new Set(), results = [];
@@ -425,6 +446,9 @@ router.post('/units/import', ...adminOnly, excelMemUpload.single('file'), async 
   const ws = wb.getWorksheet('หน่วยนับ') || wb.worksheets[0];
   if (!ws) return res.status(400).json({ error: 'ไม่พบ Sheet ในไฟล์' });
 
+  const hErr = checkHeaders(ws, ['ชื่อหน่วยนับ *', 'ตัวย่อ']);
+  if (hErr.length) return res.status(400).json({ error: 'Header ไม่ตรงกับ template — กรุณาใช้ไฟล์ที่ดาวน์โหลดจากระบบ', headerErrors: hErr });
+
   const existingNames = new Set(db.prepare('SELECT LOWER(name) as n FROM units').all().map(r => r.n));
   const seenNames = new Set(), results = [];
 
@@ -520,6 +544,9 @@ router.post('/defect-categories/import', ...adminOnly, excelMemUpload.single('fi
   let wb; try { wb = await parseImportFile(req.file.buffer); } catch { return res.status(400).json({ error: 'ไฟล์ไม่ถูกต้อง' }); }
   const ws = wb.getWorksheet('กลุ่มปัญหา') || wb.worksheets[0];
   if (!ws) return res.status(400).json({ error: 'ไม่พบ Sheet ในไฟล์' });
+
+  const hErr = checkHeaders(ws, ['รหัส', 'ชื่อกลุ่มปัญหา *', 'หมายเหตุ']);
+  if (hErr.length) return res.status(400).json({ error: 'Header ไม่ตรงกับ template — กรุณาใช้ไฟล์ที่ดาวน์โหลดจากระบบ', headerErrors: hErr });
 
   const existingNames = new Set(db.prepare('SELECT LOWER(name) as n FROM defect_categories').all().map(r => r.n));
   const existingCodes = new Set(db.prepare('SELECT code FROM defect_categories WHERE code IS NOT NULL').all().map(r => r.code.toLowerCase()));
@@ -635,6 +662,9 @@ router.post('/colors/import', ...adminOnly, excelMemUpload.single('file'), async
   let wb; try { wb = await parseImportFile(req.file.buffer); } catch { return res.status(400).json({ error: 'ไฟล์ไม่ถูกต้อง' }); }
   const ws = wb.getWorksheet('สีสินค้า') || wb.worksheets[0];
   if (!ws) return res.status(400).json({ error: 'ไม่พบ Sheet ในไฟล์' });
+
+  const hErr = checkHeaders(ws, ['รหัสสี', 'ชื่อสี *', 'Hex Code']);
+  if (hErr.length) return res.status(400).json({ error: 'Header ไม่ตรงกับ template — กรุณาใช้ไฟล์ที่ดาวน์โหลดจากระบบ', headerErrors: hErr });
 
   const existingNames = new Set(db.prepare('SELECT LOWER(name) as n FROM colors').all().map(r => r.n));
   const existingCodes = new Set(db.prepare('SELECT code FROM colors WHERE code IS NOT NULL').all().map(r => r.code.toLowerCase()));
@@ -992,6 +1022,9 @@ router.post('/products/import', ...adminOnly, excelMemUpload.single('file'), asy
   const ws = wb.getWorksheet('สินค้า') || wb.worksheets[0];
   if (!ws) return res.status(400).json({ error: 'ไม่พบ Sheet ในไฟล์' });
 
+  const hErr = checkHeaders(ws, ['รหัสสินค้า', 'ชื่อสินค้า *', 'ชื่อ Supplier *', 'กลุ่มสินค้า *', 'หน่วยนับ *', 'Inspection Level', 'AQL Value', 'หมายเหตุ']);
+  if (hErr.length) return res.status(400).json({ error: 'Header ไม่ตรงกับ template — กรุณาใช้ไฟล์ที่ดาวน์โหลดจากระบบ', headerErrors: hErr });
+
   // Build lookup maps (case-insensitive)
   const supplierMap = Object.fromEntries(
     db.prepare('SELECT name, id FROM suppliers WHERE is_active=1').all()
@@ -1145,6 +1178,10 @@ function attachProductSubqueries(rows) {
   for (const r of db.prepare(`SELECT product_id, image_type, COUNT(*) as c FROM product_images WHERE product_id IN (${ph}) GROUP BY product_id, image_type`).all(...ids)) {
     (byImg[r.product_id] = byImg[r.product_id] || {})[r.image_type] = r.c;
   }
+  const byThumb = {};
+  for (const r of db.prepare(`SELECT product_id, file_path FROM product_images WHERE product_id IN (${ph}) AND image_type = 'product' ORDER BY product_id, id ASC`).all(...ids)) {
+    if (!byThumb[r.product_id]) byThumb[r.product_id] = r.file_path;
+  }
   for (const row of rows) {
     row.suppliers = bySuppliers[row.id] || [];
     row.supplier_ids = row.suppliers.map(s => s.supplier_id);
@@ -1152,6 +1189,7 @@ function attachProductSubqueries(rows) {
     row.current_drawing = byDrawing[row.id] || undefined;
     row.product_img_count = byImg[row.id]?.product || 0;
     row.quality_img_count = byImg[row.id]?.quality_issue || 0;
+    row.thumbnail_path = byThumb[row.id] || null;
   }
 }
 
@@ -1264,7 +1302,7 @@ router.patch('/products/:id/toggle', ...adminOnly, (req, res) => {
 });
 
 // Product Images
-router.post('/products/:id/images', ...adminOnly, uploads.general.array('images', 10), uploads.verifyMagic, (req, res) => {
+router.post('/products/:id/images', ...adminOnly, uploads.general.array('images', 10), uploads.verifyMagic, uploads.compressImages, (req, res) => {
   const product = db.prepare('SELECT id FROM products WHERE id = ?').get(req.params.id);
   if (!product) return res.status(404).json({ error: 'ไม่พบสินค้า' });
   const rawType = req.query.image_type || req.body.image_type;
@@ -1299,7 +1337,7 @@ router.get('/products/:id/drawings', auth, (req, res) => {
   res.json(db.prepare('SELECT * FROM product_drawings WHERE product_id = ? ORDER BY created_at DESC').all(req.params.id));
 });
 
-router.post('/products/:id/drawings', ...adminOnly, uploads.drawings.single('drawing'), uploads.verifyMagic, (req, res) => {
+router.post('/products/:id/drawings', ...adminOnly, uploads.drawings.single('drawing'), uploads.verifyMagic, uploads.compressImages, (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'กรุณาอัปโหลดไฟล์ PDF' });
   const { revision, effective_date, change_description } = req.body;
   if (!revision || !effective_date) return res.status(400).json({ error: 'กรุณากรอก revision และ effective_date' });
@@ -1339,7 +1377,7 @@ router.get('/products/:id/drawings/:drawingId', auth, (req, res) => {
 });
 
 // Legacy drawing endpoints (backward compat)
-router.post('/products/:id/drawing', ...adminOnly, uploads.drawings.single('drawing'), uploads.verifyMagic, (req, res) => {
+router.post('/products/:id/drawing', ...adminOnly, uploads.drawings.single('drawing'), uploads.verifyMagic, uploads.compressImages, (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'กรุณาอัปโหลดไฟล์ PDF เท่านั้น' });
   const { revision, effective_date } = req.body;
 
@@ -1364,11 +1402,10 @@ router.get('/products/:id/drawing', auth, (req, res) => {
   res.sendFile(filePath);
 });
 
+// ISO 9001: Drawing ห้ามลบไฟล์จริง — ใช้ soft-delete (obsoleted_at) เท่านั้น
 router.delete('/products/:id/drawing', ...adminOnly, (req, res) => {
   const row = db.prepare('SELECT * FROM product_drawings WHERE product_id = ? AND is_current = 1').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'ไม่มีไฟล์ Drawing' });
-  const filePath = path.join(__dirname, '../../uploads/drawings', row.file_path);
-  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
   db.prepare('UPDATE product_drawings SET is_current=0, obsoleted_at=CURRENT_TIMESTAMP WHERE id=?').run(row.id);
   res.json({ ok: true });
 });
