@@ -1,7 +1,13 @@
 ﻿# ============================================================================
-# IQC System — Local Build & Test
-# Build image จาก code ปัจจุบัน แล้วรันบน localhost:3001
-# มือถือที่ WiFi เดียวกันเข้าได้ที่ http://<IP>:3001
+# IQC System — Local Docker image validation
+# Build image จาก Dockerfile จริงแล้วรันบน localhost:3001 เพื่อ smoke-test ก่อน deploy
+# ใช้ named volume (DB/uploads แยกจากของจริง, seed ใหม่ทุกครั้ง) — ไม่ใช่ข้อมูล dev จริง
+#
+# ต้องการทดสอบบนมือถือ (WiFi เดียวกัน) ด้วยข้อมูล dev จริง → ใช้ `npm run dev` แทน (ไม่ต้องใช้ Docker เลย)
+#   จาก iqc-system/: npm run dev
+#   Vite จะ print Network URL ให้เอง (เช่น http://<IP>:5173) เพราะตั้ง server.host:true ไว้แล้วใน
+#   client/vite.config.js — เข้าจากมือถือที่ URL นั้นได้ทันที (เร็วกว่า + ไม่มีความเสี่ยง DB corrupt จาก
+#   bind-mount แบบที่ script นี้เคยมี — ดู DEVLOG Session 119)
 # ============================================================================
 
 $ComposeDir  = Join-Path $PSScriptRoot "iqc-system"
@@ -55,7 +61,9 @@ $ip = (Get-NetIPAddress -AddressFamily IPv4 |
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Green
-Write-Host "  IQC System พร้อมใช้งาน!" -ForegroundColor Green
+Write-Host "  IQC System (Docker image validation) พร้อมใช้งาน!" -ForegroundColor Green
+Write-Host "  ใช้ DB/uploads แยกต่างหาก (named volume, seed ใหม่) — ไม่ใช่ข้อมูล dev จริง" -ForegroundColor DarkGray
+Write-Host "  login เริ่มต้น: admin / admin1234" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "  บนเครื่องนี้  : http://localhost:3001" -ForegroundColor White
 if ($ip) {
@@ -64,5 +72,7 @@ if ($ip) {
 Write-Host ""
 Write-Host "  หยุด  : docker compose -f iqc-system/docker-compose.local.yml down" -ForegroundColor Gray
 Write-Host "  Log   : docker logs iqc-local -f" -ForegroundColor Gray
+Write-Host ""
+Write-Host "  ต้องการทดสอบมือถือด้วยข้อมูล dev จริง? รัน 'npm run dev' แทน (จาก iqc-system/, ไม่ต้องใช้ Docker)" -ForegroundColor DarkGray
 Write-Host "============================================================" -ForegroundColor Green
 
