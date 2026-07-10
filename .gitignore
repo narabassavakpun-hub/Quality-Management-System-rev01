@@ -1,0 +1,5 @@
+# ===== Credential-bearing reference files (ห้าม commit) =====
+# ไฟล์ที่ IT ส่งมาช่วง setup Active Directory — มี secret_key จริงของ AD Gateway อยู่ในเนื้อหา/ภาพ
+ADAuthen.md
+AD_error.jpg
+AD_Success.jpg

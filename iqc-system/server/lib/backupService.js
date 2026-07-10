@@ -54,20 +54,53 @@ function createVerifiedSnapshot() {
   return outPath;
 }
 
-// alert ผ่าน Telegram — lazy require db/database เฉพาะตอนล้มเหลวจริง (ไม่กระทบ happy-path)
-// ต้องไม่ throw ต่อ ไม่งั้น caller (setInterval/shutdown handler) จะพังไปด้วย
+// ส่ง Telegram ผ่าน env var ตรงๆ (TELEGRAM_BOOT_ALERT_TOKEN/_CHAT_ID) — ใช้ได้แม้ deployment ใหม่เอี่ยม
+// ที่ยังไม่มีใครไปตั้งค่า Telegram ในหน้า Admin > Settings เลย (ต่างจาก db.getSetting ที่ต้องมีคนตั้งก่อน
+// ถึงจะใช้ได้ — เจอจริงเป็นสาเหตุที่ทำให้ alert เงียบสนิทตอน deploy ครั้งแรกบน Render)
+async function sendEnvTelegram(text) {
+  const token = process.env.TELEGRAM_BOOT_ALERT_TOKEN;
+  const chatId = process.env.TELEGRAM_BOOT_ALERT_CHAT_ID;
+  if (!token || !chatId) return false;
+  try {
+    const fetch = require('node-fetch');
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text }),
+    });
+    return true;
+  } catch (e) {
+    console.error('[backupService] sendEnvTelegram ล้มเหลว:', e.message);
+    return false;
+  }
+}
+
+// alert ผ่าน Telegram — ลองทั้ง 2 ทาง: DB setting (telegram_group_qc, ใช้ได้ถ้ามีคนตั้งค่าแอปแล้ว) และ
+// env var (TELEGRAM_BOOT_ALERT_*, ใช้ได้ทันทีตั้งแต่ deploy แรกไม่ต้องพึ่งใครตั้งค่าอะไรก่อน) — ต้องไม่ throw
+// ต่อ ไม่งั้น caller (setInterval/shutdown handler) จะพังไปด้วย
 async function alertFailure(context, err) {
+  const text = `⚠️ [IQC Backup] ${context} ล้มเหลว: ${err?.message || err}`;
   console.error(`[backupService] ${context}:`, err?.message || err);
+  await sendEnvTelegram(text);
   try {
     const db = require('../db/database');
     const { sendTelegram } = require('./notify');
     const chatId = db.getSetting('telegram_group_qc');
-    if (chatId) {
-      await sendTelegram(chatId, `⚠️ [IQC Backup] ${context} ล้มเหลว: ${err?.message || err}`);
-    }
+    if (chatId) await sendTelegram(chatId, text);
   } catch (e2) {
-    console.error('[backupService] alertFailure เองก็ล้มเหลว:', e2.message);
+    console.error('[backupService] alertFailure (DB path) ล้มเหลว:', e2.message);
   }
+}
+
+// R2 ไม่ได้ตั้งค่าไว้เลย (env var ขาด/ผิด) — เงียบแบบเดิมอันตรายมาก เพราะแปลว่าไม่มี backup เกิดขึ้นจริง
+// สักครั้งเดียวโดยไม่มีสัญญาณอะไรเตือนเลย จนกว่าจะเสียข้อมูลจริง — เตือนดังๆ ทาง console + Telegram
+// (ครั้งเดียวต่อ process กัน spam ทุก 10 นาที แต่ log ทุกครั้งเพื่อเห็นใน live log ได้ตลอด)
+let notConfiguredWarned = false;
+async function warnNotConfigured() {
+  console.error('[backupService] R2 ยังไม่ได้ตั้งค่า (R2_ACCOUNT_ID/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY/R2_BUCKET) — ข้าม backup รอบนี้');
+  if (notConfiguredWarned) return;
+  notConfiguredWarned = true;
+  await sendEnvTelegram('⚠️ [IQC Backup] R2 ยังไม่ได้ตั้งค่าใน environment variables — ระบบไม่มี backup ขึ้น cloud เลยตอนนี้');
 }
 
 async function readManifest() {
@@ -81,7 +114,7 @@ async function readManifest() {
 
 // อัปโหลด snapshot ไป backups/db/latest.db — รอบ ~10 นาที ใช้เป็น RPO หลักสำหรับ restore-on-boot
 async function runHotBackup() {
-  if (!r2.isConfigured()) return;
+  if (!r2.isConfigured()) { await warnNotConfigured(); return; }
   const snapshotPath = createVerifiedSnapshot();
   try {
     const { size } = await r2.putObjectFromFile('backups/db/latest.db', snapshotPath);
@@ -98,7 +131,7 @@ async function runHotBackup() {
 // อัปโหลด snapshot ไป backups/db/day-N.db (N=0..6, Sun..Sat, Asia/Bangkok) — เฉพาะถ้ายังไม่ทำวันนี้
 // FIFO 7 slot ธรรมชาติจากปฏิทิน: วันที่ 8 (สัปดาห์ถัดไป วันเดียวกัน) จะทับ slot เดิมของมันเองพอดี
 async function runDailyFifoBackup() {
-  if (!r2.isConfigured()) return;
+  if (!r2.isConfigured()) { await warnNotConfigured(); return; }
   const today = bangkokDateString();
   const dayIdx = bangkokWeekdayIndex();
   const manifest = await readManifest();
@@ -143,7 +176,7 @@ function saveSyncState(state) {
 // sync ไฟล์แนบใหม่/เปลี่ยนแปลงไป R2 แบบ incremental (ไม่ tar ทั้งโฟลเดอร์ทุกรอบ — กันไฟล์ archive โตไม่จบ)
 // ไฟล์ที่อัปโหลดแล้วไม่เปลี่ยน (ปกติไฟล์แนบเป็น immutable หลัง upload) จะไม่ถูกส่งซ้ำ
 async function syncUploads() {
-  if (!r2.isConfigured()) return;
+  if (!r2.isConfigured()) { await warnNotConfigured(); return; }
   const state = loadSyncState();
   const files = walkFiles(UPLOADS_BASE);
   let changed = false;
@@ -173,5 +206,5 @@ async function runFullCycle() {
 
 module.exports = {
   runHotBackup, runDailyFifoBackup, syncUploads, runFullCycle,
-  bangkokDateString, bangkokWeekdayIndex, walkFiles, // export ไว้ทดสอบ/ใช้ซ้ำ
+  bangkokDateString, bangkokWeekdayIndex, walkFiles, sendEnvTelegram, // export ไว้ทดสอบ/ใช้ซ้ำ
 };

@@ -2,9 +2,9 @@
 
 ---
 
-## 📌 Current State (2026-07-08)
+## 📌 Current State (2026-07-10)
 
-**Version:** rev01 · Production · **Latest code:** Session 123 (2026-07-08)
+**Version:** rev01 · Production · **Latest code:** Session 124 (2026-07-10)
 
 **Architecture Summary**
 - Backend: Express 4.18 + better-sqlite3 (WAL, FK ON), **102 ตาราง** (+`environment_presets`, S118), ~32 route files, SSE + Telegram, port 3001
@@ -27,9 +27,70 @@
 - 🟡 พบระหว่างแก้ proCodeSap reset-all (S104): `fgqc_records.pro_code_sap_id` เป็น `ON DELETE RESTRICT` เหมือน `ipqc_records`/`fqc_records` เดิม แต่ route `/reset-all` ไม่เคย NULL ออกให้เลย — เป็น gap เดิมที่มีอยู่ก่อนแล้ว (ไม่ใช่สิ่งที่ session นี้ทำให้แย่ลง) ยังไม่ได้แก้
 - ✅ **Bug user report (S106): ชื่อไฟล์ภาษาไทยเพี้ยนหลัง upload** — root cause = multer/busboy decode `Content-Disposition` filename header เป็น `latin1` เสมอ (Node http header spec เก่า) แก้ด้วย `fixOriginalName()` ใน `middleware/upload.js` ใช้ครอบคลุมทุก multer instance ในระบบ (verify ด้วย HTTP round-trip จริงผ่าน pipeline เต็ม — ไม่ใช่แค่ unit test) — ดู bullet รายละเอียดด้านล่าง
 
-**Technical Debt / Roadmap:** ดู [`../AUDIT.md`](../AUDIT.md) §12 (Refactor Roadmap) — **P0 ปิดครบแล้ว (S105)**; P1 ปิดครบ; P2 ปิดครบ (S103); เหลือ P3 (horizontal scale, TypeScript) + gap ใหม่ (ipqc_records removal decision, ipqc_inspections test coverage, fgqc reset-all FK gap)
+- 🏁 **Deploy/Backup/Restore architecture เอกสารครบแล้ว (S124)** — R2 backup/restore/bootstrap system (`bootstrap.js`/`lib/backupService.js`/`lib/restoreService.js`/`lib/r2Client.js`, สร้างไว้ตั้งแต่ก่อน S110 แต่ไม่เคยถูกบันทึกใน DEVLOG) มี **CLAUDE.md §27** เอกสารแล้ว + แก้ **AUDIT.md D5** ที่บอกข้อมูลผิด (ว่ายังไม่มี auto-backup) + แก้ root cause DB corrupt ซ้ำ 3 ครั้งใน S119 (`docker-compose.local.yml` bind-mount → named volume) + เปิดทาง phone-testing แบบ native (`vite.config.js` host:true) + เพิ่ม test คลุม `backupService.js` alerting ที่ค้าง uncommitted อยู่ก่อนหน้า
+
+**Technical Debt / Roadmap:** ดู [`../AUDIT.md`](../AUDIT.md) §12 (Refactor Roadmap) — **P0 ปิดครบแล้ว (S105)**; P1 ปิดครบ; P2 ปิดครบ (S103); เหลือ P3 (horizontal scale, TypeScript) + gap ใหม่ (ipqc_records removal decision, ipqc_inspections test coverage, fgqc reset-all FK gap) + restore-drill ยังไม่ automate ใน CI (ดู AUDIT.md D5)
 
 **เอกสารอ้างอิง:** [`../CLAUDE.md`](../CLAUDE.md) · [`../PRD.md`](../PRD.md) · [`../brand.md`](../brand.md) · [`../design-dashboard.md`](../design-dashboard.md) · [`../testcase.md`](../testcase.md) · [`../AUDIT.md`](../AUDIT.md)
+
+---
+
+## 2026-07-10 | Session 124 — Render deploy gap-analysis: เอกสาร R2 backup/restore ที่ตกหล่น + แก้ DB corrupt root cause
+
+**คำขอ:** ผู้ใช้ให้อ่าน `DEPLOY_RENDER.md` ของอีกโปรเจกต์ (BookShelf, เอาไปวางไว้ที่ root เป็นไฟล์อ้างอิงเฉยๆ)
+แล้วนำแนวคิดมาออกแบบระบบ deploy Render ของ QMS ใหม่ทั้งหมด (Docker เดียวกันทั้ง local/prod, R2 backup,
+restore-on-boot, zero data-loss, DR) — สั่งชัดเจนว่าห้ามแก้โค้ดก่อนสรุปผลวิเคราะห์
+
+**สิ่งที่พบ (ประเด็นหลักของ session นี้):** สถาปัตยกรรมที่ขอเกือบทั้งหมด**มีอยู่แล้วจริงในโค้ด** —
+`server/bootstrap.js` + `lib/backupService.js` + `lib/restoreService.js` + `lib/r2Client.js` +
+`scripts/backup-db.js`/`restore-from-r2.js` + `DEPLOYMENT.md §8` ครอบคลุม single Dockerfile ทุก
+environment, R2 backup ทุก ~10 นาที + daily FIFO, restore-on-boot สำหรับ Render Free, lazy fetch-through
+uploads, graceful shutdown + hot backup, health check, fail-fast JWT_SECRET ครบแล้ว — แต่**ไม่เคยถูกบันทึก
+ใน DEVLOG เลยสักครั้ง** (สร้างในเซสชันก่อนหน้าที่ไม่ได้ log) ทำให้ `AUDIT.md` (D5) บอกข้อมูลผิดว่ายังไม่มี
+auto-backup และ `CLAUDE.md` ไม่มี section อธิบายเรื่องนี้เลย (ต่างจาก Auth Framework งานคู่ขนานที่มี §24)
+— นอกจากนี้พบไฟล์ `lib/backupService.js` มีการแก้ไข (เพิ่ม `sendEnvTelegram`/`warnNotConfigured` alert
+ตอน R2 ไม่ได้ตั้งค่า) ที่ยังไม่ commit และไม่มี test คลุม
+
+**บัคจริงที่เจอระหว่างตรวจ (ไม่ใช่แค่เอกสาร):** อ่าน Session 119 ย้อนหลังพบว่า DB corrupt ที่กู้คืนตอนนั้น
+เกิดซ้ำมาแล้ว 3 ครั้ง (2026-06-25/07-01/07-08) และ entry นั้นสงสัยไว้ (ไม่ยืนยัน) ว่าเป็นเพราะ
+"SQLite WAL mode ผ่าน Docker Desktop bind-mount บน Windows" — ตรวจแล้วยืนยันสาเหตุจริง:
+`docker-compose.local.yml` เดิม bind-mount `./iqc.db:/data/iqc.db` (ไฟล์เดี่ยวจาก Windows host ตรงเข้า
+container) ซึ่ง SQLite WAL ต้องพึ่ง shared-memory mmap (`-shm`/`-wal`) + byte-range lock ที่ Docker
+Desktop's Windows↔Linux file-sharing layer ไม่รองรับสมบูรณ์ — ตรงกันข้ามกับ `docker-compose.yml`
+production ที่ใช้ named volume (ปลอดภัย, ไม่เคยมีปัญหานี้เลย)
+
+**ถามผู้ใช้ก่อนแก้ (ตามที่สั่งห้ามแก้ก่อนสรุปผล):** confirm 3 เรื่อง — (1) ให้อัปเดตเอกสารที่มีอยู่แล้ว
+(CLAUDE.md/DEVLOG.md/AUDIT.md/DEPLOYMENT.md) ไม่ใช่สร้าง README.md/DEPLOY_RENDER.md ใหม่ตามชื่อไฟล์ของ
+BookShelf ที่ไม่มีอยู่จริงในโปรเจกต์นี้ (2) คง upload strategy เดิม (local-primary + R2 backup/lazy-restore)
+ไม่เปลี่ยนเป็น R2-primary แบบ BookShelf (3) แก้ bind-mount โดยแยก 2 use-case ออกจากกัน — ผู้ใช้ยืนยันทั้ง 3
+ข้อตามที่แนะนำ
+
+**การแก้ (หลัง confirm แล้ว):**
+- `docker-compose.local.yml` — เปลี่ยนจาก bind-mount ไฟล์ `./iqc.db`/`./uploads` เป็น **named volume**
+  (`iqc_local_data`/`iqc_local_uploads`) — compose นี้เปลี่ยนวัตถุประสงค์เป็น "ตรวจ Docker image ก่อน
+  deploy" (DB แยก/seed ใหม่ทุกครั้ง) ไม่ใช่ DB dev จริงอีกต่อไป — แก้ comment header + `run-local.ps1`
+  ให้สื่อสารชัดเจน
+- `client/vite.config.js` — เพิ่ม `server.host: true` — เปิดทางให้ `npm run dev` (native, ไม่ใช้ Docker)
+  เข้าถึงได้จากมือถือ WiFi เดียวกัน (Express bind 0.0.0.0 อยู่แล้วโดย default) ใช้ข้อมูล dev จริงบน
+  Windows filesystem ตรงๆ ไม่มีความเสี่ยง WAL/bind-mount เลย — นี่คือทางแก้แทนการใช้ Docker สำหรับ
+  phone-testing (ของเดิมที่ `docker-compose.local.yml` เคยทำ)
+- `lib/backupService.js` — commit การแก้ที่ค้างไว้ (`sendEnvTelegram`/`warnNotConfigured`) + export
+  `sendEnvTelegram` เพิ่มเพื่อ unit test ได้ตรงๆ
+- `test/backupService.test.js` — เพิ่ม 5 test ใหม่ (BACKUP-11..15): `sendEnvTelegram` ครบ 3 เคส (ไม่ตั้ง
+  env → false ไม่ยิง network, ตั้งครบ → เรียก Telegram API ถูก payload, fetch ล้มเหลว → ไม่ throw) mock
+  `node-fetch` ผ่าน `require.cache` (node-fetch@2 เป็น CJS ธรรมดา) กันยิง network จริง + ปิดช่องว่างเดิมที่
+  `runDailyFifoBackup`/`syncUploads` ไม่เคยมี test เคส "R2 ไม่ได้ตั้งค่า → no-op" (มีแต่ `runHotBackup`)
+- `AUDIT.md` D5 — แก้ finding ที่ผิด (บอกว่ายังไม่มี auto-backup) ให้ตรงกับโค้ดจริง เหลือ gap จริงแค่
+  restore-drill ยังไม่ automate ใน CI
+- `CLAUDE.md` — เพิ่ม **§27** (Deploy/Backup/Restore) สรุปสถาปัตยกรรม, boot sequence, เหตุผลที่ไม่ใช้
+  Litestream, และกฎห้าม bind-mount ไฟล์ SQLite เดี่ยวจาก Windows host เข้า container อีก
+
+**Test:** `npm test` → 212/212 เขียว (207 เดิม + 5 ใหม่), 0 fail, 0 skip
+
+**Verify:** อ่าน `docker-compose.yml` (production) ยืนยันไม่ถูกแตะเลย — ยังเป็น named volume เดิมทั้งหมด
+
+**ยังไม่ได้ทำ (นอกขอบเขต/รอ user):** restore-drill อัตโนมัติใน CI (ปัจจุบันกู้จริงทดสอบผ่าน
+`scripts/restore-from-r2.js` แบบ manual + unit test เท่านั้น) — บันทึกไว้เป็น gap ที่เหลือใน AUDIT.md D5
 
 ---
 

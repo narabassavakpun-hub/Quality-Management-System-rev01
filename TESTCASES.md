@@ -1,3 +1,5 @@
+> ⚠️ **DEPRECATED (2026-07-02)** — รวมเข้า [`testcase.md`](testcase.md) แล้ว (map กับ test suite จริง) เก็บไว้เป็นประวัติ
+
 # TESTCASES.md — IQC Quality Management System
 
 **Version:** 2.0 | **Updated:** 2026-06-16  

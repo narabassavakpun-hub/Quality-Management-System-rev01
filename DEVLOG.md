@@ -1,3 +1,5 @@
+> ⚠️ **DEPRECATED (2026-07-02)** — DEVLOG ที่ใช้งานจริง (ล่าสุด) อยู่ที่ [`iqc-system/DEVLOG.md`](iqc-system/DEVLOG.md) ไฟล์นี้เป็นบันทึกเก่า (Session 1–60) เก็บไว้เป็นประวัติ
+
 # DEVLOG — IQC System
 
 บันทึกการแก้ไขและพัฒนาระบบตามลำดับเวลา

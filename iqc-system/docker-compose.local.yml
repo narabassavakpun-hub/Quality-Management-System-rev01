@@ -1,5 +1,13 @@
 ﻿# ============================================================================
-# IQC System — Local Testing (build จาก code ปัจจุบัน + ทดสอบบนมือถือ WiFi เดียวกัน)
+# IQC System — Local Docker image validation (build image จาก Dockerfile จริง + smoke-test)
+#
+# วัตถุประสงค์: ตรวจว่า Dockerfile/image รันได้จริงก่อน deploy — ใช้ DB/uploads แยกต่างหาก
+# (named volume, seed ใหม่ทุกครั้งเหมือน deploy จริงครั้งแรก) **ไม่ใช่** DB dev จริงของเครื่อง
+# (iqc-system/iqc.db) — เดิม compose นี้ bind-mount ไฟล์ iqc.db ตรงจาก Windows host เข้า container
+# ซึ่งทำให้ SQLite WAL mode (พึ่ง mmap + byte-range lock บน -shm/-wal) เจอปัญหา file-locking ที่ไม่
+# สมบูรณ์ข้ามชั้น Windows↔Linux ของ Docker Desktop — เป็นสาเหตุ DB corrupt ซ้ำ 3 ครั้งที่กู้คืนใน
+# DEVLOG Session 119 (2026-06-25/07-01/07-08) เปลี่ยนมาใช้ named volume แล้ว (แบบเดียวกับ
+# docker-compose.yml production ที่ไม่เคยมีปัญหานี้เลย)
 #
 # ใช้งานง่ายๆ:
 #   .\run-local.ps1          (จาก root ของ project)
@@ -7,7 +15,8 @@
 # หรือรันเอง (จาก iqc-system/):
 #   docker compose -f docker-compose.local.yml up --build
 #
-# เข้าถึงจากมือถือ (WiFi เดียวกัน): http://<IP เครื่อง>:3001
+# ต้องการทดสอบบนมือถือ (WiFi เดียวกัน) โดยใช้ข้อมูล dev จริง → ใช้ `npm run dev` (native, ไม่ใช้ Docker)
+# แทน — ดู client/vite.config.js (`server.host: true`) + คอมเมนต์ใน run-local.ps1
 # ============================================================================
 
 services:
@@ -27,7 +36,11 @@ services:
       IQC_DB_PATH: /data/iqc.db
       BCRYPT_ROUNDS: "12"
     volumes:
-      - ./iqc.db:/data/iqc.db         # DB จริง (iqc-system/iqc.db)
-      - ./uploads:/app/uploads         # ไฟล์แนบจริง
+      - iqc_local_data:/data          # DB แยกต่างหาก (named volume) — seed ใหม่ทุกครั้ง ไม่ใช่ DB dev จริง
+      - iqc_local_uploads:/app/uploads
     shm_size: "512mb"
     restart: unless-stopped
+
+volumes:
+  iqc_local_data:
+  iqc_local_uploads:
