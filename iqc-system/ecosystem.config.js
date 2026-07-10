@@ -1,6 +1,6 @@
 // ============================================================================
 // PM2 ecosystem — สำหรับ deploy ตรงบน Ubuntu VPS (ไม่ใช้ Docker)
-// ใช้เมื่อ: ติดตั้ง Node 20 + Chromium + ฟอนต์ไทยบนเครื่องเอง
+// ใช้เมื่อ: ติดตั้ง Node 22 + Chromium + ฟอนต์ไทยบนเครื่องเอง
 //   sudo apt install -y chromium-browser fonts-thai-tlwg   (ชื่อ package อาจต่างตาม distro)
 //   cd client && npm ci && npm run build
 //   cd ../server && npm ci --omit=dev

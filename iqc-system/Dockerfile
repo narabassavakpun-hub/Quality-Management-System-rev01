@@ -5,7 +5,7 @@
 # ============================================================================
 
 # ---------- Stage 1: build frontend (React + Vite) ----------
-FROM node:20-bookworm-slim AS client-build
+FROM node:22-bookworm-slim AS client-build
 WORKDIR /build/client
 COPY client/package*.json ./
 RUN npm ci
@@ -14,7 +14,7 @@ RUN npm run build
 # ผลลัพธ์: /build/client/dist
 
 # ---------- Stage 2: build backend deps (native better-sqlite3) ----------
-FROM node:20-bookworm-slim AS server-deps
+FROM node:22-bookworm-slim AS server-deps
 WORKDIR /build/server
 # build tools สำหรับ compile better-sqlite3
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -28,7 +28,7 @@ ENV PUPPETEER_SKIP_DOWNLOAD=true \
 RUN npm ci --omit=dev && npm cache clean --force
 
 # ---------- Stage 3: runtime ----------
-FROM node:20-bookworm-slim AS runtime
+FROM node:22-bookworm-slim AS runtime
 
 ENV NODE_ENV=production \
     PORT=3001 \
