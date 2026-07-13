@@ -2,7 +2,7 @@
 // purchasingScope.js) ไม่แตะ GET /api/dashboard/stats เดิม (ใช้ร่วมกันทุก role อื่นอยู่แล้ว)
 // อ่านอย่างเดียวทั้งไฟล์ — ไม่มี write operation จึงไม่ต้องมี transaction
 const db = require('../db/database');
-const { purchasingVisibilitySQL } = require('../lib/purchasingScope');
+const { purchasingStrictAssignedSQL } = require('../lib/purchasingScope');
 
 // bucket mapping อ้างอิง NCR status flow เดิม (CLAUDE.md §4) — ไม่มี status ใหม่ ไม่มี column ใหม่
 // severity='minor' (NCP) ปิดผ่าน ncp_closed โดยไม่ผ่าน purchasing เลย จึงไม่ปรากฏใน bucket
@@ -23,10 +23,11 @@ const IN_PROGRESS_STATUSES = "('pending_manager_review','pending_qmr_close','pen
 // overdue อ้าง disposition_due_date ที่มีอยู่แล้ว (ncrs) — ไม่ใช่ column ใหม่ (ดู plan §"KPI data sources")
 const OVERDUE_EXPR = "(n.disposition_due_date IS NOT NULL AND n.disposition_due_date < date('now') AND n.status NOT IN ('closed','ncp_closed','cancelled'))";
 
-// purchasing → เห็นเฉพาะ supplier ที่ตัวเองดูแล (หรือ supplier ที่ไม่มีใครดูแลเลย, fallback เดิม);
-// purchasing_manager/admin → เห็นทั้งหมด ไม่ถูกกรอง
+// purchasing → เห็นเฉพาะ supplier ที่ตัวเอง assign ไว้จริงเท่านั้น (เข้มงวด ไม่มี fallback รวม supplier ที่ยังไม่มี
+// ผู้ดูแล — ต่างจาก purchasingVisibilitySQL ที่ใช้กับ NCR/UAI/Delivery action-permission โดยเจตนา) ตรงกับที่ตั้งค่า
+// ไว้ใน Master List > ผู้ผลิตเป๊ะๆ; purchasing_manager/admin → เห็นทั้งหมด ไม่ถูกกรอง
 function scopeClause(user, supplierIdExpr) {
-  if (user.role === 'purchasing') return { sql: purchasingVisibilitySQL(supplierIdExpr), params: [user.id] };
+  if (user.role === 'purchasing') return { sql: purchasingStrictAssignedSQL(supplierIdExpr), params: [user.id] };
   return { sql: '1=1', params: [] };
 }
 

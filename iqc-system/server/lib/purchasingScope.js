@@ -35,6 +35,9 @@ function getPurchasingManagerIds() {
 // SQL fragment ต่อท้าย WHERE เพื่อกรอง list ให้ purchasing เห็นเฉพาะ supplier ที่ไม่มีผู้ดูแล หรือตัวเองเป็นผู้ดูแล
 // — ใช้ `supplierIdExpr` เป็น column/expression ของ supplier_id ในคิวรีนั้น (เช่น 'b.supplier_id')
 // ต้อง push userId เข้า params ต่อจาก param อื่นๆ ตามตำแหน่ง `?` ที่ปรากฏ (มี 1 ตัวใน fragment นี้)
+// ใช้กับ NCR/UAI/Delivery action-permission + list visibility เท่านั้น (canPurchasingActOnSupplier คู่กัน) —
+// เจตนา fallback นี้คือ "อย่าให้ supplier ที่ยังไม่มีใคร assign ตกค้างไม่มีใครทำงานได้เลย" ไม่ใช่ scope สำหรับ
+// dashboard ส่วนตัว (ดู purchasingStrictAssignedSQL ด้านล่าง — คนละความหมายกัน อย่าใช้ปนกัน)
 function purchasingVisibilitySQL(supplierIdExpr) {
   return `(
     NOT EXISTS (SELECT 1 FROM supplier_purchasing_assignees spa WHERE spa.supplier_id = ${supplierIdExpr})
@@ -42,4 +45,16 @@ function purchasingVisibilitySQL(supplierIdExpr) {
   )`;
 }
 
-module.exports = { getSupplierAssigneeIds, resolveNotifyTargetIds, canPurchasingActOnSupplier, purchasingVisibilitySQL, getPurchasingManagerIds };
+// SQL fragment สำหรับ Purchasing Dashboard "ผู้ผลิตของฉัน" โดยเฉพาะ — เข้มงวดกว่า purchasingVisibilitySQL
+// (ไม่มี fallback รวม supplier ที่ยังไม่มีผู้ดูแล) เพราะ dashboard ต้องแสดงตรงกับที่ตั้งค่าไว้ใน Master List เป๊ะๆ
+// (พบจริง: user รายงานว่า "ผู้ผลิตของฉัน" โชว์ supplier ทั้ง 112 รายแทนที่จะเป็นแค่ 3 ที่ assign ไว้จริง เพราะ
+// supplier ส่วนใหญ่ในระบบยังไม่เคยถูก assign เลยจึงเข้าเงื่อนไข fallback ของ purchasingVisibilitySQL) — ต้อง push
+// userId เข้า params เหมือน purchasingVisibilitySQL (มี 1 ตัวใน fragment นี้)
+function purchasingStrictAssignedSQL(supplierIdExpr) {
+  return `EXISTS (SELECT 1 FROM supplier_purchasing_assignees spa WHERE spa.supplier_id = ${supplierIdExpr} AND spa.user_id = ?)`;
+}
+
+module.exports = {
+  getSupplierAssigneeIds, resolveNotifyTargetIds, canPurchasingActOnSupplier,
+  purchasingVisibilitySQL, purchasingStrictAssignedSQL, getPurchasingManagerIds,
+};
