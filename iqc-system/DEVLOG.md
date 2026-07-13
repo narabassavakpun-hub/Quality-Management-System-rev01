@@ -2,14 +2,14 @@
 
 ---
 
-## 📌 Current State (2026-07-10)
+## 📌 Current State (2026-07-13)
 
-**Version:** rev01 · Production · **Latest code:** Session 124 (2026-07-10)
+**Version:** rev01 · Production · **Latest code:** Session 125 (2026-07-13)
 
 **Architecture Summary**
-- Backend: Express 4.18 + better-sqlite3 (WAL, FK ON), **102 ตาราง** (+`environment_presets`, S118), ~32 route files, SSE + Telegram, port 3001
-- Frontend: React 18 + Vite 5 + Tailwind 3.4, **51+ หน้า / 11 roles**, React Query + SSE, `rolePermissions.js` รวมสิทธิ์ + `ROLE_LABELS`/`CREATABLE_ROLES` (จุดรวม role label เดียว, S103; รองรับครบ 11 roles จริง, S105), **App-wide Dark Mode (Light/Dark/Auto ต่อ user, S121, contrast แก้แล้ว S122 — ดู §25 ใน CLAUDE.md)**, **Table redesign แบรนด์ (gradient header, S122 — ดู §26)**
-- โมดูล: IQC (Bills→NCR→UAI), Production QC (IPQC/FGQC), FG (defect→FNCP→FUAI), KPI, Attendance, Issue Talk, Delivery, Master, ProCodeSAP/PDPlan (FQC ถูกลบแล้ว — ดู S104), **Authentication Provider Framework (Local + Active Directory แบบ pluggable, S118 — ดู §24 ใน CLAUDE.md)**
+- Backend: Express 4.18 + better-sqlite3 (WAL, FK ON), **102 ตาราง** (+`environment_presets`, S118; +`supplier_purchasing_assignees`, S125), ~33 route files, SSE + Telegram, port 3001
+- Frontend: React 18 + Vite 5 + Tailwind 3.4, **51+ หน้า / 12 roles** (+`purchasing_manager`, S125), React Query + SSE, `rolePermissions.js` รวมสิทธิ์ + `ROLE_LABELS`/`CREATABLE_ROLES` (จุดรวม role label เดียว, S103; รองรับครบ 11 roles จริง, S105), **App-wide Dark Mode (Light/Dark/Auto ต่อ user, S121, contrast แก้แล้ว S122 — ดู §25 ใน CLAUDE.md)**, **Table redesign แบรนด์ (gradient header, S122 — ดู §26)**
+- โมดูล: IQC (Bills→NCR→UAI), Production QC (IPQC/FGQC), FG (defect→FNCP→FUAI), KPI, Attendance, Issue Talk, Delivery, Master, ProCodeSAP/PDPlan (FQC ถูกลบแล้ว — ดู S104), **Authentication Provider Framework (Local + Active Directory แบบ pluggable, S118 — ดู §24 ใน CLAUDE.md)**, **Purchasing Supplier-Assignment + Dashboards (S125 — ดูรายละเอียดด้านล่าง)**
 
 **Completed Features** ✅ Bills · NCR/NCP · UAI · IPQC/IPNCR · FGQC · FNCP/FUAI · KPI · Attendance · Issue Talk · Delivery · Master + Excel I/O · ProCodeSAP classifier (Tier 0–4) · Audit log · SSE · PDF/Excel export
 
@@ -28,10 +28,70 @@
 - ✅ **Bug user report (S106): ชื่อไฟล์ภาษาไทยเพี้ยนหลัง upload** — root cause = multer/busboy decode `Content-Disposition` filename header เป็น `latin1` เสมอ (Node http header spec เก่า) แก้ด้วย `fixOriginalName()` ใน `middleware/upload.js` ใช้ครอบคลุมทุก multer instance ในระบบ (verify ด้วย HTTP round-trip จริงผ่าน pipeline เต็ม — ไม่ใช่แค่ unit test) — ดู bullet รายละเอียดด้านล่าง
 
 - 🏁 **Deploy/Backup/Restore architecture เอกสารครบแล้ว (S124)** — R2 backup/restore/bootstrap system (`bootstrap.js`/`lib/backupService.js`/`lib/restoreService.js`/`lib/r2Client.js`, สร้างไว้ตั้งแต่ก่อน S110 แต่ไม่เคยถูกบันทึกใน DEVLOG) มี **CLAUDE.md §27** เอกสารแล้ว + แก้ **AUDIT.md D5** ที่บอกข้อมูลผิด (ว่ายังไม่มี auto-backup) + แก้ root cause DB corrupt ซ้ำ 3 ครั้งใน S119 (`docker-compose.local.yml` bind-mount → named volume) + เปิดทาง phone-testing แบบ native (`vite.config.js` host:true) + เพิ่ม test คลุม `backupService.js` alerting ที่ค้าง uncommitted อยู่ก่อนหน้า
+- 🏁 **Purchasing Supplier-Assignment + Dashboards (S125)** — เพิ่ม role `purchasing_manager`, ตาราง `supplier_purchasing_assignees` (m:n), scope ทั้ง visibility/action/notification ของ NCR-UAI-Delivery ตามผู้ดูแล Supplier, เปิดสิทธิ์ Purchasing/Manager จัดการ Supplier เอง, สร้าง Purchasing Dashboard + Purchasing Manager Dashboard (Team Summary/Members/Member Detail + KPI) ครบ, แก้ notification gap (purchasing_manager/Supplier Response/Overdue) — รายละเอียดเต็มดู session log ด้านล่าง; **CLAUDE.md §11 Role Matrix ยังไม่ได้เพิ่มคอลัมน์ `purchasing_manager`** (เอกสารสรุปเดิม 10 คอลัมน์ ไม่ครอบ role ใหม่นี้ — รอปรับรอบถัดไป, ไม่กระทบโค้ด)
 
-**Technical Debt / Roadmap:** ดู [`../AUDIT.md`](../AUDIT.md) §12 (Refactor Roadmap) — **P0 ปิดครบแล้ว (S105)**; P1 ปิดครบ; P2 ปิดครบ (S103); เหลือ P3 (horizontal scale, TypeScript) + gap ใหม่ (ipqc_records removal decision, ipqc_inspections test coverage, fgqc reset-all FK gap) + restore-drill ยังไม่ automate ใน CI (ดู AUDIT.md D5)
+**Technical Debt / Roadmap:** ดู [`../AUDIT.md`](../AUDIT.md) §12 (Refactor Roadmap) — **P0 ปิดครบแล้ว (S105)**; P1 ปิดครบ; P2 ปิดครบ (S103); เหลือ P3 (horizontal scale, TypeScript) + gap ใหม่ (ipqc_records removal decision, ipqc_inspections test coverage, fgqc reset-all FK gap) + restore-drill ยังไม่ automate ใน CI (ดู AUDIT.md D5) + CLAUDE.md §11 Role Matrix ต้องเพิ่ม purchasing_manager (S125)
 
 **เอกสารอ้างอิง:** [`../CLAUDE.md`](../CLAUDE.md) · [`../PRD.md`](../PRD.md) · [`../brand.md`](../brand.md) · [`../design-dashboard.md`](../design-dashboard.md) · [`../testcase.md`](../testcase.md) · [`../AUDIT.md`](../AUDIT.md)
+
+---
+
+## 2026-07-13 | Session 125 — Purchasing/Supplier Management + Dashboards (Supplier Assignment, Purchasing Dashboard, Manager Dashboard, Notification fixes)
+
+**คำขอ:** ปรับปรุงระบบ Purchasing/Supplier Management/Dashboard ให้ครบวงจร — (1) Purchasing/Purchasing Manager
+จัดการ Supplier เองได้ (2) Purchasing Dashboard ที่ scope ตาม Supplier ที่รับผิดชอบ (3) Purchasing Manager
+Dashboard เห็นภาพรวมทีม + drill-down รายคน (4) Supplier Assignment (5) Permission ผูก RBAC เดิม (6)
+Notification ผูก Supplier Assignment (7) DB migration ปลอดภัย (8) Performance/aggregate query (9) UI ตาม
+theme เดิม (10) วิเคราะห์ architecture ก่อนเขียนโค้ด + phased delivery พร้อม commit แยกแต่ละ phase
+
+**สิ่งที่พบก่อนเริ่ม (สำคัญ):** repo มีงานค้าง **uncommitted จากเซสชันก่อนหน้าที่ไม่เคยถูกบันทึกใน DEVLOG** — ทำ
+`supplier_purchasing_assignees` (m:n, ดีกว่าที่คำขอระบุที่เป็น single-assignee), role `purchasing_manager`,
+`lib/purchasingScope.js` (scope helper) และ wiring เข้า NCR/UAI/Delivery ไว้แล้วบางส่วนพร้อม test 18 เคส —
+ตรวจสอบแล้วของดีและถูกต้อง จึงต่อยอดจากของเดิมแทนที่จะเขียนใหม่ตาม schema ที่คำขอระบุเป๊ะๆ (ยืนยันกับ user แล้ว)
+
+**Phase 1 — Supplier CRUD permission:** `master.js` เปิด POST/PATCH/toggle suppliers ให้
+`purchasing`/`purchasing_manager` (export/import/approval-status ยังคง adminOnly — นอกขอบเขตคำขอ) +
+`App.jsx` แยก gate ต่อ child route ใต้ `/master` (เฉพาะ suppliers เปิด, Products/Units/ฯลฯ ยังคง admin-only) +
+`rolePermissions.js` เปิด nav group + เพิ่ม endpoint `GET /master/purchasing-users` (id/full_name เท่านั้น)
+แทนการเปิด `/admin/users` เต็ม (กัน purchasing เห็นข้อมูล user อื่นทั้งระบบ)
+
+**Phase 2 — Purchasing Dashboard backend:** `services/purchasingDashboardService.js` — `GET
+/api/purchasing/dashboard/{summary,suppliers,ncrs}` server-aggregate ทั้งหมด (ไม่แตะ `/api/dashboard/stats`
+เดิม), bucket mapping จาก NCR status เดิม (ไม่มี status/column ใหม่ยกเว้น `overdue_notified_at` ใน S125 ช่วงหลัง)
+
+**Phase 3 — Purchasing Dashboard UI:** `PurchasingDash.jsx` — 11 summary card, ตาราง "ผู้ผลิตของฉัน" (ทำหน้าที่
+เป็นทั้ง My Suppliers และ Supplier Health เพราะคอลัมน์ที่คำขอเหมือนกันทุกตัว), tab "NCR/NCP ของฉัน" พร้อม filter
+ครบ (Supplier/Status/Priority/วันที่/Overdue) — verify ผ่าน Playwright จริง (ไม่ใช่แค่ unit test) กับ server
+instance + seed data แยก พบ bug เล็กจากการเขียนโค้ดเอง (checkbox handler ผิด) แก้ก่อน commit
+
+**Phase 4 — Purchasing Manager Dashboard:** เพิ่ม `getTeamSummary/getTeamMembers/getMemberDetail` — "ทีม" = ทุก
+user role `purchasing` (ไม่มี hierarchy table แยก), Member KPI (avg closing time/avg supplier response
+time/closing rate) จาก column เดิมที่มีอยู่แล้ว (`closed_at`/`link_copied_at`/`supplier_responses.submitted_at`)
+`ManagerPurchasingDash.jsx` + `PurchasingMemberDetail.jsx` (route `purchasing/team/:memberId` แบบเดียวกับ
+`qc-attendance/employee/:userId`) — verify ผ่าน Playwright จริงอีกครั้ง ตัวเลข KPI ตรงกับที่คำนวณมือทุกตัว
+
+**Phase 5 — Notification verification (พบ gap จริง ไม่ใช่แค่ verify เฉยๆ):** user สั่งตรวจ checklist dashboard
+ครบไหม (ตรวจแล้วครบทั้ง 2 dashboard) แล้วให้ไป Phase 5 ต่อ — ตรวจ notification flow ละเอียดพบ 3 gap จริงเทียบกับ
+recipient matrix ที่คำขอ (Requirement 6): (1) `purchasing_manager` ไม่เคยถูกแจ้งเตือนเลยสักที่ (2) Supplier ตอบ
+กลับ แจ้งแค่ QC Manager ไม่แจ้ง Purchasing Owner (3) ไม่มีกลไกแจ้งเตือน "เกินกำหนด" เลย — แก้ทั้ง 3: เพิ่ม
+`getPurchasingManagerIds()` (purchasingScope.js) wire เข้าจุด NCR รอ Review/ปิดแล้ว, เพิ่ม
+`resolveNotifyTargetIds` เข้า `supplierService.js`, สร้าง `lib/overdueNotifier.js` (scheduler ทุก 1 ชม. แบบ
+เดียวกับ `archiveOldNotifications`) + column ใหม่ `ncrs.overdue_notified_at` (safeAddColumn, กันแจ้งซ้ำ)
+
+**Test:** `node --test` → 256/256 เขียว, 0 skip (เพิ่มจาก 212 baseline S124: +19 pre-existing scope tests
+ที่ commit ครั้งแรกใน S125 + 3 permission test + 10 dashboard test + 7 team test + 5 notification test)
+
+**Verify:** ทุก phase verify ผ่านการรันแอปจริง (ไม่ใช่แค่ unit test) — Phase 1 ผ่าน test suite, Phase 3/4 ผ่าน
+Playwright ต่อ server instance + seed data แยก (ไม่แตะ dev DB จริง), Phase 5 ผ่าน service-level test ตรง +
+boot smoke-test ยืนยัน scheduler ใหม่ไม่ทำให้ server พังตอนบูต
+
+**ปัญหาเฉพาะหน้าที่เจอระหว่างทำ (ไม่เกี่ยวกับโค้ด):** better-sqlite3 native binary ABI mismatch (rebuild ไม่ผ่าน)
+เพราะมี process `node bootstrap.js` (PORT=3099) ค้างจากเซสชันก่อนหน้าที่ไม่เคยถูกปิด ถือ handle ไฟล์ .node ไว้ —
+ระบุ root cause ผ่าน `Get-Process | Modules` แล้วขอ confirm จาก user ก่อน kill (ไม่ใช่ dev server ของ user เอง)
+
+**ยังไม่ได้ทำ (นอกขอบเขต/รอ Phase 6):** อัปเดต CLAUDE.md §11 Role Matrix ให้มี `purchasing_manager` (คอลัมน์ที่
+11), ยังไม่มี Export ปุ่มในหน้า dashboard ใหม่ (Req 9 "Export" อยู่ในหัวข้อ UI ทั่วไป — dashboard นี้ยังไม่มี เพราะ
+ไม่ได้อยู่ใน checklist ที่ user ขอตรวจสอบรอบนี้)
 
 ---
 
