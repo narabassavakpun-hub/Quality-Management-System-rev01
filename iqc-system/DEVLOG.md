@@ -158,6 +158,27 @@ History list ใน `DetailModal` (`Delivery/index.jsx`) เดิมแค่ `
 
 ---
 
+**คำขอ (รอบที่ 6):** user ส่ง screenshot กล่อง "รายละเอียดการส่งของ" ของรายการที่บันทึกผ่าน "+ไม่มีแผนส่ง" —
+โชว์ 2 tag พร้อมกัน "ส่งตามแผน" (เขียว) + "ไม่ได้แจ้งล่วงหน้า" (เหลือง) ขัดแย้งกันเอง (ของที่ไม่มีแผนไม่ควรมี tag
+บอกว่า "ตามแผน") ขอให้เหลือ tag เดียวคือ "ไม่ได้แจ้งล่วงหน้า" พร้อมเปลี่ยนชื่อเป็น "ไม่มีแผนส่ง" ให้ตรงกับรอบก่อน
+
+**Root cause:** `StatusBadge` component (ใช้ทั้งใน `DetailModal` header และ Daily View list) โชว์ badge สถานะดิบ
+(`STATUS_CFG[status].label`) เสมอ ไม่ว่า `is_unplanned` จะเป็นอะไร แล้วค่อยโชว์ badge "ไม่ได้แจ้งล่วงหน้า" เพิ่ม
+ต่อท้ายถ้า `is_unplanned` — เพราะ record แบบไม่มีแผนส่งเก็บ `status='on_time'` เสมอในฐานข้อมูล (ไม่มี status
+เฉพาะของตัวเอง) เลยโชว์ "ส่งตามแผน" ควบคู่กับ "ไม่มีแผนส่ง" ซึ่งขัดแย้งกันเอง — จุดเดียวที่ยังไม่ได้ sync กับ
+`rowStatusBadge()` logic ที่ทำไว้ให้ `TagSummaryModal` แล้วในรอบ 3 (override เป็น "ไม่มีแผนส่ง" ป้ายเดียวตอน
+`is_unplanned`)
+
+**การแก้:** `StatusBadge` เพิ่ม early return เมื่อ `isUnplanned` — โชว์เฉพาะ badge "ไม่มีแผนส่ง" ป้ายเดียว (เปลี่ยน
+ชื่อจาก "ไม่ได้แจ้งล่วงหน้า" ให้ตรงกับ tag/ปุ่ม/หัวฟอร์มที่เปลี่ยนไปแล้วในรอบ 3) ไม่โชว์ raw status badge คู่กันอีก
+
+**Test:** `node --test` → 258/258 เขียว, 0 skip
+
+**Verify:** seed record จำลองจาก screenshot จริงของ user (FOSHAN, unplanned, 16:00) ยืนยันกล่องรายละเอียดโชว์
+เฉพาะ "ไม่มีแผนส่ง" ป้ายเดียว ไม่มี "ส่งตามแผน"/"ไม่ได้แจ้งล่วงหน้า" (คำเก่า) หลงเหลืออยู่เลย — commit `e4c115f`
+
+---
+
 ## 2026-07-13 | Session 125 — Purchasing/Supplier Management + Dashboards (Supplier Assignment, Purchasing Dashboard, Manager Dashboard, Notification fixes)
 
 **คำขอ:** ปรับปรุงระบบ Purchasing/Supplier Management/Dashboard ให้ครบวงจร — (1) Purchasing/Purchasing Manager
