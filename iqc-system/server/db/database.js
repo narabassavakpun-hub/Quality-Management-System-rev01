@@ -132,6 +132,8 @@ function runMigrations() {
 
   // delivery_schedules: QC ที่กด "บันทึก" ปิดสถานะสุดท้าย (on_time/late) — ใช้แสดง "QC ผู้รับ" ใน tag summary/export
   safeAddColumn('delivery_schedules', 'received_by', 'INTEGER REFERENCES users(id) ON DELETE RESTRICT');
+  // delivery_schedules: เวลาที่ของมาถึงจริง (คู่กับ actual_date เดิมที่มีแต่วันที่ ไม่มีเวลา)
+  safeAddColumn('delivery_schedules', 'actual_time', 'TEXT');
 
   // delivery_schedule_items: urgent flag + make item_name nullable (now uses product dropdown)
   safeAddColumn('delivery_schedule_items', 'is_urgent', 'INTEGER DEFAULT 0');

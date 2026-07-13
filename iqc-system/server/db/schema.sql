@@ -442,6 +442,7 @@ CREATE TABLE IF NOT EXISTS delivery_schedules (
     'pending','acknowledged','on_time','late','cancelled','rescheduled'
   )),
   actual_date DATE,
+  actual_time TEXT,
   late_reason TEXT,
   rescheduled_date DATE,
   acknowledged_at DATETIME,

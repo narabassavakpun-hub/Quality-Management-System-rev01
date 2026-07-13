@@ -131,7 +131,7 @@ export function DetailModal({ schedule, onClose, suppliers, role, holidays = [] 
     notes: schedule.notes || '',
   });
   const [editHolidayConfirm, setEditHolidayConfirm] = useState(false);
-  const [statusForm, setStatusForm] = useState({ status: '', late_reason: '', rescheduled_date: '', actual_date: '' });
+  const [statusForm, setStatusForm] = useState({ status: '', late_reason: '', rescheduled_date: '', actual_date: '', actual_time: '' });
   const [statusHolidayConfirm, setStatusHolidayConfirm] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -333,6 +333,12 @@ export function DetailModal({ schedule, onClose, suppliers, role, holidays = [] 
                 <div>
                   <label className="label">วันที่ส่งจริง</label>
                   <input type="date" className="input" value={statusForm.actual_date} onChange={e => setStatusForm(p => ({ ...p, actual_date: e.target.value }))} />
+                </div>
+              )}
+              {['on_time','late'].includes(statusForm.status) && (
+                <div>
+                  <label className="label">เวลาที่มาส่ง</label>
+                  <input type="time" className="input" value={statusForm.actual_time} onChange={e => setStatusForm(p => ({ ...p, actual_time: e.target.value }))} />
                 </div>
               )}
             </div>
@@ -875,7 +881,7 @@ function UnplannedModal({ onClose, suppliers, defaultDate }) {
   });
 
   return (
-    <Modal open onClose={onClose} title="บันทึกการส่งของนอกแผน">
+    <Modal open onClose={onClose} title="บันทึกการส่งของไม่มีในแผน">
       <div className="space-y-4">
         <div className="bg-yellow-50 dark:bg-yellow-900 border border-yellow-200 dark:border-yellow-700 rounded px-3 py-2 text-small text-yellow-800 dark:text-yellow-200">
           ใช้สำหรับบันทึกเมื่อ Supplier มาส่งของโดยไม่มีการแจ้งล่วงหน้า หรือไม่มีในแผนจัดส่ง
@@ -908,7 +914,7 @@ function UnplannedModal({ onClose, suppliers, defaultDate }) {
         <div className="flex gap-2 justify-end pt-2 border-t border-border">
           <Button variant="ghost" onClick={onClose}>ยกเลิก</Button>
           <Button variant="warning" onClick={() => create.mutate()} loading={create.isPending} disabled={!form.supplier_id || !form.scheduled_date}>
-            บันทึกส่งนอกแผน
+            บันทึกไม่มีแผนส่ง
           </Button>
         </div>
       </div>
@@ -950,6 +956,20 @@ function EntryChip({ s, onClick }) {
 
 // ─── Tag Summary Modal (คลิก tag สรุป — ดูรายการ + export Excel) ──────────────
 
+// สถานะจริงต่อแถว — ไม่มีแผนส่ง (is_unplanned) แสดงป้าย "ไม่มีแผนส่ง" เฉพาะ แทนสถานะดิบ (เก็บเป็น on_time เสมอ)
+function rowStatusBadge(s) {
+  if (s.is_unplanned) return { label: 'ไม่มีแผนส่ง', cls: 'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200' };
+  return STATUS_CFG[s.status] || { label: s.status, cls: 'bg-gray-100 dark:bg-gray-900 text-gray-600 dark:text-gray-200' };
+}
+// ไม่มีแผนส่ง = วันที่/เวลาที่กรอกตอนบันทึกคือเวลาที่มาส่งจริง ไม่ใช่แผน ("แผนส่ง" จึงไม่มีความหมาย) —
+// ย้ายไปแสดงในช่อง "ส่งจริง" แทน ให้ตรงกับความจริง (ตาม export/excel logic ฝั่ง server)
+function planCell(s) { return s.is_unplanned ? '-' : `${s.scheduled_date} ${s.time_slot || ''}`; }
+function actualCell(s) {
+  if (s.is_unplanned) return `${s.scheduled_date} ${s.time_slot || ''}`;
+  if (!s.actual_date) return '-';
+  return `${s.actual_date}${s.actual_time ? ' ' + s.actual_time : ''}`;
+}
+
 function TagSummaryModal({ label, bucket, rows, from, to, onClose, onOpenDetail }) {
   const [exporting, setExporting] = useState(false);
 
@@ -963,7 +983,7 @@ function TagSummaryModal({ label, bucket, rows, from, to, onClose, onOpenDetail 
   }
 
   return (
-    <Modal open onClose={onClose} title={`รายการ: ${label}`} size="lg">
+    <Modal open onClose={onClose} title={`รายการ: ${label}`} size="xl">
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <p className="text-muted text-small">{rows.length} รายการ</p>
@@ -974,6 +994,7 @@ function TagSummaryModal({ label, bucket, rows, from, to, onClose, onOpenDetail 
             <thead className="bg-bg sticky top-0">
               <tr>
                 <th className="px-3 py-2 text-left text-muted font-medium whitespace-nowrap">ผู้ผลิต</th>
+                <th className="px-3 py-2 text-left text-muted font-medium whitespace-nowrap">สถานะ</th>
                 <th className="px-3 py-2 text-left text-muted font-medium whitespace-nowrap">แผนส่ง</th>
                 <th className="px-3 py-2 text-left text-muted font-medium whitespace-nowrap">ส่งจริง</th>
                 <th className="px-3 py-2 text-left text-muted font-medium whitespace-nowrap">QC ผู้รับ</th>
@@ -982,16 +1003,22 @@ function TagSummaryModal({ label, bucket, rows, from, to, onClose, onOpenDetail 
             </thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={5} className="px-3 py-6 text-center text-muted">ไม่มีรายการ</td></tr>
-              ) : rows.map(s => (
-                <tr key={s.id} className="border-t border-border hover:bg-bg cursor-pointer" onClick={() => onOpenDetail(s)}>
-                  <td className="px-3 py-2 whitespace-nowrap">{s.supplier_name}</td>
-                  <td className="px-3 py-2 whitespace-nowrap">{s.scheduled_date} {s.time_slot || ''}</td>
-                  <td className="px-3 py-2 whitespace-nowrap">{s.actual_date || '-'}</td>
-                  <td className="px-3 py-2 whitespace-nowrap">{s.received_by_name || '-'}</td>
-                  <td className="px-3 py-2 max-w-[240px] truncate" title={s.notes || s.late_reason || ''}>{s.notes || s.late_reason || '-'}</td>
-                </tr>
-              ))}
+                <tr><td colSpan={6} className="px-3 py-6 text-center text-muted">ไม่มีรายการ</td></tr>
+              ) : rows.map(s => {
+                const badge = rowStatusBadge(s);
+                return (
+                  <tr key={s.id} className="border-t border-border hover:bg-bg cursor-pointer" onClick={() => onOpenDetail(s)}>
+                    <td className="px-3 py-2 whitespace-nowrap">{s.supplier_name}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[12px] font-medium ${badge.cls}`}>{badge.label}</span>
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">{planCell(s)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{actualCell(s)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{s.received_by_name || '-'}</td>
+                    <td className="px-3 py-2 max-w-[240px] truncate" title={s.notes || s.late_reason || ''}>{s.notes || s.late_reason || '-'}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -1090,7 +1117,7 @@ export default function DeliveryCalendar() {
     { status: '_all_waiting', full: 'แผนรอส่งทั้งหมด', short: 'รอส่งทั้งหมด', cls: 'bg-indigo-100 dark:bg-indigo-900 text-indigo-800 dark:text-indigo-200' },
     { status: 'on_time',      full: 'ส่งตามแผน',       short: 'ตามแผน',     cls: 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' },
     { status: 'late',         full: 'ส่งนอกแผน',       short: 'ส่งนอกแผน', cls: 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200' },
-    { status: '_unplanned',   full: 'นอกแผน',          short: 'นอกแผน',     cls: 'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200' },
+    { status: '_unplanned',   full: 'ไม่มีแผนส่ง',     short: 'ไม่มีแผนส่ง', cls: 'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200' },
     { status: '_completed',   full: 'ส่งเสร็จสิ้น',    short: 'เสร็จสิ้น',  cls: 'bg-teal-100 dark:bg-teal-900 text-teal-800 dark:text-teal-200' },
   ];
 
@@ -1139,8 +1166,7 @@ export default function DeliveryCalendar() {
         <div className="flex gap-2">
           {canUnplanned && (
             <Button variant="warning" onClick={() => setUnplannedOpen(true)}>
-              <span className="hidden sm:inline">+ บันทึกส่งนอกแผน</span>
-              <span className="sm:hidden">+ นอกแผน</span>
+              + ไม่มีแผนส่ง
             </Button>
           )}
           {canCreate && (

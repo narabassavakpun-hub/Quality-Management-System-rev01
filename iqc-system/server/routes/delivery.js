@@ -117,7 +117,7 @@ router.get('/export/excel', auth, async (req, res) => {
     if (bucket && DELIVERY_BUCKET_SQL[bucket]) where += ' AND ' + DELIVERY_BUCKET_SQL[bucket];
 
     const rows = db.prepare(`
-      SELECT ds.scheduled_date, ds.time_slot, ds.status, ds.is_unplanned, ds.actual_date, ds.notes, ds.late_reason,
+      SELECT ds.scheduled_date, ds.time_slot, ds.status, ds.is_unplanned, ds.actual_date, ds.actual_time, ds.notes, ds.late_reason,
              s.name as supplier_name, ru.full_name as received_by_name
       FROM delivery_schedules ds
       LEFT JOIN suppliers s ON s.id = ds.supplier_id
@@ -130,11 +130,11 @@ router.get('/export/excel', auth, async (req, res) => {
     const ws = wb.addWorksheet('สรุปแผนส่งของ');
     ws.columns = [
       { header: 'ผู้ผลิต', key: 'supplier_name', width: 28 },
-      { header: 'แผนส่งวันที่', key: 'scheduled_date', width: 14 },
-      { header: 'เวลา', key: 'time_slot', width: 10 },
       { header: 'สถานะ', key: 'status_label', width: 16 },
-      { header: 'ไม่ได้แจ้งล่วงหน้า', key: 'unplanned_label', width: 16 },
+      { header: 'แผนส่งวันที่', key: 'plan_date', width: 14 },
+      { header: 'แผนส่งเวลา', key: 'plan_time', width: 12 },
       { header: 'ส่งจริงวันที่', key: 'actual_date', width: 14 },
+      { header: 'ส่งจริงเวลา', key: 'actual_time', width: 12 },
       { header: 'QC ผู้รับ', key: 'received_by_name', width: 18 },
       { header: 'หมายเหตุ', key: 'notes', width: 30 },
       { header: 'เหตุผล', key: 'late_reason', width: 30 },
@@ -143,17 +143,24 @@ router.get('/export/excel', auth, async (req, res) => {
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1A3A5C' } };
       cell.font = { color: { argb: 'FFFFFFFF' }, bold: true };
     });
-    rows.forEach(r => ws.addRow({
-      supplier_name: r.supplier_name || '-',
-      scheduled_date: r.scheduled_date,
-      time_slot: r.time_slot || '-',
-      status_label: DELIVERY_STATUS_LABEL[r.status] || r.status,
-      unplanned_label: r.is_unplanned ? 'ใช่' : '',
-      actual_date: r.actual_date || '-',
-      received_by_name: r.received_by_name || '-',
-      notes: r.notes || '',
-      late_reason: r.late_reason || '',
-    }));
+    rows.forEach(r => {
+      // ไม่มีแผนส่ง (unplanned) — วันที่/เวลาที่กรอกตอนบันทึกคือเวลาที่มาส่งจริง ไม่ใช่แผน ย้ายไปช่อง "ส่งจริง" แทน
+      const planDate   = r.is_unplanned ? '-' : r.scheduled_date;
+      const planTime   = r.is_unplanned ? '-' : (r.time_slot || '-');
+      const actualDate = r.is_unplanned ? r.scheduled_date : (r.actual_date || '-');
+      const actualTime = r.is_unplanned ? (r.time_slot || '-') : (r.actual_time || '-');
+      ws.addRow({
+        supplier_name: r.supplier_name || '-',
+        status_label: r.is_unplanned ? 'ไม่มีแผนส่ง' : (DELIVERY_STATUS_LABEL[r.status] || r.status),
+        plan_date: planDate,
+        plan_time: planTime,
+        actual_date: actualDate,
+        actual_time: actualTime,
+        received_by_name: r.received_by_name || '-',
+        notes: r.notes || '',
+        late_reason: r.late_reason || '',
+      });
+    });
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="delivery-${bucket || 'all'}-${from || 'all'}-${to || 'all'}.xlsx"`);
@@ -233,7 +240,7 @@ router.post('/:id/acknowledge', auth, requireRole(['qc_staff', 'qc_supervisor'])
 // QC Staff/Supervisor: on_time / late เมื่อ acknowledged (ของมาถึง บันทึกผล)
 // Purchasing: ทุก status เมื่อ pending / acknowledged
 router.patch('/:id/status', auth, requireRole(['purchasing', 'purchasing_manager', 'qc_staff', 'qc_supervisor']), requireReceivingQC, (req, res) => {
-  const { status, late_reason, rescheduled_date, actual_date } = req.body;
+  const { status, late_reason, rescheduled_date, actual_date, actual_time } = req.body;
   const isQC = ['qc_staff', 'qc_supervisor'].includes(req.user.role);
   const allowed = isQC ? ['on_time', 'late'] : ['on_time', 'late', 'cancelled', 'rescheduled'];
   if (!allowed.includes(status)) return res.status(400).json({ error: isQC ? 'QC บันทึกได้เฉพาะ on_time / late' : 'สถานะไม่ถูกต้อง' });
@@ -254,7 +261,7 @@ router.patch('/:id/status', auth, requireRole(['purchasing', 'purchasing_manager
     return res.status(400).json({ error: 'ไม่สามารถอัปเดตสถานะนี้ได้' });
   }
 
-  deliveryService.updateStatus({ schedule, status, late_reason, rescheduled_date, actual_date, actorId: req.user.id, actorName: req.user.full_name, actorIp: req.ip });
+  deliveryService.updateStatus({ schedule, status, late_reason, rescheduled_date, actual_date, actual_time, actorId: req.user.id, actorName: req.user.full_name, actorIp: req.ip });
   res.json(db.prepare('SELECT * FROM delivery_schedules WHERE id = ?').get(req.params.id));
 });
 
