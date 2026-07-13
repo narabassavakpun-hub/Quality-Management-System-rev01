@@ -965,14 +965,15 @@ export default function DeliveryCalendar() {
 
   // Deep-link จากลิงก์ในกระดิ่งแจ้งเตือน (เช่น "QC รับทราบ Delivery" — /delivery?schedule=123) — เปิด
   // DetailModal ให้อัตโนมัติ แล้วล้าง query param ออกกันเปิดซ้ำตอน re-render/กด back
+  // ต้อง dep บนค่า param จริง (ไม่ใช่ [] เฉยๆ) — ถ้าผู้ใช้อยู่หน้า /delivery อยู่แล้วแล้วกดลิงก์แจ้งเตือนใหม่
+  // React Router ไม่ remount component (path เดิม แค่ query string เปลี่ยน) effect ที่ dep [] จะไม่ทำงานซ้ำ
+  // ทำให้ modal ไม่เปิดจนกว่าจะรีเฟรชหน้าเอง (บั๊กที่ user รายงาน)
+  const scheduleParam = searchParams.get('schedule');
   useEffect(() => {
-    const scheduleId = searchParams.get('schedule');
-    if (!scheduleId) return;
-    api.get(`/delivery/${scheduleId}`).then(res => setSelectedSchedule(res.data)).catch(() => {});
-    searchParams.delete('schedule');
-    setSearchParams(searchParams, { replace: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (!scheduleParam) return;
+    api.get(`/delivery/${scheduleParam}`).then(res => setSelectedSchedule(res.data)).catch(() => {});
+    setSearchParams(prev => { prev.delete('schedule'); return prev; }, { replace: true });
+  }, [scheduleParam, setSearchParams]);
 
   const year  = currentDate.getFullYear();
   const month = currentDate.getMonth(); // 0-based

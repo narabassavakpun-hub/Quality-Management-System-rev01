@@ -24,8 +24,10 @@ function createSchedule({ supplier_id, scheduled_date, time_slot, notes, items, 
 
     const supplier = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(supplier_id);
 
+    const scheduleLink = `/delivery?schedule=${scheduleId}`;
+
     for (const u of [...getReceivingQCStaff(), ...getUsersByRole('qc_supervisor')]) {
-      createNotification(u.id, 'แจ้งกำหนดส่งสินค้า', `${supplier?.name} วันที่ ${scheduled_date} เวลา ${time_slot}`, `/delivery`);
+      createNotification(u.id, 'แจ้งกำหนดส่งสินค้า', `${supplier?.name} วันที่ ${scheduled_date} เวลา ${time_slot}`, scheduleLink);
     }
     sendTelegram(db.getSetting('telegram_group_qc'),
       `[IQC] แจ้งกำหนดส่งสินค้า\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date} (${time_slot})\nหมายเหตุ: ${notes || '-'}`
@@ -36,9 +38,9 @@ function createSchedule({ supplier_id, scheduled_date, time_slot, notes, items, 
     if (slotHour === 7 || slotHour === 18) {
       const offLabel = slotHour === 7 ? 'ก่อนเข้างาน (07:xx)' : 'หลังเลิกงาน (18:xx)';
       const offMsg   = `${supplier?.name} นัดส่งวันที่ ${scheduled_date} เวลา ${time_slot} — ${offLabel}`;
-      for (const u of getUsersByRole('qc_supervisor')) createNotification(u.id, 'แจ้งนัดส่งนอกเวลาทำงาน', offMsg, `/delivery`);
-      for (const u of getUsersByRole('qc_manager'))   createNotification(u.id, 'แจ้งนัดส่งนอกเวลาทำงาน', offMsg, `/delivery`);
-      for (const uid of resolveNotifyTargetIds(supplier_id)) createNotification(uid, 'แจ้งนัดส่งนอกเวลาทำงาน', offMsg, `/delivery`);
+      for (const u of getUsersByRole('qc_supervisor')) createNotification(u.id, 'แจ้งนัดส่งนอกเวลาทำงาน', offMsg, scheduleLink);
+      for (const u of getUsersByRole('qc_manager'))   createNotification(u.id, 'แจ้งนัดส่งนอกเวลาทำงาน', offMsg, scheduleLink);
+      for (const uid of resolveNotifyTargetIds(supplier_id)) createNotification(uid, 'แจ้งนัดส่งนอกเวลาทำงาน', offMsg, scheduleLink);
       sendTelegram(db.getSetting('telegram_group_qc'),
         `[IQC] แจ้งเตือน: นัดส่งสินค้านอกเวลาทำงาน\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date} เวลา: ${time_slot} (${offLabel})`
       );
@@ -57,10 +59,10 @@ function createSchedule({ supplier_id, scheduled_date, time_slot, notes, items, 
       else if (dow === 6) dayName = 'วันเสาร์';
       else dayName = `วันหยุดบริษัท (${companyHoliday.name})`;
       const weekendMsg = `${supplier?.name} นัดส่งสินค้า${dayName} ${scheduled_date} เวลา ${time_slot}`;
-      for (const u of getReceivingQCStaff())      createNotification(u.id, `แจ้งนัดส่งวันหยุด`, weekendMsg, `/delivery`);
-      for (const u of getUsersByRole('qc_supervisor')) createNotification(u.id, `แจ้งนัดส่งวันหยุด`, weekendMsg, `/delivery`);
-      for (const u of getUsersByRole('qc_manager'))   createNotification(u.id, `แจ้งนัดส่งวันหยุด`, weekendMsg, `/delivery`);
-      for (const uid of resolveNotifyTargetIds(supplier_id)) createNotification(uid, `แจ้งนัดส่งวันหยุด`, weekendMsg, `/delivery`);
+      for (const u of getReceivingQCStaff())      createNotification(u.id, `แจ้งนัดส่งวันหยุด`, weekendMsg, scheduleLink);
+      for (const u of getUsersByRole('qc_supervisor')) createNotification(u.id, `แจ้งนัดส่งวันหยุด`, weekendMsg, scheduleLink);
+      for (const u of getUsersByRole('qc_manager'))   createNotification(u.id, `แจ้งนัดส่งวันหยุด`, weekendMsg, scheduleLink);
+      for (const uid of resolveNotifyTargetIds(supplier_id)) createNotification(uid, `แจ้งนัดส่งวันหยุด`, weekendMsg, scheduleLink);
       sendTelegram(db.getSetting('telegram_group_qc'),
         `[IQC] แจ้งเตือน: นัดส่งสินค้า${dayName}\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date} เวลา: ${time_slot}`
       );
@@ -94,7 +96,7 @@ function createUnplanned({ supplier_id, scheduled_date, time_slot, notes, items,
 
     const supplier = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(supplier_id);
     for (const uid of resolveNotifyTargetIds(supplier_id)) {
-      createNotification(uid, 'สินค้าส่งนอกแผน', `มีสินค้าส่งนอกแผนจาก ${supplier?.name} — กรุณาตรวจสอบ`, `/delivery`);
+      createNotification(uid, 'สินค้าส่งนอกแผน', `มีสินค้าส่งนอกแผนจาก ${supplier?.name} — กรุณาตรวจสอบ`, `/delivery?schedule=${scheduleId}`);
     }
 
     sendTelegram(db.getSetting('telegram_group_purchasing'),
@@ -132,10 +134,11 @@ function updateStatus({ schedule, status, late_reason, rescheduled_date, actual_
       .run(status, late_reason || null, rescheduled_date || null, actual_date || null, newDate, schedule.id);
 
     if (status === 'rescheduled') {
+      const scheduleLink = `/delivery?schedule=${schedule.id}`;
       const supplier = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(schedule.supplier_id);
       const reschedMsg = `${supplier?.name} เลื่อนวันส่งจาก ${schedule.scheduled_date} เป็น ${rescheduled_date}`;
       for (const u of [...getReceivingQCStaff(), ...getUsersByRole('qc_supervisor')]) {
-        createNotification(u.id, 'เลื่อนวันส่งสินค้า', reschedMsg, `/delivery`);
+        createNotification(u.id, 'เลื่อนวันส่งสินค้า', reschedMsg, scheduleLink);
       }
 
       // แจ้งเตือนพิเศษเมื่อวันใหม่ตรงกับวันหยุด
@@ -146,10 +149,10 @@ function updateStatus({ schedule, status, late_reason, rescheduled_date, actual_
         let dayName = dow === 0 ? 'วันอาทิตย์' : dow === 6 ? 'วันเสาร์' : `วันหยุดบริษัท (${companyHoliday.name})`;
         const holidayMsg = `${supplier?.name} เลื่อนวันส่งเป็น${dayName} ${rescheduled_date}`;
         for (const u of [...getReceivingQCStaff(), ...getUsersByRole('qc_supervisor'), ...getUsersByRole('qc_manager')]) {
-          createNotification(u.id, `แจ้งเลื่อนวันส่ง (วันหยุด)`, holidayMsg, `/delivery`);
+          createNotification(u.id, `แจ้งเลื่อนวันส่ง (วันหยุด)`, holidayMsg, scheduleLink);
         }
         for (const uid of resolveNotifyTargetIds(schedule.supplier_id)) {
-          createNotification(uid, `แจ้งเลื่อนวันส่ง (วันหยุด)`, holidayMsg, `/delivery`);
+          createNotification(uid, `แจ้งเลื่อนวันส่ง (วันหยุด)`, holidayMsg, scheduleLink);
         }
         sendTelegram(db.getSetting('telegram_group_qc'),
           `[IQC] แจ้งเตือน: เลื่อนวันส่งสินค้าเป็นวันหยุด\nSupplier: ${supplier?.name}\nวันที่ใหม่: ${rescheduled_date} (${dayName})\nเหตุผล: ${late_reason}`);
@@ -180,13 +183,14 @@ function updateSchedule({ schedule, scheduled_date, time_slot, notes, actorId, a
       WHERE id=?`)
       .run(newDate, newTime, notes !== undefined ? notes : schedule.notes, schedule.id);
 
+    const scheduleLink = `/delivery?schedule=${schedule.id}`;
     const supplier = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(schedule.supplier_id);
     const editMsg = `${supplier?.name} เปลี่ยนวันส่ง ${schedule.scheduled_date} ${schedule.time_slot} → ${newDate} ${newTime}${resetAck ? ' (กรุณารับทราบใหม่)' : ''}`;
     const qcStaff = getReceivingQCStaff();
     const qcSupervisors = getUsersByRole('qc_supervisor');
     const title = resetAck ? 'กำหนดส่งสินค้าเปลี่ยนแปลง — กรุณารับทราบใหม่' : 'แก้ไขกำหนดส่งสินค้า';
     for (const u of [...qcStaff, ...qcSupervisors]) {
-      createNotification(u.id, title, editMsg, `/delivery`);
+      createNotification(u.id, title, editMsg, scheduleLink);
     }
 
     // แจ้งเตือนพิเศษเมื่อวันใหม่ตรงกับวันหยุด
@@ -198,10 +202,10 @@ function updateSchedule({ schedule, scheduled_date, time_slot, notes, actorId, a
         let dayName = dow === 0 ? 'วันอาทิตย์' : dow === 6 ? 'วันเสาร์' : `วันหยุดบริษัท (${companyHoliday.name})`;
         const holidayMsg = `${supplier?.name} แก้ไขวันส่งเป็น${dayName} ${newDate} เวลา ${newTime}`;
         for (const u of [...getReceivingQCStaff(), ...getUsersByRole('qc_supervisor'), ...getUsersByRole('qc_manager')]) {
-          createNotification(u.id, `แจ้งแก้ไขวันส่ง (วันหยุด)`, holidayMsg, `/delivery`);
+          createNotification(u.id, `แจ้งแก้ไขวันส่ง (วันหยุด)`, holidayMsg, scheduleLink);
         }
         for (const uid of resolveNotifyTargetIds(schedule.supplier_id)) {
-          createNotification(uid, `แจ้งแก้ไขวันส่ง (วันหยุด)`, holidayMsg, `/delivery`);
+          createNotification(uid, `แจ้งแก้ไขวันส่ง (วันหยุด)`, holidayMsg, scheduleLink);
         }
         sendTelegram(db.getSetting('telegram_group_qc'),
           `[IQC] แจ้งเตือน: แก้ไขวันส่งสินค้าเป็นวันหยุด\nSupplier: ${supplier?.name}\nวันที่ใหม่: ${newDate} (${dayName}) เวลา: ${newTime}`);
