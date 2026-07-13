@@ -23,9 +23,22 @@ function keysFromLink(link, { includeNotifications = false } = {}) {
   } else if (segment === 'ncr') {
     keys.push(['ncrs']);
     if (id) keys.push(['ncr', id]);
+    // Purchasing Dashboard (PurchasingDash.jsx) รวมข้อมูลจาก ncrs ล้วนๆ (join bills/suppliers) — ทุก
+    // status change ของ NCR (เช่น QMR อนุมัติเปิด NCR: pending_qmr_open → pending_purchasing_review)
+    // ต้อง invalidate query ของ dashboard นี้ด้วย ไม่งั้นตัวเลข/รายการค้างจนกว่าจะรีเฟรชหน้าเอง
+    keys.push(['purchasing-dashboard-summary']);
+    keys.push(['purchasing-dashboard-suppliers']);
+    keys.push(['purchasing-dashboard-suppliers-all']);
+    keys.push(['purchasing-dashboard-ncrs']);
   } else if (segment === 'uai') {
     keys.push(['uais']);
     if (id) keys.push(['uai', id]);
+    // UAI status ผูกกับ ncrs.status ด้วย (เช่น uai_pending_qc_manager) — กระทบ bucket ใน Purchasing
+    // Dashboard เหมือนกัน
+    keys.push(['purchasing-dashboard-summary']);
+    keys.push(['purchasing-dashboard-suppliers']);
+    keys.push(['purchasing-dashboard-suppliers-all']);
+    keys.push(['purchasing-dashboard-ncrs']);
   } else if (segment === 'issue-talk') {
     keys.push(['issue-talks']);
     keys.push(['issue-talk-unread']);
