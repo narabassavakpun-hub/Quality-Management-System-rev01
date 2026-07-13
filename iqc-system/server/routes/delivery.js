@@ -8,7 +8,16 @@ const requireRole = require('../middleware/requireRole');
 const uploads = require('../middleware/upload');
 const { getUsersByRole, getReceivingQCStaff, createNotification, sendTelegram } = require('../lib/notify');
 const { requireReceivingQC } = require('../middleware/requireRole');
+const { canPurchasingActOnSupplier, purchasingVisibilitySQL } = require('../lib/purchasingScope');
 const deliveryService = require('../services/deliveryService');
+
+// role='purchasing' เท่านั้นที่ถูกจำกัด (purchasing_manager/qc_staff/qc_supervisor ผ่านเสมอ — มี guard ของตัวเองอยู่แล้ว)
+function blockIfNotAssignedPurchasing(req, res, supplierId) {
+  if (req.user.role !== 'purchasing') return false;
+  if (canPurchasingActOnSupplier(req.user.id, supplierId)) return false;
+  res.status(403).json({ error: 'ไม่มีสิทธิ์ดำเนินการ — Delivery Schedule ของ Supplier นี้มีผู้ดูแลจัดซื้อคนอื่นรับผิดชอบอยู่' });
+  return true;
+}
 
 // ===== GET /api/delivery =====
 router.get('/', auth, (req, res) => {
@@ -21,6 +30,7 @@ router.get('/', auth, (req, res) => {
   if (supplier_id) { where += ' AND ds.supplier_id = ?'; params.push(supplier_id); }
   if (status) { where += ' AND ds.status = ?'; params.push(status); }
   if (is_unplanned !== undefined) { where += ' AND ds.is_unplanned = ?'; params.push(Number(is_unplanned)); }
+  if (req.user.role === 'purchasing') { where += ' AND ' + purchasingVisibilitySQL('ds.supplier_id'); params.push(req.user.id); }
 
   const rows = db.prepare(`
     SELECT ds.*, s.name as supplier_name, u.full_name as created_by_name
@@ -44,7 +54,7 @@ router.get('/', auth, (req, res) => {
 });
 
 // ===== POST /api/delivery — Purchasing สร้างแผน =====
-router.post('/', auth, requireRole(['purchasing']), (req, res) => {
+router.post('/', auth, requireRole(['purchasing', 'purchasing_manager']), (req, res) => {
   const { supplier_id, scheduled_date, time_slot, notes, items, has_sample } = req.body;
   if (!supplier_id || !scheduled_date || !time_slot) {
     return res.status(400).json({ error: 'กรุณากรอกข้อมูล Supplier, วันที่ และช่วงเวลา' });
@@ -90,6 +100,7 @@ router.get('/:id', auth, (req, res) => {
     WHERE ds.id = ?
   `).get(req.params.id);
   if (!row) return res.status(404).json({ error: 'ไม่พบข้อมูล' });
+  if (blockIfNotAssignedPurchasing(req, res, row.supplier_id)) return;
 
   row.items = db.prepare('SELECT * FROM delivery_schedule_items WHERE schedule_id = ?').all(row.id);
   row.attachments = db.prepare('SELECT id, file_path, original_name, file_type, uploaded_at FROM delivery_schedule_attachments WHERE schedule_id = ?').all(row.id);
@@ -98,9 +109,10 @@ router.get('/:id', auth, (req, res) => {
 });
 
 // ===== PATCH /api/delivery/:id — Purchasing แก้ไข (เฉพาะ pending) =====
-router.patch('/:id', auth, requireRole(['purchasing']), (req, res) => {
+router.patch('/:id', auth, requireRole(['purchasing', 'purchasing_manager']), (req, res) => {
   const schedule = db.prepare('SELECT * FROM delivery_schedules WHERE id = ?').get(req.params.id);
   if (!schedule) return res.status(404).json({ error: 'ไม่พบข้อมูล' });
+  if (blockIfNotAssignedPurchasing(req, res, schedule.supplier_id)) return;
   if (schedule.is_unplanned) return res.status(403).json({ error: 'ไม่สามารถแก้ไข schedule ที่ QC บันทึกเป็น unplanned' });
   if (!['pending', 'acknowledged'].includes(schedule.status)) return res.status(400).json({ error: 'แก้ไขได้เฉพาะรายการที่ยังไม่ดำเนินการ' });
 
@@ -110,9 +122,10 @@ router.patch('/:id', auth, requireRole(['purchasing']), (req, res) => {
 });
 
 // ===== DELETE /api/delivery/:id =====
-router.delete('/:id', auth, requireRole(['purchasing']), (req, res) => {
+router.delete('/:id', auth, requireRole(['purchasing', 'purchasing_manager']), (req, res) => {
   const schedule = db.prepare('SELECT * FROM delivery_schedules WHERE id = ?').get(req.params.id);
   if (!schedule) return res.status(404).json({ error: 'ไม่พบข้อมูล' });
+  if (blockIfNotAssignedPurchasing(req, res, schedule.supplier_id)) return;
   if (schedule.status !== 'pending') return res.status(400).json({ error: 'ลบได้เฉพาะ status=pending' });
   if (schedule.is_unplanned) return res.status(403).json({ error: 'ไม่สามารถลบ unplanned schedule' });
   const deliveryDt = new Date(schedule.scheduled_date);
@@ -144,7 +157,7 @@ router.post('/:id/acknowledge', auth, requireRole(['qc_staff', 'qc_supervisor'])
 // ===== PATCH /api/delivery/:id/status — อัปเดตสถานะจริง =====
 // QC Staff/Supervisor: on_time / late เมื่อ acknowledged (ของมาถึง บันทึกผล)
 // Purchasing: ทุก status เมื่อ pending / acknowledged
-router.patch('/:id/status', auth, requireRole(['purchasing', 'qc_staff', 'qc_supervisor']), requireReceivingQC, (req, res) => {
+router.patch('/:id/status', auth, requireRole(['purchasing', 'purchasing_manager', 'qc_staff', 'qc_supervisor']), requireReceivingQC, (req, res) => {
   const { status, late_reason, rescheduled_date, actual_date } = req.body;
   const isQC = ['qc_staff', 'qc_supervisor'].includes(req.user.role);
   const allowed = isQC ? ['on_time', 'late'] : ['on_time', 'late', 'cancelled', 'rescheduled'];
@@ -158,6 +171,7 @@ router.patch('/:id/status', auth, requireRole(['purchasing', 'qc_staff', 'qc_sup
 
   const schedule = db.prepare('SELECT * FROM delivery_schedules WHERE id = ?').get(req.params.id);
   if (!schedule) return res.status(404).json({ error: 'ไม่พบข้อมูล' });
+  if (blockIfNotAssignedPurchasing(req, res, schedule.supplier_id)) return;
   if (isQC && schedule.status !== 'acknowledged') {
     return res.status(400).json({ error: 'QC บันทึกผลได้เฉพาะรายการที่รับทราบแล้ว (acknowledged)' });
   }
@@ -170,9 +184,10 @@ router.patch('/:id/status', auth, requireRole(['purchasing', 'qc_staff', 'qc_sup
 });
 
 // ===== POST /api/delivery/:id/attachments =====
-router.post('/:id/attachments', auth, requireRole(['purchasing', 'qc_staff', 'qc_supervisor']), uploads.general.array('files', 10), uploads.verifyMagic, uploads.compressImages, (req, res) => {
-  const schedule = db.prepare('SELECT id FROM delivery_schedules WHERE id = ?').get(req.params.id);
+router.post('/:id/attachments', auth, requireRole(['purchasing', 'purchasing_manager', 'qc_staff', 'qc_supervisor']), uploads.general.array('files', 10), uploads.verifyMagic, uploads.compressImages, (req, res) => {
+  const schedule = db.prepare('SELECT id, supplier_id FROM delivery_schedules WHERE id = ?').get(req.params.id);
   if (!schedule) return res.status(404).json({ error: 'ไม่พบข้อมูล' });
+  if (blockIfNotAssignedPurchasing(req, res, schedule.supplier_id)) return;
 
   const isSample = req.query.type === 'sample';
   const ins = db.prepare('INSERT INTO delivery_schedule_attachments (schedule_id, file_path, original_name, file_type) VALUES (?, ?, ?, ?)');
@@ -184,9 +199,11 @@ router.post('/:id/attachments', auth, requireRole(['purchasing', 'qc_staff', 'qc
 });
 
 // ===== DELETE /api/delivery/:id/attachments/:attachId =====
-router.delete('/:id/attachments/:attachId', auth, requireRole(['purchasing']), (req, res) => {
+router.delete('/:id/attachments/:attachId', auth, requireRole(['purchasing', 'purchasing_manager']), (req, res) => {
   const att = db.prepare('SELECT file_path FROM delivery_schedule_attachments WHERE id = ? AND schedule_id = ?').get(req.params.attachId, req.params.id);
   if (!att) return res.status(404).json({ error: 'ไม่พบไฟล์' });
+  const schedule = db.prepare('SELECT supplier_id FROM delivery_schedules WHERE id = ?').get(req.params.id);
+  if (blockIfNotAssignedPurchasing(req, res, schedule?.supplier_id)) return;
   db.prepare('DELETE FROM delivery_schedule_attachments WHERE id = ? AND schedule_id = ?').run(req.params.attachId, req.params.id);
   if (att.file_path) {
     try { fs.unlinkSync(path.join(__dirname, '../../uploads/general', att.file_path)); } catch (_) {}

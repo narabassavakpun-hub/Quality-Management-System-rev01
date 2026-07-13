@@ -8,6 +8,20 @@ const auth = require('../middleware/auth');
 const requireRole = require('../middleware/requireRole');
 const uploads = require('../middleware/upload');
 const { getUsersByRole, createNotification, sendTelegram } = require('../lib/notify');
+const { canPurchasingActOnSupplier, purchasingVisibilitySQL } = require('../lib/purchasingScope');
+
+function getNcrSupplierId(ncrId) {
+  const row = db.prepare('SELECT b.supplier_id as supplier_id FROM ncrs n LEFT JOIN bills b ON b.id = n.bill_id WHERE n.id = ?').get(ncrId);
+  return row ? row.supplier_id : null;
+}
+
+// role='purchasing' เท่านั้นที่ถูกจำกัด (purchasing_manager/role อื่นผ่านเสมอ)
+function blockIfNotAssignedPurchasing(req, res, ncrId) {
+  if (req.user.role !== 'purchasing') return false;
+  if (canPurchasingActOnSupplier(req.user.id, getNcrSupplierId(ncrId))) return false;
+  res.status(403).json({ error: 'ไม่มีสิทธิ์ดำเนินการ — UAI ของ Supplier นี้มีผู้ดูแลจัดซื้อคนอื่นรับผิดชอบอยู่' });
+  return true;
+}
 
 // ===== DEVMORE M2 — เก็บลายเซ็นเป็นไฟล์แทน base64 ใน DB =====
 const SIG_DIR = path.join(__dirname, '../../uploads/uai');
@@ -43,6 +57,7 @@ router.get('/', auth, (req, res) => {
   if (supplier_id) { where += ' AND b.supplier_id = ?'; params.push(supplier_id); }
   if (from) { where += ' AND DATE(u.created_at) >= ?'; params.push(from); }
   if (to) { where += ' AND DATE(u.created_at) <= ?'; params.push(to); }
+  if (req.user.role === 'purchasing') { where += ' AND ' + purchasingVisibilitySQL('b.supplier_id'); params.push(req.user.id); }
 
   const rows = db.prepare(`
     SELECT u.*, n.ncr_code, n.severity, n.invoice_no, n.po_no,
@@ -85,6 +100,7 @@ router.get('/:id', auth, (req, res) => {
     WHERE u.id = ?
   `).get(req.params.id);
   if (!uai) return res.status(404).json({ error: 'ไม่พบ UAI' });
+  if (blockIfNotAssignedPurchasing(req, res, uai.ncr_id)) return;
 
   // supplier_token เปิดเผยเฉพาะ purchasing/admin (DEVMORE M9)
   if (!['purchasing', 'admin'].includes(req.user.role)) delete uai.supplier_token;
@@ -126,9 +142,10 @@ router.get('/:id', auth, (req, res) => {
 });
 
 // ===== DELETE /api/uai/:id — self-delete by purchasing =====
-router.delete('/:id', auth, requireRole(['purchasing']), (req, res) => {
+router.delete('/:id', auth, requireRole(['purchasing', 'purchasing_manager']), (req, res) => {
   const uai = db.prepare('SELECT * FROM uai_documents WHERE id = ?').get(req.params.id);
   if (!uai) return res.status(404).json({ error: 'ไม่พบ UAI' });
+  if (blockIfNotAssignedPurchasing(req, res, uai.ncr_id)) return;
   if (!['uai_pending_qc_manager', 'uai_pending_purchasing'].includes(uai.status)) {
     return res.status(400).json({ error: 'ลบ UAI ได้เฉพาะสถานะ uai_pending_qc_manager หรือ uai_pending_purchasing' });
   }
@@ -171,9 +188,10 @@ router.post('/:id/qc-manager-review', auth, requireRole(['qc_manager']), (req, r
 });
 
 // ===== PATCH /api/uai/:id/details — Purchasing กรอก/แก้ไขข้อมูล =====
-router.patch('/:id/details', auth, requireRole(['purchasing']), (req, res) => {
+router.patch('/:id/details', auth, requireRole(['purchasing', 'purchasing_manager']), (req, res) => {
   const uai = db.prepare('SELECT * FROM uai_documents WHERE id = ?').get(req.params.id);
   if (!uai) return res.status(404).json({ error: 'ไม่พบ UAI' });
+  if (blockIfNotAssignedPurchasing(req, res, uai.ncr_id)) return;
   if (!['uai_pending_purchasing', 'uai_pending_qc_manager'].includes(uai.status)) {
     return res.status(400).json({ error: 'ไม่สามารถแก้ไขข้อมูลในขั้นตอนนี้' });
   }
@@ -192,9 +210,10 @@ router.patch('/:id/details', auth, requireRole(['purchasing']), (req, res) => {
 });
 
 // ===== POST /api/uai/:id/images — Purchasing อัปโหลดรูปภาพ =====
-router.post('/:id/images', auth, requireRole(['purchasing']), uploads.uai.array('images', 10), uploads.verifyMagic, uploads.compressImages, (req, res) => {
+router.post('/:id/images', auth, requireRole(['purchasing', 'purchasing_manager']), uploads.uai.array('images', 10), uploads.verifyMagic, uploads.compressImages, (req, res) => {
   const uai = db.prepare('SELECT * FROM uai_documents WHERE id = ?').get(req.params.id);
   if (!uai) return res.status(404).json({ error: 'ไม่พบ UAI' });
+  if (blockIfNotAssignedPurchasing(req, res, uai.ncr_id)) return;
   if (!req.files?.length) return res.status(400).json({ error: 'ไม่พบไฟล์รูปภาพ' });
 
   const ins = db.prepare('INSERT INTO uai_images (uai_id, file_path, original_name) VALUES (?, ?, ?)');
@@ -205,9 +224,10 @@ router.post('/:id/images', auth, requireRole(['purchasing']), uploads.uai.array(
 });
 
 // ===== DELETE /api/uai/:id/images/:imgId — ลบรูป =====
-router.delete('/:id/images/:imgId', auth, requireRole(['purchasing']), (req, res) => {
+router.delete('/:id/images/:imgId', auth, requireRole(['purchasing', 'purchasing_manager']), (req, res) => {
   const uai = db.prepare('SELECT * FROM uai_documents WHERE id = ?').get(req.params.id);
   if (!uai) return res.status(404).json({ error: 'ไม่พบ UAI' });
+  if (blockIfNotAssignedPurchasing(req, res, uai.ncr_id)) return;
 
   const img = db.prepare('SELECT * FROM uai_images WHERE id = ? AND uai_id = ?').get(req.params.imgId, uai.id);
   if (!img) return res.status(404).json({ error: 'ไม่พบรูปภาพ' });
@@ -228,7 +248,10 @@ router.post('/:id/sign', auth, (req, res) => {
 
   const expectedRole = SIGN_ROLE_MAP[uai.status];
   if (!expectedRole) return res.status(400).json({ error: 'ไม่ใช่ขั้นตอนการลงนาม' });
-  if (req.user.role !== expectedRole) return res.status(403).json({ error: 'ไม่ใช่คิวของคุณในการลงนาม' });
+  // purchasing_manager ลงนามแทนคิวจัดซื้อได้ (ดู CLAUDE.md role matrix) — role อื่นต้องตรงคิวเป๊ะเท่านั้น
+  const isPurchasingManagerOverride = expectedRole === 'purchasing' && req.user.role === 'purchasing_manager';
+  if (req.user.role !== expectedRole && !isPurchasingManagerOverride) return res.status(403).json({ error: 'ไม่ใช่คิวของคุณในการลงนาม' });
+  if (expectedRole === 'purchasing' && blockIfNotAssignedPurchasing(req, res, uai.ncr_id)) return;
 
   const { signature_image, comment } = req.body;
   if (!signature_image) return res.status(400).json({ error: 'กรุณาวาดลายเซ็น' });

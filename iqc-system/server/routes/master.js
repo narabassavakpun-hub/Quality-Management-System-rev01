@@ -12,6 +12,9 @@ const excelMemUpload = multer({ storage: multer.memoryStorage(), limits: { fileS
 
 const adminOnly = [auth, requireRole(['admin'])];
 const adminOrQCManager = [auth, requireRole(['admin', 'qc_manager'])];
+// Suppliers CRUD (สร้าง/แก้ไข/เปิด-ปิดใช้งาน) เท่านั้น — จัดซื้อจัดการผู้ผลิตของตัวเองได้ (export/import Excel +
+// approval-status ยังคง adminOnly เดิม ไม่ได้อยู่ในขอบเขตคำขอ)
+const purchasingOrAdmin = [auth, requireRole(['admin', 'purchasing', 'purchasing_manager'])];
 
 const VALID_INSP_LEVELS = new Set(['GEN_I','GEN_II','GEN_III','S1','S2','S3','S4','FULL']);
 const VALID_AQL = new Set(['0.65','1.0','1.5','2.5','4.0','6.5']);
@@ -139,6 +142,32 @@ router.post('/suppliers/import', ...adminOnly, excelMemUpload.single('file'), as
   catch (e) { res.status(e.message?.includes('UNIQUE') ? 400 : 500).json({ error: e.message?.includes('UNIQUE') ? 'รหัสหรือชื่อซ้ำ' : e.message }); }
 });
 
+// ผู้ดูแลจัดซื้อต่อ supplier (many-to-many) — batch-attach เหมือน attachProductSubqueries
+function attachSupplierPurchasingAssignees(rows) {
+  if (!rows.length) return;
+  const ids = rows.map(r => r.id);
+  const ph = ids.map(() => '?').join(',');
+  const byAssignee = {};
+  for (const r of db.prepare(`
+    SELECT spa.supplier_id, u.id as user_id, u.full_name
+    FROM supplier_purchasing_assignees spa JOIN users u ON u.id = spa.user_id
+    WHERE spa.supplier_id IN (${ph}) ORDER BY u.full_name
+  `).all(...ids)) {
+    (byAssignee[r.supplier_id] = byAssignee[r.supplier_id] || []).push({ user_id: r.user_id, full_name: r.full_name });
+  }
+  for (const row of rows) {
+    row.purchasing_assignees = byAssignee[row.id] || [];
+    row.purchasing_user_ids = row.purchasing_assignees.map(a => a.user_id);
+  }
+}
+
+// รายชื่อจัดซื้อ (id/full_name เท่านั้น) สำหรับ dropdown เลือกผู้ดูแลใน SupplierForm — แยกจาก /api/admin/users
+// (adminOnly, คืนข้อมูล user ทั้งหมดรวม telegram_chat_id/auth_provider) เพื่อให้ purchasing/purchasing_manager
+// เข้าถึงได้โดยไม่ต้องเปิดสิทธิ์ admin user management ทั้งหมด
+router.get('/purchasing-users', ...purchasingOrAdmin, (req, res) => {
+  res.json(db.prepare("SELECT id, full_name FROM users WHERE role = 'purchasing' AND is_active = 1 ORDER BY full_name").all());
+});
+
 router.get('/suppliers', auth, (req, res) => {
   const { all, page, limit: lim, q = '' } = req.query;
   const includeInactive = all === '1';
@@ -151,42 +180,64 @@ router.get('/suppliers', auth, (req, res) => {
     const sp = q ? [`%${q}%`, `%${q}%`] : [];
     const total = db.prepare(`SELECT COUNT(*) as c FROM suppliers WHERE 1=1 ${activeCl} ${searchCl}`).get(...sp);
     const rows = db.prepare(`SELECT * FROM suppliers WHERE 1=1 ${activeCl} ${searchCl} ORDER BY name LIMIT ? OFFSET ?`).all(...sp, perPage, offset);
+    attachSupplierPurchasingAssignees(rows);
     return res.json({ data: rows, total: total.c, page: pg, limit: perPage });
   }
   const rows = includeInactive
     ? db.prepare('SELECT * FROM suppliers ORDER BY name').all()
     : db.prepare('SELECT * FROM suppliers WHERE is_active = 1 ORDER BY name').all();
+  attachSupplierPurchasingAssignees(rows);
   res.json(rows);
 });
 
-router.post('/suppliers', ...adminOnly, (req, res) => {
-  const { code, name, email, phone, notes } = req.body;
+router.post('/suppliers', ...purchasingOrAdmin, (req, res) => {
+  const { code, name, email, phone, notes, purchasing_user_ids } = req.body;
   if (!name) return res.status(400).json({ error: 'กรุณากรอกชื่อผู้ผลิต' });
   try {
-    const result = db.prepare('INSERT INTO suppliers (code, name, email, phone, notes) VALUES (?, ?, ?, ?, ?)').run(code || null, name, email || null, phone || null, notes || null);
-    db.auditLog('suppliers', result.lastInsertRowid, 'CREATE', null, { name }, req.user.id, req.ip);
-    res.json(db.prepare('SELECT * FROM suppliers WHERE id = ?').get(result.lastInsertRowid));
+    const create = db.transaction(() => {
+      const result = db.prepare('INSERT INTO suppliers (code, name, email, phone, notes) VALUES (?, ?, ?, ?, ?)').run(code || null, name, email || null, phone || null, notes || null);
+      if (Array.isArray(purchasing_user_ids) && purchasing_user_ids.length) {
+        const insAssignee = db.prepare('INSERT OR IGNORE INTO supplier_purchasing_assignees (supplier_id, user_id) VALUES (?, ?)');
+        for (const uid of purchasing_user_ids) insAssignee.run(result.lastInsertRowid, uid);
+      }
+      db.auditLog('suppliers', result.lastInsertRowid, 'CREATE', null, { name, purchasing_user_ids }, req.user.id, req.ip);
+      return result.lastInsertRowid;
+    });
+    const id = create();
+    const row = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(id);
+    attachSupplierPurchasingAssignees([row]);
+    res.json(row);
   } catch (e) {
     if (e.message.includes('UNIQUE')) return res.status(400).json({ error: 'รหัสผู้ผลิตซ้ำ' });
     res.status(500).json({ error: e.message });
   }
 });
 
-router.patch('/suppliers/:id', ...adminOnly, (req, res) => {
-  const { code, name, email, phone, notes } = req.body;
+router.patch('/suppliers/:id', ...purchasingOrAdmin, (req, res) => {
+  const { code, name, email, phone, notes, purchasing_user_ids } = req.body;
   if (!name) return res.status(400).json({ error: 'กรุณากรอกชื่อผู้ผลิต' });
   try {
     const old = db.prepare('SELECT * FROM suppliers WHERE id=?').get(req.params.id);
-    db.prepare('UPDATE suppliers SET code=?, name=?, email=?, phone=?, notes=? WHERE id=?').run(code || null, name, email || null, phone || null, notes || null, req.params.id);
-    db.auditLog('suppliers', req.params.id, 'UPDATE', old, { name }, req.user.id, req.ip);
-    res.json(db.prepare('SELECT * FROM suppliers WHERE id = ?').get(req.params.id));
+    const upd = db.transaction(() => {
+      db.prepare('UPDATE suppliers SET code=?, name=?, email=?, phone=?, notes=? WHERE id=?').run(code || null, name, email || null, phone || null, notes || null, req.params.id);
+      if (Array.isArray(purchasing_user_ids)) {
+        db.prepare('DELETE FROM supplier_purchasing_assignees WHERE supplier_id = ?').run(req.params.id);
+        const insAssignee = db.prepare('INSERT OR IGNORE INTO supplier_purchasing_assignees (supplier_id, user_id) VALUES (?, ?)');
+        for (const uid of purchasing_user_ids) insAssignee.run(req.params.id, uid);
+      }
+      db.auditLog('suppliers', req.params.id, 'UPDATE', old, { name, purchasing_user_ids }, req.user.id, req.ip);
+    });
+    upd();
+    const row = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(req.params.id);
+    attachSupplierPurchasingAssignees([row]);
+    res.json(row);
   } catch (e) {
     if (e.message.includes('UNIQUE')) return res.status(400).json({ error: 'รหัสผู้ผลิตซ้ำ' });
     res.status(500).json({ error: e.message });
   }
 });
 
-router.patch('/suppliers/:id/toggle', ...adminOnly, (req, res) => {
+router.patch('/suppliers/:id/toggle', ...purchasingOrAdmin, (req, res) => {
   const row = db.prepare('SELECT is_active FROM suppliers WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'ไม่พบข้อมูล' });
   db.prepare('UPDATE suppliers SET is_active = ? WHERE id = ?').run(row.is_active ? 0 : 1, req.params.id);

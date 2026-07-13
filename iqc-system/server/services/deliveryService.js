@@ -3,6 +3,7 @@
 // (edit + delete ยังอยู่ใน route — notification/file-heavy)
 const db = require('../db/database');
 const { getUsersByRole, getReceivingQCStaff, createNotification, sendTelegram } = require('../lib/notify');
+const { resolveNotifyTargetIds } = require('../lib/purchasingScope');
 
 // Purchasing สร้างแผนส่ง (pending) + items + notify (off-hours/holiday) + audit → คืน scheduleId
 function createSchedule({ supplier_id, scheduled_date, time_slot, notes, items, has_sample, actorId, actorIp }) {
@@ -37,7 +38,7 @@ function createSchedule({ supplier_id, scheduled_date, time_slot, notes, items, 
       const offMsg   = `${supplier?.name} นัดส่งวันที่ ${scheduled_date} เวลา ${time_slot} — ${offLabel}`;
       for (const u of getUsersByRole('qc_supervisor')) createNotification(u.id, 'แจ้งนัดส่งนอกเวลาทำงาน', offMsg, `/delivery`);
       for (const u of getUsersByRole('qc_manager'))   createNotification(u.id, 'แจ้งนัดส่งนอกเวลาทำงาน', offMsg, `/delivery`);
-      for (const u of getUsersByRole('purchasing'))   createNotification(u.id, 'แจ้งนัดส่งนอกเวลาทำงาน', offMsg, `/delivery`);
+      for (const uid of resolveNotifyTargetIds(supplier_id)) createNotification(uid, 'แจ้งนัดส่งนอกเวลาทำงาน', offMsg, `/delivery`);
       sendTelegram(db.getSetting('telegram_group_qc'),
         `[IQC] แจ้งเตือน: นัดส่งสินค้านอกเวลาทำงาน\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date} เวลา: ${time_slot} (${offLabel})`
       );
@@ -59,7 +60,7 @@ function createSchedule({ supplier_id, scheduled_date, time_slot, notes, items, 
       for (const u of getReceivingQCStaff())      createNotification(u.id, `แจ้งนัดส่งวันหยุด`, weekendMsg, `/delivery`);
       for (const u of getUsersByRole('qc_supervisor')) createNotification(u.id, `แจ้งนัดส่งวันหยุด`, weekendMsg, `/delivery`);
       for (const u of getUsersByRole('qc_manager'))   createNotification(u.id, `แจ้งนัดส่งวันหยุด`, weekendMsg, `/delivery`);
-      for (const u of getUsersByRole('purchasing'))   createNotification(u.id, `แจ้งนัดส่งวันหยุด`, weekendMsg, `/delivery`);
+      for (const uid of resolveNotifyTargetIds(supplier_id)) createNotification(uid, `แจ้งนัดส่งวันหยุด`, weekendMsg, `/delivery`);
       sendTelegram(db.getSetting('telegram_group_qc'),
         `[IQC] แจ้งเตือน: นัดส่งสินค้า${dayName}\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date} เวลา: ${time_slot}`
       );
@@ -91,10 +92,9 @@ function createUnplanned({ supplier_id, scheduled_date, time_slot, notes, items,
       }
     }
 
-    const purchasings = getUsersByRole('purchasing');
     const supplier = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(supplier_id);
-    for (const u of purchasings) {
-      createNotification(u.id, 'สินค้าส่งนอกแผน', `มีสินค้าส่งนอกแผนจาก ${supplier?.name} — กรุณาตรวจสอบ`, `/delivery`);
+    for (const uid of resolveNotifyTargetIds(supplier_id)) {
+      createNotification(uid, 'สินค้าส่งนอกแผน', `มีสินค้าส่งนอกแผนจาก ${supplier?.name} — กรุณาตรวจสอบ`, `/delivery`);
     }
 
     sendTelegram(db.getSetting('telegram_group_purchasing'),
@@ -112,9 +112,8 @@ function acknowledgeSchedule({ schedule, actorId, actorName, actorIp }) {
   const ack = db.transaction(() => {
     db.prepare(`UPDATE delivery_schedules SET status='acknowledged', acknowledged_at=CURRENT_TIMESTAMP, acknowledged_by=? WHERE id = ?`).run(actorId, schedule.id);
 
-    const purchasings = getUsersByRole('purchasing');
-    for (const u of purchasings) {
-      createNotification(u.id, 'QC รับทราบ Delivery', `${actorName} รับทราบกำหนดส่งวันที่ ${schedule.scheduled_date}`, `/delivery`);
+    for (const uid of resolveNotifyTargetIds(schedule.supplier_id)) {
+      createNotification(uid, 'QC รับทราบ Delivery', `${actorName} รับทราบกำหนดส่งวันที่ ${schedule.scheduled_date}`, `/delivery`);
     }
     db.auditLog('delivery_schedules', schedule.id, 'ACKNOWLEDGE', null, { acknowledged_by: actorId }, actorId, actorIp);
   });
@@ -142,8 +141,11 @@ function updateStatus({ schedule, status, late_reason, rescheduled_date, actual_
       if (isHoliday) {
         let dayName = dow === 0 ? 'วันอาทิตย์' : dow === 6 ? 'วันเสาร์' : `วันหยุดบริษัท (${companyHoliday.name})`;
         const holidayMsg = `${supplier?.name} เลื่อนวันส่งเป็น${dayName} ${rescheduled_date}`;
-        for (const u of [...getReceivingQCStaff(), ...getUsersByRole('qc_supervisor'), ...getUsersByRole('qc_manager'), ...getUsersByRole('purchasing')]) {
+        for (const u of [...getReceivingQCStaff(), ...getUsersByRole('qc_supervisor'), ...getUsersByRole('qc_manager')]) {
           createNotification(u.id, `แจ้งเลื่อนวันส่ง (วันหยุด)`, holidayMsg, `/delivery`);
+        }
+        for (const uid of resolveNotifyTargetIds(schedule.supplier_id)) {
+          createNotification(uid, `แจ้งเลื่อนวันส่ง (วันหยุด)`, holidayMsg, `/delivery`);
         }
         sendTelegram(db.getSetting('telegram_group_qc'),
           `[IQC] แจ้งเตือน: เลื่อนวันส่งสินค้าเป็นวันหยุด\nSupplier: ${supplier?.name}\nวันที่ใหม่: ${rescheduled_date} (${dayName})\nเหตุผล: ${late_reason}`);
@@ -191,8 +193,11 @@ function updateSchedule({ schedule, scheduled_date, time_slot, notes, actorId, a
       if (isHoliday) {
         let dayName = dow === 0 ? 'วันอาทิตย์' : dow === 6 ? 'วันเสาร์' : `วันหยุดบริษัท (${companyHoliday.name})`;
         const holidayMsg = `${supplier?.name} แก้ไขวันส่งเป็น${dayName} ${newDate} เวลา ${newTime}`;
-        for (const u of [...getReceivingQCStaff(), ...getUsersByRole('qc_supervisor'), ...getUsersByRole('qc_manager'), ...getUsersByRole('purchasing')]) {
+        for (const u of [...getReceivingQCStaff(), ...getUsersByRole('qc_supervisor'), ...getUsersByRole('qc_manager')]) {
           createNotification(u.id, `แจ้งแก้ไขวันส่ง (วันหยุด)`, holidayMsg, `/delivery`);
+        }
+        for (const uid of resolveNotifyTargetIds(schedule.supplier_id)) {
+          createNotification(uid, `แจ้งแก้ไขวันส่ง (วันหยุด)`, holidayMsg, `/delivery`);
         }
         sendTelegram(db.getSetting('telegram_group_qc'),
           `[IQC] แจ้งเตือน: แก้ไขวันส่งสินค้าเป็นวันหยุด\nSupplier: ${supplier?.name}\nวันที่ใหม่: ${newDate} (${dayName}) เวลา: ${newTime}`);

@@ -7,7 +7,21 @@ const auth = require('../middleware/auth');
 const requireRole = require('../middleware/requireRole');
 const uploads = require('../middleware/upload');
 const { getUsersByRole, getReceivingQCStaff, createNotification, sendTelegram } = require('../lib/notify');
+const { canPurchasingActOnSupplier, purchasingVisibilitySQL } = require('../lib/purchasingScope');
 const ncrService = require('../services/ncrService');
+
+function getBillSupplierId(billId) {
+  const row = db.prepare('SELECT supplier_id FROM bills WHERE id = ?').get(billId);
+  return row ? row.supplier_id : null;
+}
+
+// role='purchasing' เท่านั้นที่ถูกจำกัด (purchasing_manager/role อื่นผ่านเสมอ — ตรวจ role อื่นด้วย middleware/guard ของตัวเองอยู่แล้ว)
+function blockIfNotAssignedPurchasing(req, res, billId) {
+  if (req.user.role !== 'purchasing') return false;
+  if (canPurchasingActOnSupplier(req.user.id, getBillSupplierId(billId))) return false;
+  res.status(403).json({ error: 'ไม่มีสิทธิ์ดำเนินการ — NCR ของ Supplier นี้มีผู้ดูแลจัดซื้อคนอื่นรับผิดชอบอยู่' });
+  return true;
+}
 
 // qc_staff ที่เป็น actor ใน NCR (สร้าง/ลบ/re-inspect/upload) ต้องเป็นสถานี incoming
 router.use((req, res, next) => {
@@ -32,6 +46,8 @@ router.get('/', auth, (req, res) => {
   if (from) { where += ' AND DATE(n.created_at) >= ?'; params.push(from); }
   if (to) { where += ' AND DATE(n.created_at) <= ?'; params.push(to); }
   if (search) { where += ' AND (n.ncr_code LIKE ? OR n.po_no LIKE ? OR n.invoice_no LIKE ?)'; params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
+  // จัดซื้อ (purchasing) เห็นเฉพาะ NCR ของ Supplier ที่ไม่มีผู้ดูแล หรือตัวเองเป็นผู้ดูแล — purchasing_manager เห็นหมด
+  if (req.user.role === 'purchasing') { where += ' AND ' + purchasingVisibilitySQL('b.supplier_id'); params.push(req.user.id); }
 
   const rows = db.prepare(`
     SELECT n.*, s.name as supplier_name, u.full_name as created_by_name,
@@ -137,6 +153,7 @@ router.get('/:id', auth, (req, res) => {
     WHERE n.id = ?
   `).get(req.params.id);
   if (!ncr) return res.status(404).json({ error: 'ไม่พบ NCR' });
+  if (blockIfNotAssignedPurchasing(req, res, ncr.bill_id)) return;
 
   ncr.items = db.prepare(`
     SELECT ni.*, dc.name as defect_category_name
@@ -332,9 +349,10 @@ router.post('/:id/re-inspect', auth, requireRole(['qc_staff', 'qc_supervisor']),
 });
 
 // ===== POST /api/ncr/:id/request-uai =====
-router.post('/:id/request-uai', auth, requireRole(['purchasing']), (req, res) => {
+router.post('/:id/request-uai', auth, requireRole(['purchasing', 'purchasing_manager']), (req, res) => {
   const ncr = db.prepare('SELECT * FROM ncrs WHERE id = ?').get(req.params.id);
   if (!ncr) return res.status(404).json({ error: 'ไม่พบ NCR' });
+  if (blockIfNotAssignedPurchasing(req, res, ncr.bill_id)) return;
   if (ncr.status !== 'pending_supplier') return res.status(400).json({ error: 'สามารถขอ UAI ได้เฉพาะ NCR สถานะ pending_supplier' });
 
   const {
@@ -365,9 +383,10 @@ router.post('/:id/request-uai', auth, requireRole(['purchasing']), (req, res) =>
 });
 
 // ===== PATCH /api/ncr/:id/purchasing-review — Purchasing แปล EN + ยืนยันส่ง Supplier =====
-router.patch('/:id/purchasing-review', auth, requireRole(['purchasing']), (req, res) => {
+router.patch('/:id/purchasing-review', auth, requireRole(['purchasing', 'purchasing_manager']), (req, res) => {
   const ncr = db.prepare('SELECT * FROM ncrs WHERE id = ?').get(req.params.id);
   if (!ncr) return res.status(404).json({ error: 'ไม่พบ NCR' });
+  if (blockIfNotAssignedPurchasing(req, res, ncr.bill_id)) return;
   if (ncr.status !== 'pending_purchasing_review') {
     return res.status(400).json({ error: 'NCR ไม่ได้อยู่ในสถานะรอจัดซื้อ Review' });
   }
@@ -386,9 +405,10 @@ router.patch('/:id/purchasing-review', auth, requireRole(['purchasing']), (req, 
 });
 
 // ===== POST /api/ncr/:id/regenerate-token — Purchasing รีเจเนอเรต token =====
-router.post('/:id/regenerate-token', auth, requireRole(['purchasing']), (req, res) => {
+router.post('/:id/regenerate-token', auth, requireRole(['purchasing', 'purchasing_manager']), (req, res) => {
   const ncr = db.prepare('SELECT * FROM ncrs WHERE id = ?').get(req.params.id);
   if (!ncr) return res.status(404).json({ error: 'ไม่พบ NCR' });
+  if (blockIfNotAssignedPurchasing(req, res, ncr.bill_id)) return;
   if (ncr.status !== 'pending_supplier') return res.status(400).json({ error: 'Regenerate ได้เฉพาะ NCR สถานะ pending_supplier' });
 
   const token = db.generateSecureToken();
@@ -420,9 +440,10 @@ router.post('/:id/reject-supplier-response', auth, requireRole(['qc_manager']), 
 });
 
 // ===== POST /api/ncr/:id/resubmit-to-supplier — Purchasing ส่ง Supplier ตอบใหม่ =====
-router.post('/:id/resubmit-to-supplier', auth, requireRole(['purchasing']), (req, res) => {
+router.post('/:id/resubmit-to-supplier', auth, requireRole(['purchasing', 'purchasing_manager']), (req, res) => {
   const ncr = db.prepare('SELECT * FROM ncrs WHERE id = ?').get(req.params.id);
   if (!ncr) return res.status(404).json({ error: 'ไม่พบ NCR' });
+  if (blockIfNotAssignedPurchasing(req, res, ncr.bill_id)) return;
   if (ncr.status !== 'pending_supplier_resubmit') return res.status(400).json({ error: 'ส่งใหม่ได้เฉพาะ NCR สถานะ pending_supplier_resubmit' });
 
   try {
@@ -434,9 +455,10 @@ router.post('/:id/resubmit-to-supplier', auth, requireRole(['purchasing']), (req
 });
 
 // ===== POST /api/ncr/:id/purchasing-acknowledge — Purchasing รับทราบเอกสาร NCR =====
-router.post('/:id/purchasing-acknowledge', auth, requireRole(['purchasing']), (req, res) => {
+router.post('/:id/purchasing-acknowledge', auth, requireRole(['purchasing', 'purchasing_manager']), (req, res) => {
   const ncr = db.prepare('SELECT * FROM ncrs WHERE id = ?').get(req.params.id);
   if (!ncr) return res.status(404).json({ error: 'ไม่พบ NCR' });
+  if (blockIfNotAssignedPurchasing(req, res, ncr.bill_id)) return;
   if (ncr.status !== 'pending_supplier') return res.status(400).json({ error: 'รับทราบได้เฉพาะ NCR สถานะ pending_supplier' });
   if (ncr.purchasing_received_at) return res.status(400).json({ error: 'รับทราบแล้ว' });
 
@@ -450,9 +472,10 @@ router.post('/:id/purchasing-acknowledge', auth, requireRole(['purchasing']), (r
 });
 
 // ===== POST /api/ncr/:id/record-link-copy — บันทึกการ Copy Link ให้ Supplier =====
-router.post('/:id/record-link-copy', auth, requireRole(['purchasing']), (req, res) => {
-  const ncr = db.prepare('SELECT id, status FROM ncrs WHERE id = ?').get(req.params.id);
+router.post('/:id/record-link-copy', auth, requireRole(['purchasing', 'purchasing_manager']), (req, res) => {
+  const ncr = db.prepare('SELECT id, status, bill_id FROM ncrs WHERE id = ?').get(req.params.id);
   if (!ncr) return res.status(404).json({ error: 'ไม่พบ NCR' });
+  if (blockIfNotAssignedPurchasing(req, res, ncr.bill_id)) return;
   if (!['pending_purchasing_review', 'pending_supplier', 'uai_pending_qc_manager'].includes(ncr.status))
     return res.status(400).json({ error: 'ไม่สามารถบันทึก Copy Link ในสถานะนี้' });
 

@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
   full_name TEXT NOT NULL,
   role TEXT NOT NULL CHECK(role IN (
     'admin','qc_staff','qc_supervisor','qc_manager',
-    'qmr','purchasing','cco','cmo','cpo','production_manager','prod_supervisor'
+    'qmr','purchasing','purchasing_manager','cco','cmo','cpo','production_manager','prod_supervisor'
   )),
   is_active INTEGER DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP

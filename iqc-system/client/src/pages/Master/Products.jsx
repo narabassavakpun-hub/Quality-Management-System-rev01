@@ -214,36 +214,14 @@ function Form({ initial = {}, onSave, loading, error, onClose, onDone }) {
           {suppliers.length === 0 ? (
             <p className="text-small text-muted italic">ยังไม่มีข้อมูล Supplier</p>
           ) : (
-            <div className="flex flex-wrap gap-2 mt-1 p-2 border border-border rounded-md bg-bg min-h-[48px]">
-              {suppliers.map(s => {
-                const sid = String(s.id);
-                const selected = form.supplier_ids.includes(sid);
-                return (
-                  <button
-                    key={s.id}
-                    type="button"
-                    onClick={() => {
-                      const ids = form.supplier_ids.includes(sid)
-                        ? form.supplier_ids.filter(id => id !== sid)
-                        : [...form.supplier_ids, sid];
-                      set('supplier_ids', ids);
-                    }}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-small transition-all min-h-[34px] ${
-                      selected
-                        ? 'border-primary bg-primary/10 text-primary font-semibold shadow-sm'
-                        : 'border-border bg-surface text-muted hover:border-accent hover:text-accent'
-                    }`}
-                  >
-                    {selected && (
-                      <svg className="w-3 h-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
-                      </svg>
-                    )}
-                    {s.name}
-                  </button>
-                );
-              })}
-            </div>
+            <SearchableSelect
+              multiple
+              wrap
+              options={suppliers.map(s => ({ value: String(s.id), label: s.name }))}
+              value={form.supplier_ids}
+              onChange={ids => set('supplier_ids', ids)}
+              placeholder="ค้นหา/เลือก Supplier..."
+            />
           )}
           {form.supplier_ids.length === 0 && (
             <p className="text-[12px] text-danger mt-1">กรุณาเลือก Supplier อย่างน้อย 1</p>

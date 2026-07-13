@@ -125,14 +125,14 @@ function AppRoutes() {
           <Route path="holidays" element={<AdminHolidays />} />
           <Route path="audit-logs" element={<AdminAuditLogs />} />
         </Route>
-        <Route path="master" element={<ProtectedRoute roles={['admin']}><MasterLayout /></ProtectedRoute>}>
+        <Route path="master" element={<MasterLayout />}>
           <Route index element={<Navigate to="suppliers" replace />} />
-          <Route path="suppliers" element={<Suppliers />} />
-          <Route path="product-groups" element={<ProductGroups />} />
-          <Route path="products" element={<Products />} />
-          <Route path="units" element={<Units />} />
-          <Route path="defect-categories" element={<DefectCategories />} />
-          <Route path="colors" element={<Colors />} />
+          <Route path="suppliers" element={<ProtectedRoute roles={['admin', 'purchasing', 'purchasing_manager']}><Suppliers /></ProtectedRoute>} />
+          <Route path="product-groups" element={<ProtectedRoute roles={['admin']}><ProductGroups /></ProtectedRoute>} />
+          <Route path="products" element={<ProtectedRoute roles={['admin']}><Products /></ProtectedRoute>} />
+          <Route path="units" element={<ProtectedRoute roles={['admin']}><Units /></ProtectedRoute>} />
+          <Route path="defect-categories" element={<ProtectedRoute roles={['admin']}><DefectCategories /></ProtectedRoute>} />
+          <Route path="colors" element={<ProtectedRoute roles={['admin']}><Colors /></ProtectedRoute>} />
         </Route>
         <Route path="reports" element={<ProtectedRoute roles={['qc_manager','cco','cmo','cpo']}><ReportsLayout /></ProtectedRoute>}>
           <Route index element={<Navigate to="summary" replace />} />

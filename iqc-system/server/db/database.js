@@ -255,6 +255,13 @@ function runMigrations() {
   db.prepare(`INSERT OR IGNORE INTO product_suppliers (product_id, supplier_id)
     SELECT id, supplier_id FROM products WHERE supplier_id IS NOT NULL`).run();
 
+  // supplier_purchasing_assignees: many-to-many junction (supplier can have >1 ผู้ดูแลจัดซื้อ)
+  db.prepare(`CREATE TABLE IF NOT EXISTS supplier_purchasing_assignees (
+    supplier_id INTEGER NOT NULL REFERENCES suppliers(id) ON DELETE CASCADE,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    PRIMARY KEY (supplier_id, user_id)
+  )`).run();
+
   // product_images: image_type (product vs quality_issue)
   safeAddColumn('product_images', 'image_type', "TEXT DEFAULT 'product'");
 
@@ -1276,9 +1283,9 @@ function migrateNcrStatusConstraint() {
 // จึงต้อง recreate ตาราง (ตาม pattern migrateNcrStatusConstraint) — idempotent, gate ด้วย includes('prod_supervisor')
 function migrateUsersRoleConstraint() {
   const info = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").get();
-  if (!info || info.sql.includes('prod_supervisor')) return; // already up-to-date
+  if (!info || info.sql.includes('purchasing_manager')) return; // already up-to-date
 
-  console.log('[Migration] Updating users.role CHECK constraint (add prod_supervisor)...');
+  console.log('[Migration] Updating users.role CHECK constraint (add purchasing_manager)...');
 
   // Query columns BEFORE the transaction (PRAGMA ภายใน transaction อาจไม่เห็นตารางที่ rename)
   const oldColSet = new Set(db.prepare('PRAGMA table_info(users)').all().map(c => c.name));
@@ -1302,7 +1309,7 @@ function migrateUsersRoleConstraint() {
           full_name TEXT NOT NULL,
           role TEXT NOT NULL CHECK(role IN (
             'admin','qc_staff','qc_supervisor','qc_manager',
-            'qmr','purchasing','cco','cmo','cpo','production_manager','prod_supervisor'
+            'qmr','purchasing','purchasing_manager','cco','cmo','cpo','production_manager','prod_supervisor'
           )),
           is_active INTEGER DEFAULT 1,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1315,7 +1322,7 @@ function migrateUsersRoleConstraint() {
       db.prepare(`INSERT INTO users (${shared}) SELECT ${shared} FROM users_old`).run();
       db.prepare('DROP TABLE users_old').run();
     })();
-    console.log('[Migration] users.role constraint updated — prod_supervisor added');
+    console.log('[Migration] users.role constraint updated — purchasing_manager added');
   } catch (e) {
     console.error('[Migration] users role migration failed:', e.message);
     try {

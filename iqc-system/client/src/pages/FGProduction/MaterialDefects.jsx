@@ -56,7 +56,51 @@ export default function MaterialDefects() {
         </div>
       </div>
 
-      <div className="card overflow-hidden p-0">
+      {/* ── Mobile cards ── */}
+      <div className="md:hidden space-y-2">
+        {isLoading && <p className="text-center text-muted py-4 text-body">กำลังโหลด...</p>}
+        {!isLoading && rows.length === 0 && <p className="text-center text-muted py-8 text-body">ไม่พบข้อมูล</p>}
+        {rows.map(row => (
+          <div key={row.id} className={`bg-surface border border-border rounded-lg p-3 space-y-2 ${row.status === 'pending' ? 'border-l-4 border-l-warning' : ''}`}>
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="font-semibold text-body text-text truncate">{row.defect_type_noted || row.product_name || '—'}</div>
+                {row.product_name && row.defect_type_noted && <div className="text-muted text-[12px] truncate">{row.product_name}</div>}
+              </div>
+              {row.status === 'pending'
+                ? <span className="badge flex-shrink-0 bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-200">รอรับทราบ</span>
+                : <span className="badge flex-shrink-0 bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-200">รับทราบแล้ว</span>
+              }
+            </div>
+            {row.fncp_id && (
+              <div className="text-[12px]">
+                FNCP: <Link to={`/fg-production/fncp/${row.fncp_id}`} className="font-mono text-accent hover:underline">{row.fncp_no || `#${row.fncp_id}`}</Link>
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[12px] text-muted">
+              <div>Lot: <span className="font-mono text-text">{row.lot_number || '—'}</span></div>
+              <div>ผู้ผลิต: <span className="text-text">{row.supplier_name || '—'}</span></div>
+              <div>จำนวน: <span className="font-semibold text-danger">{row.qty_found ? row.qty_found.toLocaleString() : '—'}</span></div>
+              <div>วันที่: <span className="text-text">{toThaiTime(row.created_at)}</span></div>
+            </div>
+            <div className="pt-2 border-t border-border">
+              {row.status === 'pending' ? (
+                <button
+                  onClick={() => { setAckModal(row); setAckForm({ remarks: '' }); setAckErr(''); }}
+                  className="w-full min-h-[44px] rounded-lg bg-primary text-white font-medium hover:opacity-90"
+                >
+                  รับทราบ
+                </button>
+              ) : row.acknowledge_at && (
+                <p className="text-[12px] text-muted text-center">รับทราบเมื่อ {toThaiTime(row.acknowledge_at)}</p>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Desktop table ── */}
+      <div className="hidden md:block card overflow-hidden p-0">
         <div className="overflow-x-auto">
           <table className="table">
             <thead>
@@ -114,19 +158,20 @@ export default function MaterialDefects() {
             </tbody>
           </table>
         </div>
-        {pages > 1 && (
-          <div className="flex justify-center gap-1 p-3 border-t border-border">
-            <button className="btn-page" disabled={page === 1} onClick={() => setPage(p => p - 1)}>‹</button>
-            {Array.from({ length: Math.min(pages, 5) }, (_, i) => {
-              const pg = page <= 3 ? i + 1 : page >= pages - 2 ? pages - 4 + i : page - 2 + i;
-              return pg >= 1 && pg <= pages ? (
-                <button key={pg} className={`btn-page ${pg === page ? 'active' : ''}`} onClick={() => setPage(pg)}>{pg}</button>
-              ) : null;
-            })}
-            <button className="btn-page" disabled={page === pages} onClick={() => setPage(p => p + 1)}>›</button>
-          </div>
-        )}
       </div>
+
+      {pages > 1 && (
+        <div className="card flex justify-center gap-1 p-3 mt-2">
+          <button className="btn-page" disabled={page === 1} onClick={() => setPage(p => p - 1)}>‹</button>
+          {Array.from({ length: Math.min(pages, 5) }, (_, i) => {
+            const pg = page <= 3 ? i + 1 : page >= pages - 2 ? pages - 4 + i : page - 2 + i;
+            return pg >= 1 && pg <= pages ? (
+              <button key={pg} className={`btn-page ${pg === page ? 'active' : ''}`} onClick={() => setPage(pg)}>{pg}</button>
+            ) : null;
+          })}
+          <button className="btn-page" disabled={page === pages} onClick={() => setPage(p => p + 1)}>›</button>
+        </div>
+      )}
 
       {/* Acknowledge Modal */}
       {ackModal && (

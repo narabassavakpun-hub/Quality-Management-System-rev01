@@ -1,0 +1,38 @@
+// ===== Supplier-scoped purchasing permissions =====
+// จำกัดสิทธิ์ role='purchasing' ให้เห็น/ดำเนินการเฉพาะ NCR/UAI/Delivery ของ supplier ที่ตัวเองถูกตั้งเป็น
+// "ผู้ดูแลจัดซื้อ" (supplier_purchasing_assignees, ตั้งค่าที่ Master > ผู้ผลิต) — ถ้า supplier ไม่มีใครถูกตั้งไว้เลย
+// เปิดให้จัดซื้อทุกคนเห็น/ทำได้เหมือนเดิม (fallback) — role='purchasing_manager'/'admin' ไม่ถูกจำกัด เห็น/ทำได้ทุกอย่าง
+const db = require('../db/database');
+const { getUsersByRole } = require('./notify');
+
+function getSupplierAssigneeIds(supplierId) {
+  if (!supplierId) return [];
+  return db.prepare('SELECT user_id FROM supplier_purchasing_assignees WHERE supplier_id = ?').all(supplierId).map(r => r.user_id);
+}
+
+// user id ที่ควรได้รับแจ้งเตือน (in-app + Telegram ส่วนตัวอัตโนมัติผ่าน createNotification) สำหรับ supplier นี้
+// — มีผู้ดูแล แจ้งเฉพาะผู้ดูแล, ไม่มีผู้ดูแล fallback แจ้งจัดซื้อทุกคนเหมือนพฤติกรรมเดิมก่อนมีฟีเจอร์นี้
+function resolveNotifyTargetIds(supplierId) {
+  const assignees = getSupplierAssigneeIds(supplierId);
+  if (assignees.length) return assignees;
+  return getUsersByRole('purchasing').map(u => u.id);
+}
+
+// จัดซื้อ (role='purchasing') ทำ action กับเอกสารของ supplier นี้ได้ไหม — เรียกเฉพาะตอน req.user.role==='purchasing'
+// เท่านั้น (purchasing_manager/admin ไม่ต้องเช็ค ผ่านเสมอ, role อื่นมี guard ของตัวเองอยู่แล้วไม่เกี่ยวกับฟังก์ชันนี้)
+function canPurchasingActOnSupplier(userId, supplierId) {
+  const assignees = getSupplierAssigneeIds(supplierId);
+  return assignees.length === 0 || assignees.includes(userId);
+}
+
+// SQL fragment ต่อท้าย WHERE เพื่อกรอง list ให้ purchasing เห็นเฉพาะ supplier ที่ไม่มีผู้ดูแล หรือตัวเองเป็นผู้ดูแล
+// — ใช้ `supplierIdExpr` เป็น column/expression ของ supplier_id ในคิวรีนั้น (เช่น 'b.supplier_id')
+// ต้อง push userId เข้า params ต่อจาก param อื่นๆ ตามตำแหน่ง `?` ที่ปรากฏ (มี 1 ตัวใน fragment นี้)
+function purchasingVisibilitySQL(supplierIdExpr) {
+  return `(
+    NOT EXISTS (SELECT 1 FROM supplier_purchasing_assignees spa WHERE spa.supplier_id = ${supplierIdExpr})
+    OR EXISTS (SELECT 1 FROM supplier_purchasing_assignees spa WHERE spa.supplier_id = ${supplierIdExpr} AND spa.user_id = ?)
+  )`;
+}
+
+module.exports = { getSupplierAssigneeIds, resolveNotifyTargetIds, canPurchasingActOnSupplier, purchasingVisibilitySQL };

@@ -11,14 +11,21 @@ import { useSortable } from '../../hooks/useSortable';
 import ExcelImportModal from '../../components/UI/ExcelImportModal';
 import Pagination from '../../components/UI/Pagination';
 
-function SupplierForm({ initial = {}, onSave, loading }) {
-  const [form, setForm] = useState({ code: '', name: '', email: '', phone: '', notes: '', ...initial });
+function SupplierForm({ initial = {}, onSave, loading, purchasingUsers = [] }) {
+  const [form, setForm] = useState({
+    code: '', name: '', email: '', phone: '', notes: '',
+    ...initial,
+    purchasing_user_ids: (initial.purchasing_user_ids || []).map(String),
+  });
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
   function handleSubmit(e) {
     e.preventDefault();
     onSave(form);
   }
+
+  const allPurchasingIds = purchasingUsers.map(u => String(u.id));
+  const allSelected = allPurchasingIds.length > 0 && allPurchasingIds.every(id => form.purchasing_user_ids.includes(id));
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
@@ -43,6 +50,57 @@ function SupplierForm({ initial = {}, onSave, loading }) {
       <div>
         <label className="label">หมายเหตุ</label>
         <textarea className="input" rows={2} value={form.notes} onChange={e => set('notes', e.target.value)} />
+      </div>
+      <div>
+        <div className="flex items-center justify-between">
+          <label className="label mb-0">
+            ผู้ดูแลจัดซื้อ
+            <span className="ml-1 text-[12px] text-muted font-normal">(เลือกได้มากกว่า 1)</span>
+          </label>
+          {purchasingUsers.length > 0 && (
+            <button
+              type="button"
+              onClick={() => set('purchasing_user_ids', allSelected ? [] : allPurchasingIds)}
+              className="text-[12px] text-accent hover:underline"
+            >
+              {allSelected ? 'ยกเลิกจัดซื้อทั้งหมด' : 'เลือกจัดซื้อทั้งหมด'}
+            </button>
+          )}
+        </div>
+        {purchasingUsers.length === 0 ? (
+          <p className="text-small text-muted italic mt-1">ยังไม่มี user บทบาทจัดซื้อในระบบ</p>
+        ) : (
+          <div className="flex flex-wrap gap-2 mt-1 p-2 border border-border rounded-md bg-bg min-h-[48px]">
+            {purchasingUsers.map(u => {
+              const uid = String(u.id);
+              const selected = form.purchasing_user_ids.includes(uid);
+              return (
+                <button
+                  key={u.id}
+                  type="button"
+                  onClick={() => {
+                    const ids = selected
+                      ? form.purchasing_user_ids.filter(id => id !== uid)
+                      : [...form.purchasing_user_ids, uid];
+                    set('purchasing_user_ids', ids);
+                  }}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-small transition-all min-h-[34px] ${
+                    selected
+                      ? 'border-primary bg-primary/10 text-primary font-semibold shadow-sm'
+                      : 'border-border bg-surface text-muted hover:border-accent hover:text-accent'
+                  }`}
+                >
+                  {selected && (
+                    <svg className="w-3 h-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                    </svg>
+                  )}
+                  {u.full_name}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
       <div className="flex justify-end gap-2 pt-2">
         <Button type="submit" loading={loading}>บันทึก</Button>
@@ -84,10 +142,18 @@ export default function Suppliers() {
   const totalRows = resp.total || 0;
   const totalPages = Math.ceil(totalRows / PAGE_SIZE);
 
+  const { data: purchasingUsers = [] } = useQuery({
+    queryKey: ['master-purchasing-users'],
+    queryFn: () => api.get('/master/purchasing-users').then(r => r.data),
+  });
+
   const save = useMutation({
-    mutationFn: (form) => editing
-      ? api.patch(`/master/suppliers/${editing.id}`, form)
-      : api.post('/master/suppliers', form),
+    mutationFn: (form) => {
+      const payload = { ...form, purchasing_user_ids: (form.purchasing_user_ids || []).map(Number) };
+      return editing
+        ? api.patch(`/master/suppliers/${editing.id}`, payload)
+        : api.post('/master/suppliers', payload);
+    },
     onSuccess: () => { qc.invalidateQueries(['suppliers']); setModalOpen(false); setEditing(null); },
   });
 
@@ -141,6 +207,13 @@ export default function Suppliers() {
                 {r.phone && <span>{r.phone}</span>}
               </div>
             )}
+            {r.purchasing_assignees?.length > 0 && (
+              <div className="flex flex-wrap gap-1 mb-2">
+                {r.purchasing_assignees.map(a => (
+                  <span key={a.user_id} className="badge bg-blue-50 dark:bg-blue-900 text-blue-700 dark:text-blue-200">{a.full_name}</span>
+                ))}
+              </div>
+            )}
             <div className="flex gap-2 pt-2 border-t border-border">
               <button onClick={() => { setEditing(r); setModalOpen(true); }}
                 className="flex-1 min-h-[44px] rounded-lg border border-border text-body text-text flex items-center justify-center hover:bg-bg">
@@ -162,17 +235,27 @@ export default function Suppliers() {
             <SortTh col="name"  sortKey={sortKey} sortDir={sortDir} onSort={onSort}>ชื่อผู้ผลิต</SortTh>
             <SortTh col="email" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>อีเมล</SortTh>
             <SortTh col="phone" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>เบอร์โทร</SortTh>
+            <th>ผู้ดูแลจัดซื้อ</th>
             <SortTh col="is_active" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>สถานะ</SortTh>
             <th>Action</th>
           </tr></thead>
           <tbody>
-            {isLoading && <tr><td colSpan={6} className="text-center py-4 text-muted">กำลังโหลด...</td></tr>}
+            {isLoading && <tr><td colSpan={7} className="text-center py-4 text-muted">กำลังโหลด...</td></tr>}
             {sorted.map(r => (
               <tr key={r.id} className="cursor-default">
                 <td className="font-mono">{r.code || '-'}</td>
                 <td className={r.is_active ? '' : 'text-muted'}>{r.name} {!r.is_active && <span className="badge bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-200 ml-1">ปิดใช้งาน</span>}</td>
                 <td>{r.email || '-'}</td>
                 <td>{r.phone || '-'}</td>
+                <td>
+                  {r.purchasing_assignees?.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {r.purchasing_assignees.map(a => (
+                        <span key={a.user_id} className="badge bg-blue-50 dark:bg-blue-900 text-blue-700 dark:text-blue-200">{a.full_name}</span>
+                      ))}
+                    </div>
+                  ) : '-'}
+                </td>
                 <td><span className={`badge ${r.is_active ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-200' : 'bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-200'}`}>{r.is_active ? 'ใช้งาน' : 'ปิดใช้งาน'}</span></td>
                 <td>
                   <div className="flex gap-2 items-center justify-center">
@@ -183,7 +266,7 @@ export default function Suppliers() {
               </tr>
             ))}
             {!isLoading && rows.length === 0 && (
-              <tr><td colSpan={6} className="text-center text-muted py-8">ไม่พบข้อมูล</td></tr>
+              <tr><td colSpan={7} className="text-center text-muted py-8">ไม่พบข้อมูล</td></tr>
             )}
           </tbody>
         </table>
@@ -192,7 +275,7 @@ export default function Suppliers() {
 
       <Modal open={modalOpen} onClose={() => { setModalOpen(false); setEditing(null); }} title={editing ? 'แก้ไขผู้ผลิต' : 'เพิ่มผู้ผลิต'}>
         {save.error && <div className="text-danger text-small mb-2">{save.error.response?.data?.error}</div>}
-        <SupplierForm initial={editing || {}} onSave={f => save.mutate(f)} loading={save.isPending} />
+        <SupplierForm initial={editing || {}} onSave={f => save.mutate(f)} loading={save.isPending} purchasingUsers={purchasingUsers} />
       </Modal>
 
       <ConfirmDialog

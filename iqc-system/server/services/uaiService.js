@@ -2,6 +2,15 @@
 // business transaction ของ UAI (review + sign) + status sequence/role map (single source)
 const db = require('../db/database');
 const { getUsersByRole, createNotification, sendTelegram } = require('../lib/notify');
+const { resolveNotifyTargetIds } = require('../lib/purchasingScope');
+
+// user id ที่ควรแจ้งเตือนแทน "จัดซื้อทุกคน" — เฉพาะผู้ดูแลจัดซื้อของ Supplier เจ้าของ NCR ที่ UAI นี้อ้างอิงอยู่
+function purchasingTargetsForNcr(ncrId) {
+  const row = db.prepare(`
+    SELECT b.supplier_id FROM ncrs n LEFT JOIN bills b ON b.id = n.bill_id WHERE n.id = ?
+  `).get(ncrId);
+  return resolveNotifyTargetIds(row ? row.supplier_id : null);
+}
 
 const UAI_STATUS_SEQUENCE = [
   'uai_pending_qc_manager',
@@ -36,8 +45,8 @@ function reviewUai({ uai, actorId, actorIp, isApproved, reviewComment }) {
       db.prepare("UPDATE ncrs SET status='pending_supplier', uai_close_remark=NULL WHERE id=?").run(uai.ncr_id);
       db.prepare('INSERT INTO uai_signatures (uai_id, role, user_id, signature_image, action, comment) VALUES (?, ?, ?, ?, ?, ?)')
         .run(uai.id, 'qc_manager', actorId, '', 'review_rejected', reviewComment);
-      for (const u of getUsersByRole('purchasing')) {
-        createNotification(u.id, 'UAI ไม่อนุมัติ', `${uai.uai_code} ถูกปฏิเสธ${reviewComment ? ': ' + reviewComment : ''}`, `/uai/${uai.id}`);
+      for (const uid of purchasingTargetsForNcr(uai.ncr_id)) {
+        createNotification(uid, 'UAI ไม่อนุมัติ', `${uai.uai_code} ถูกปฏิเสธ${reviewComment ? ': ' + reviewComment : ''}`, `/uai/${uai.id}`);
       }
       sendTelegram(db.getSetting('telegram_group_purchasing'), `[IQC] ${uai.uai_code} — QC Manager ไม่อนุมัติ UAI${reviewComment ? '\nเหตุผล: ' + reviewComment : ''}`);
       db.auditLog('uai_documents', uai.id, 'REJECT', { status: uai.status }, { status: 'uai_rejected' }, actorId, actorIp);
@@ -48,8 +57,8 @@ function reviewUai({ uai, actorId, actorIp, isApproved, reviewComment }) {
     db.prepare('INSERT INTO uai_signatures (uai_id, role, user_id, signature_image, action, comment) VALUES (?, ?, ?, ?, ?, ?)')
       .run(uai.id, 'qc_manager', actorId, '', 'review_approved', reviewComment);
 
-    for (const u of getUsersByRole('purchasing')) {
-      createNotification(u.id, 'UAI อนุมัติ รอลงนาม', `${uai.uai_code} ผ่านการตรวจสอบแล้ว รอจัดซื้อลงนาม`, `/uai/${uai.id}`);
+    for (const uid of purchasingTargetsForNcr(uai.ncr_id)) {
+      createNotification(uid, 'UAI อนุมัติ รอลงนาม', `${uai.uai_code} ผ่านการตรวจสอบแล้ว รอจัดซื้อลงนาม`, `/uai/${uai.id}`);
     }
     sendTelegram(db.getSetting('telegram_group_purchasing'), `[IQC] ${uai.uai_code} — QC Manager อนุมัติ\nรอจัดซื้อลงนาม UAI`);
     db.auditLog('uai_documents', uai.id, 'APPROVE', { status: uai.status }, { status: 'uai_pending_purchasing' }, actorId, actorIp);
@@ -94,8 +103,11 @@ function signUai({ uai, actorId, actorRole, actorIp, sigFile, action, comment })
         .run(closeRemark, uai.ncr_id);
       db.auditLog('ncrs', uai.ncr_id, 'CLOSE', { status: 'pending_uai' }, { status: 'closed', uai_close_remark: closeRemark }, actorId, actorIp);
 
-      for (const u of getUsersByRole('purchasing', 'qc_manager', 'qmr')) {
+      for (const u of getUsersByRole('qc_manager', 'qmr')) {
         createNotification(u.id, 'UAI เสร็จสมบูรณ์ — NCR ปิดแล้ว', `${uai.uai_code} ปิดครบทุกขั้นตอน — NCR ${ncr?.ncr_code} ปิดแล้ว`, `/uai/${uai.id}`);
+      }
+      for (const uid of purchasingTargetsForNcr(uai.ncr_id)) {
+        createNotification(uid, 'UAI เสร็จสมบูรณ์ — NCR ปิดแล้ว', `${uai.uai_code} ปิดครบทุกขั้นตอน — NCR ${ncr?.ncr_code} ปิดแล้ว`, `/uai/${uai.id}`);
       }
       sendTelegram(db.getSetting('telegram_group_qc'), `[IQC] ${uai.uai_code} — UAI เสร็จสมบูรณ์\nNCR ${ncr?.ncr_code} ปิดแล้ว (ยอมรับใช้พิเศษ)`);
       sendTelegram(db.getSetting('telegram_group_purchasing'), `[IQC] ${uai.uai_code} — UAI เสร็จสมบูรณ์\nNCR ${ncr?.ncr_code} ปิดแล้ว (ยอมรับใช้พิเศษ)`);
@@ -122,8 +134,11 @@ function rejectExec({ uai, reason, actorId, actorRole, actorIp }) {
     db.prepare("UPDATE ncrs SET status='pending_supplier', uai_close_remark=NULL WHERE id=?").run(uai.ncr_id);
 
     const msg = `${uai.uai_code} — ${rejectorLabel} ไม่อนุมัติ\nNCR ${ncr?.ncr_code} กลับสู่สถานะรอผู้ผลิตตอบ\nเหตุผล: ${reason}`;
-    for (const u of getUsersByRole('purchasing', 'qc_manager', 'qmr')) {
+    for (const u of getUsersByRole('qc_manager', 'qmr')) {
       createNotification(u.id, `UAI ไม่อนุมัติโดย ${rejectorLabel}`, `${uai.uai_code} — ${reason}`, `/uai/${uai.id}`);
+    }
+    for (const uid of purchasingTargetsForNcr(uai.ncr_id)) {
+      createNotification(uid, `UAI ไม่อนุมัติโดย ${rejectorLabel}`, `${uai.uai_code} — ${reason}`, `/uai/${uai.id}`);
     }
     sendTelegram(db.getSetting('telegram_group_qc'), `[IQC] ${msg}`);
     sendTelegram(db.getSetting('telegram_group_purchasing'), `[IQC] ${msg}`);

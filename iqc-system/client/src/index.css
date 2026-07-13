@@ -111,7 +111,7 @@
     @apply inline-flex items-center px-2 py-0.5 rounded-full text-small font-medium;
   }
   .page-header {
-    @apply flex items-center justify-between mb-6;
+    @apply flex flex-wrap items-center justify-between gap-2 mb-6;
   }
   .page-title {
     @apply text-h2 font-bold text-primary;

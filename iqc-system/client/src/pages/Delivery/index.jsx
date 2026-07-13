@@ -1016,9 +1016,9 @@ export default function DeliveryCalendar() {
   }
 
   return (
-    <div className="p-3 sm:p-4 md:p-6 max-w-6xl mx-auto">
+    <div className="p-3 sm:p-4 md:p-6 max-w-6xl mx-auto lg:h-full lg:flex lg:flex-col lg:overflow-hidden">
       {/* Page header */}
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3 lg:flex-shrink-0">
         <h1 className="text-[18px] sm:text-h2 font-bold text-primary">ปฏิทินแผนส่งของ</h1>
         <div className="flex gap-2">
           {canUnplanned && (
@@ -1037,7 +1037,7 @@ export default function DeliveryCalendar() {
       </div>
 
       {/* View toggle + month nav */}
-      <div className="card mb-2 px-3 py-1.5 sm:p-3 space-y-1 sm:space-y-2">
+      <div className="card mb-2 px-3 py-1.5 sm:p-3 space-y-1 sm:space-y-2 lg:flex-shrink-0">
         {/* ── Mobile: 2 แถว ── */}
         {/* แถว 1: ← ชื่อเดือนเต็ม → */}
         <div className="flex items-center sm:hidden">
@@ -1135,9 +1135,9 @@ export default function DeliveryCalendar() {
 
       {/* ─── Monthly View ─── */}
       {viewMode === 'month' && (
-        <div className="card overflow-hidden">
+        <div className="card overflow-hidden lg:flex-1 lg:flex lg:flex-col lg:min-h-0">
           {/* Day headers */}
-          <div className="grid grid-cols-7 border-b border-border">
+          <div className="grid grid-cols-7 border-b border-border lg:flex-shrink-0">
             {DAYS_TH.map((d, i) => (
               <div key={d} className={`py-1.5 text-center text-[12px] sm:text-small font-semibold ${i===0?'text-red-500 dark:text-red-200':i===6?'text-blue-500 dark:text-blue-200':'text-muted'}`}>{d}</div>
             ))}
@@ -1146,9 +1146,9 @@ export default function DeliveryCalendar() {
           {isLoading ? (
             <div className="py-16 text-center text-muted">กำลังโหลด...</div>
           ) : (
-            <div className="grid grid-cols-7">
+            <div className="grid grid-cols-7 lg:flex-1 lg:auto-rows-fr lg:overflow-hidden">
               {cells.map((day, idx) => {
-                if (!day) return <div key={`e-${idx}`} className="border-b border-r border-border bg-bg min-h-[52px] sm:min-h-[100px]" />;
+                if (!day) return <div key={`e-${idx}`} className="border-b border-r border-border bg-bg min-h-[52px] sm:min-h-[100px] lg:min-h-0" />;
                 const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
                 const entries = byDate[dateStr] || [];
                 const isToday = dateStr === today;
@@ -1160,7 +1160,7 @@ export default function DeliveryCalendar() {
                 const holidayLabel = isSunday ? 'วันอาทิตย์' : (holidays.find(h => h.holiday_date === dateStr)?.name || '');
                 return (
                   <div key={dateStr}
-                    className={`border-b border-r border-border min-h-[52px] sm:min-h-[100px] p-1 cursor-pointer transition-colors
+                    className={`border-b border-r border-border min-h-[52px] sm:min-h-[100px] lg:min-h-0 p-1 cursor-pointer transition-colors overflow-hidden
                       ${isToday ? 'bg-blue-50 dark:bg-blue-900' : isHoliday ? 'bg-red-50 dark:bg-red-900' : 'hover:bg-blue-50'} ${isSelected ? 'ring-1 ring-inset ring-accent' : ''}`}
                     onClick={() => openDay(dateStr)}>
                     <div className="flex items-start justify-between mb-0.5">
@@ -1210,9 +1210,9 @@ export default function DeliveryCalendar() {
 
       {/* ─── Daily View ─── */}
       {viewMode === 'day' && (
-        <div className="space-y-3">
+        <div className="space-y-3 lg:flex-1 lg:flex lg:flex-col lg:min-h-0">
           {/* Date selector row */}
-          <div className="card p-3 flex items-center gap-2 flex-wrap">
+          <div className="card p-3 flex items-center gap-2 flex-wrap lg:flex-shrink-0">
             <button onClick={() => setViewMode('month')} className="flex items-center gap-1 text-accent text-small hover:underline min-h-[44px] sm:hidden pr-2">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7"/></svg>
               ปฏิทิน
@@ -1230,9 +1230,9 @@ export default function DeliveryCalendar() {
           </div>
 
           {daySchedules.length === 0 ? (
-            <div className="card py-10 text-center text-muted">ไม่มีแผนส่งของในวันนี้</div>
+            <div className="card py-10 text-center text-muted lg:flex-1">ไม่มีแผนส่งของในวันนี้</div>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-2 lg:flex-1 lg:overflow-y-auto lg:min-h-0">
               {daySchedules.map(s => {
                 const past = isPastDelivery(s.scheduled_date, s.time_slot);
                 return (

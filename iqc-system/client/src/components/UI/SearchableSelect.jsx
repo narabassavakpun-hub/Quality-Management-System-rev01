@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 
-export default function SearchableSelect({ options = [], value, onChange, placeholder = 'ค้นหา...', required, disabled, wrap = false, className = '' }) {
+export default function SearchableSelect({ options = [], value, onChange, placeholder = 'ค้นหา...', required, disabled, wrap = false, className = '', multiple = false }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [dropPos, setDropPos] = useState({ top: 0, bottom: undefined, left: 0, width: 0, flip: false });
@@ -11,7 +11,10 @@ export default function SearchableSelect({ options = [], value, onChange, placeh
 
   const DROPDOWN_MAX_H = 280; // estimated: search bar ~50px + list max-h-52 ~208px + padding
 
-  const selected = options.find(o => String(o.value) === String(value));
+  const selectedValues = multiple ? (Array.isArray(value) ? value.map(String) : []) : [];
+  const selected = multiple ? null : options.find(o => String(o.value) === String(value));
+  const selectedMulti = multiple ? options.filter(o => selectedValues.includes(String(o.value))) : [];
+  const hasSelection = multiple ? selectedMulti.length > 0 : !!selected;
   const filtered = query
     ? options.filter(o => o.label.toLowerCase().includes(query.toLowerCase()))
     : options;
@@ -64,6 +67,13 @@ export default function SearchableSelect({ options = [], value, onChange, placeh
   }
 
   function select(opt) {
+    if (multiple) {
+      const v = String(opt.value);
+      onChange(selectedValues.includes(v) ? selectedValues.filter(x => x !== v) : [...selectedValues, v]);
+      setQuery('');
+      inputRef.current?.focus();
+      return; // เลือกได้หลายรายการติดกัน — ไม่ปิด dropdown
+    }
     onChange(opt.value);
     setOpen(false);
     setQuery('');
@@ -71,7 +81,7 @@ export default function SearchableSelect({ options = [], value, onChange, placeh
 
   function clear(e) {
     e.stopPropagation();
-    onChange('');
+    onChange(multiple ? [] : '');
     setOpen(false);
     setQuery('');
   }
@@ -102,16 +112,28 @@ export default function SearchableSelect({ options = [], value, onChange, placeh
         {filtered.length === 0 && (
           <div className="px-3 py-3 text-small text-muted text-center">ไม่พบรายการ</div>
         )}
-        {filtered.map(opt => (
-          <button
-            key={opt.value}
-            type="button"
-            onClick={() => select(opt)}
-            className={`w-full text-left px-3 py-2 text-body hover:bg-bg min-h-[44px] flex items-center ${String(opt.value) === String(value) ? 'bg-blue-50 dark:bg-blue-900 text-accent font-medium' : 'text-text'}`}
-          >
-            {opt.label}
-          </button>
-        ))}
+        {filtered.map(opt => {
+          const isSelected = multiple ? selectedValues.includes(String(opt.value)) : String(opt.value) === String(value);
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => select(opt)}
+              className={`w-full text-left px-3 py-2 text-body hover:bg-bg min-h-[44px] flex items-center gap-2 ${isSelected ? 'bg-blue-50 dark:bg-blue-900 text-accent font-medium' : 'text-text'}`}
+            >
+              {multiple && (
+                <span className={`w-4 h-4 flex-shrink-0 rounded border flex items-center justify-center ${isSelected ? 'bg-primary border-primary' : 'border-border'}`}>
+                  {isSelected && (
+                    <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                    </svg>
+                  )}
+                </span>
+              )}
+              {opt.label}
+            </button>
+          );
+        })}
       </div>
     </div>,
     document.body
@@ -123,7 +145,7 @@ export default function SearchableSelect({ options = [], value, onChange, placeh
         <input
           tabIndex={-1}
           required
-          value={value ?? ''}
+          value={hasSelection ? 'x' : ''}
           onChange={() => {}}
           className="absolute inset-0 opacity-0 pointer-events-none w-full"
           aria-hidden="true"
@@ -135,11 +157,13 @@ export default function SearchableSelect({ options = [], value, onChange, placeh
         onClick={openDropdown}
         className={`input text-left flex ${wrap ? 'items-start' : 'items-center'} justify-between w-full gap-2 ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
       >
-        <span className={selected ? `text-text min-w-0 ${wrap ? 'break-words' : 'truncate'}` : 'text-muted truncate'}>
-          {selected ? selected.label : placeholder}
+        <span className={hasSelection ? `text-text min-w-0 ${wrap ? 'break-words' : 'truncate'}` : 'text-muted truncate'}>
+          {multiple
+            ? (selectedMulti.length ? selectedMulti.map(s => s.label).join(', ') : placeholder)
+            : (selected ? selected.label : placeholder)}
         </span>
         <div className="flex items-center gap-1 flex-shrink-0">
-          {selected && !disabled && (
+          {hasSelection && !disabled && (
             <span
               onClick={clear}
               className="w-4 h-4 text-muted hover:text-danger flex items-center justify-center rounded-full hover:bg-red-50 cursor-pointer"

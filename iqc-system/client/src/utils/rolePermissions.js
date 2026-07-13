@@ -1,7 +1,7 @@
 // qc_staff ที่ไม่ใช่สถานี incoming (QC รับเข้า) เห็นเฉพาะเมนูที่ไม่มี condition หรือ condition ผ่าน
 const onlyReceivingQC = (user) => user.role !== 'qc_staff' || user.qc_station === 'incoming';
 
-const ALL_QC_ROLES = ['admin','qc_staff','qc_supervisor','qc_manager','qmr','purchasing','cco','cmo','cpo','production_manager','prod_supervisor'];
+const ALL_QC_ROLES = ['admin','qc_staff','qc_supervisor','qc_manager','qmr','purchasing','purchasing_manager','cco','cmo','cpo','production_manager','prod_supervisor'];
 const PROD_QC_ROLES = ['admin','qc_staff','qc_supervisor','qc_manager','cpo','production_manager','prod_supervisor'];
 
 // ป้าย role ภาษาไทย — จุดรวมเดียว (แก้ CLAUDE.md §12/AUDIT.md Q5 drift ที่เคยกระจายซ้ำใน Admin/Users.jsx + UAI/Detail.jsx)
@@ -12,6 +12,7 @@ export const ROLE_LABELS = {
   qc_manager: 'QC Manager',
   qmr: 'QMR',
   purchasing: 'จัดซื้อ',
+  purchasing_manager: 'ผู้จัดการจัดซื้อ',
   cco: 'CCO',
   cmo: 'CMO',
   cpo: 'CPO',
@@ -34,9 +35,9 @@ export const NAV_ITEMS = [
     condition: onlyReceivingQC,
     children: [
       { path: '/bills',    label: 'บิลรับเข้า',    icon: 'receipt',  roles: ['admin','qc_staff','qc_supervisor','qc_manager'], condition: onlyReceivingQC },
-      { path: '/ncr',     label: 'NCR/NCP',        icon: 'alert',    roles: ['admin','qc_staff','qc_supervisor','qc_manager','qmr','purchasing','cco','cmo','cpo','production_manager'], condition: onlyReceivingQC },
-      { path: '/uai',     label: 'UAI',            icon: 'document', roles: ['admin','qc_manager','qmr','purchasing','cco','cmo','cpo','production_manager'] },
-      { path: '/delivery', label: 'ปฏิทินส่งของ', icon: 'calendar', roles: ['admin','qc_staff','qc_supervisor','qc_manager','purchasing'], condition: onlyReceivingQC },
+      { path: '/ncr',     label: 'NCR/NCP',        icon: 'alert',    roles: ['admin','qc_staff','qc_supervisor','qc_manager','qmr','purchasing','purchasing_manager','cco','cmo','cpo','production_manager'], condition: onlyReceivingQC },
+      { path: '/uai',     label: 'UAI',            icon: 'document', roles: ['admin','qc_manager','qmr','purchasing','purchasing_manager','cco','cmo','cpo','production_manager'] },
+      { path: '/delivery', label: 'ปฏิทินส่งของ', icon: 'calendar', roles: ['admin','qc_staff','qc_supervisor','qc_manager','purchasing','purchasing_manager'], condition: onlyReceivingQC },
       { path: '/fg-production/material-defects', label: 'ของเสียวัตถุดิบ', icon: 'alert', roles: ['admin','qc_staff','qc_supervisor','qc_manager'], condition: onlyReceivingQC },
     ],
   },
@@ -76,14 +77,16 @@ export const NAV_ITEMS = [
     ],
   },
   {
-    path: '/master', label: 'Master List', icon: 'settings', roles: ['admin'],
+    // group roles กว้างพอให้จัดซื้อเข้าเมนูนี้ได้ (จัดการเฉพาะผู้ผลิต) — child แต่ละตัวจำกัดสิทธิ์ละเอียดกว่าอีกชั้น
+    // เหมือน pattern ของกลุ่ม /iqc ด้านบน (bills roles แคบกว่า group roles)
+    path: '/master', label: 'Master List', icon: 'settings', roles: ['admin', 'purchasing', 'purchasing_manager'],
     children: [
       { path: '/master/suppliers', label: 'ผู้ผลิต', icon: 'building' },
-      { path: '/master/products', label: 'สินค้า', icon: 'box' },
-      { path: '/master/product-groups', label: 'กลุ่มสินค้า', icon: 'folder' },
-      { path: '/master/defect-categories', label: 'กลุ่มปัญหา', icon: 'tag' },
-      { path: '/master/units', label: 'หน่วยนับ', icon: 'ruler' },
-      { path: '/master/colors', label: 'สีสินค้า', icon: 'palette' },
+      { path: '/master/products', label: 'สินค้า', icon: 'box', roles: ['admin'] },
+      { path: '/master/product-groups', label: 'กลุ่มสินค้า', icon: 'folder', roles: ['admin'] },
+      { path: '/master/defect-categories', label: 'กลุ่มปัญหา', icon: 'tag', roles: ['admin'] },
+      { path: '/master/units', label: 'หน่วยนับ', icon: 'ruler', roles: ['admin'] },
+      { path: '/master/colors', label: 'สีสินค้า', icon: 'palette', roles: ['admin'] },
     ],
   },
 ];
