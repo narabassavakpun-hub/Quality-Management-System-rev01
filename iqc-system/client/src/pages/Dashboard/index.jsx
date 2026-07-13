@@ -19,6 +19,9 @@ export default function Dashboard() {
     qc_manager: <ManagerDash navigate={navigate} />,
     qmr: <QMRDash navigate={navigate} />,
     purchasing: <PurchasingDash navigate={navigate} />,
+    // purchasing_manager ใช้ dashboard เดียวกันไปก่อน (backend เห็นทุก supplier อยู่แล้วเพราะไม่ถูก scope) —
+    // Team Summary/Members/Member Detail เฉพาะ manager จะมาแทนที่ใน phase ถัดไป
+    purchasing_manager: <PurchasingDash navigate={navigate} />,
     cco: <ExecutiveDash navigate={navigate} />,
     cmo: <ExecutiveDash navigate={navigate} />,
     cpo: <ExecutiveDash navigate={navigate} />,
