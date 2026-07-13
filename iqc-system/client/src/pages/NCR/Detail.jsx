@@ -592,9 +592,7 @@ export default function NCRDetail() {
                   <option value="">-- เลือก Disposition --</option>
                   <option value="return">ส่งคืน Supplier (Return)</option>
                   <option value="rework">แก้ไข (Rework)</option>
-                  <option value="uai">ยอมรับใช้พิเศษ (UAI)</option>
                   <option value="scrap">ทำลาย (Scrap)</option>
-                  <option value="re_inspect">ตรวจซ้ำ (Re-inspect)</option>
                 </select>
               </div>
               <div>
