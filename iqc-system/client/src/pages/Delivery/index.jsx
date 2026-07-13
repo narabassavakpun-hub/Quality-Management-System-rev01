@@ -992,10 +992,11 @@ export default function DeliveryCalendar() {
     return schedules.filter(s => s.status === status && !s.is_unplanned).length;
   }
   const SUMMARY_BADGES = [
+    // รอดำเนินการ: เอาออกจากหน้าจัดซื้อ (แสดงเฉพาะ role อื่น เช่น QC รับเข้า) ตามที่ user ระบุ
+    { status: 'pending',      full: 'รอดำเนินการ',     short: 'รอ',         cls: 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200', hideFor: ['purchasing'] },
     { status: '_all_waiting', full: 'แผนรอส่งทั้งหมด', short: 'รอส่งทั้งหมด', cls: 'bg-indigo-100 dark:bg-indigo-900 text-indigo-800 dark:text-indigo-200' },
-    { status: 'pending',      full: 'รอดำเนินการ',     short: 'รอ',         cls: 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200' },
-    { status: 'on_time',      full: 'ส่งตรงเวลา',      short: 'ตรงเวลา',    cls: 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' },
-    { status: 'late',         full: 'ส่งไม่ตรงแผน',    short: 'ส่งไม่ตรงแผน', cls: 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200' },
+    { status: 'on_time',      full: 'ส่งตามแผน',       short: 'ตามแผน',     cls: 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' },
+    { status: 'late',         full: 'ส่งนอกแผน',       short: 'ส่งนอกแผน', cls: 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200' },
     { status: '_unplanned',   full: 'นอกแผน',          short: 'นอกแผน',     cls: 'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200' },
     { status: '_completed',   full: 'ส่งเสร็จสิ้น',    short: 'เสร็จสิ้น',  cls: 'bg-teal-100 dark:bg-teal-900 text-teal-800 dark:text-teal-200' },
   ];
@@ -1111,7 +1112,7 @@ export default function DeliveryCalendar() {
             <button onClick={goToday} className="px-3 py-1.5 text-small border border-border rounded hover:bg-bg min-h-[44px]">วันนี้</button>
           </div>
           <div className="flex gap-2 flex-wrap ml-auto">
-            {SUMMARY_BADGES.map(b => {
+            {SUMMARY_BADGES.filter(b => !b.hideFor?.includes(role)).map(b => {
               const count = summaryBadgeCount(b.status);
               if (!count) return null;
               return (
@@ -1125,7 +1126,7 @@ export default function DeliveryCalendar() {
 
         {/* Summary badges บน mobile */}
         <div className="flex gap-1.5 flex-wrap sm:hidden">
-          {SUMMARY_BADGES.map(b => {
+          {SUMMARY_BADGES.filter(b => !b.hideFor?.includes(role)).map(b => {
             const count = summaryBadgeCount(b.status);
             if (!count) return null;
             return (
