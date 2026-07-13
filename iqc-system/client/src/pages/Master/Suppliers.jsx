@@ -10,6 +10,7 @@ import EditButton from '../../components/UI/EditButton';
 import { useSortable } from '../../hooks/useSortable';
 import ExcelImportModal from '../../components/UI/ExcelImportModal';
 import Pagination from '../../components/UI/Pagination';
+import { useAuth } from '../../contexts/AuthContext';
 
 function SupplierForm({ initial = {}, onSave, loading, purchasingUsers = [] }) {
   const [form, setForm] = useState({
@@ -112,6 +113,7 @@ function SupplierForm({ initial = {}, onSave, loading, purchasingUsers = [] }) {
 const PAGE_SIZE = 20;
 
 export default function Suppliers() {
+  const { user } = useAuth();
   const qc = useQueryClient();
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -121,12 +123,17 @@ export default function Suppliers() {
   const [confirmToggle, setConfirmToggle] = useState(null);
   const [showAll, setShowAll] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  // Master List filter สำหรับจัดซื้อ (ไม่ใช่ admin/purchasing_manager) — กรองเฉพาะเจ้าที่ตัวเองดูแล หรือเจ้าที่ยัง
+  // ไม่มีใคร @ เลย — admin/purchasing_manager เห็นทั้งหมดเหมือนเดิม (ไม่แสดง filter นี้ให้)
+  const isPlainPurchasing = user?.role === 'purchasing';
+  const [assignFilter, setAssignFilter] = useState('all'); // all | mine | unassigned
+  const isAdmin = user?.role === 'admin';
 
   useEffect(() => {
     const t = setTimeout(() => { setDebouncedSearch(search); setPage(1); }, 300);
     return () => clearTimeout(t);
   }, [search]);
-  useEffect(() => { setPage(1); }, [showAll]);
+  useEffect(() => { setPage(1); }, [showAll, assignFilter]);
 
   async function handleExport() {
     try {
@@ -135,8 +142,15 @@ export default function Suppliers() {
   }
 
   const { data: resp = {}, isLoading } = useQuery({
-    queryKey: ['suppliers', showAll, page, debouncedSearch],
-    queryFn: () => api.get('/master/suppliers', { params: { page, limit: PAGE_SIZE, q: debouncedSearch, ...(showAll ? { all: '1' } : {}) } }).then(r => r.data),
+    queryKey: ['suppliers', showAll, page, debouncedSearch, isPlainPurchasing ? assignFilter : 'all'],
+    queryFn: () => api.get('/master/suppliers', {
+      params: {
+        page, limit: PAGE_SIZE, q: debouncedSearch,
+        ...(showAll ? { all: '1' } : {}),
+        ...(isPlainPurchasing && assignFilter === 'mine' ? { assigned_to: user.id } : {}),
+        ...(isPlainPurchasing && assignFilter === 'unassigned' ? { unassigned: '1' } : {}),
+      },
+    }).then(r => r.data),
   });
   const rows = resp.data || [];
   const totalRows = resp.total || 0;
@@ -168,20 +182,33 @@ export default function Suppliers() {
     <div>
       <h1 className="text-h2 font-bold text-text mb-4">ผู้ผลิต</h1>
       <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
-        <input className="input max-w-xs" placeholder="ค้นหา..." value={search} onChange={e => setSearch(e.target.value)} />
+        <div className="flex gap-2 flex-wrap items-center">
+          <input className="input max-w-xs" placeholder="ค้นหา..." value={search} onChange={e => setSearch(e.target.value)} />
+          {isPlainPurchasing && (
+            <select className="input w-auto" value={assignFilter} onChange={e => setAssignFilter(e.target.value)}>
+              <option value="all">ผู้ผลิตทั้งหมด</option>
+              <option value="mine">ที่ฉันดูแล</option>
+              <option value="unassigned">ยังไม่มีผู้ดูแล</option>
+            </select>
+          )}
+        </div>
         <div className="flex gap-2 flex-wrap items-center">
           <label className="flex items-center gap-2 text-small text-muted cursor-pointer min-h-[44px]">
             <input type="checkbox" checked={showAll} onChange={e => setShowAll(e.target.checked)} />
             แสดงที่ปิดใช้งาน
           </label>
-          <button onClick={handleExport} className="inline-flex items-center gap-1.5 px-3 py-2 border border-border rounded-md text-small text-muted bg-surface hover:bg-bg min-h-[44px] transition-colors">
-            <svg className="w-4 h-4 text-success flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-            Export
-          </button>
-          <button onClick={() => setImportOpen(true)} className="inline-flex items-center gap-1.5 px-3 py-2 border border-border rounded-md text-small text-muted bg-surface hover:bg-bg min-h-[44px] transition-colors">
-            <svg className="w-4 h-4 text-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l4-4m0 0l4 4m-4-4v12" /></svg>
-            Import
-          </button>
+          {isAdmin && (
+            <>
+              <button onClick={handleExport} className="inline-flex items-center gap-1.5 px-3 py-2 border border-border rounded-md text-small text-muted bg-surface hover:bg-bg min-h-[44px] transition-colors">
+                <svg className="w-4 h-4 text-success flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                Export
+              </button>
+              <button onClick={() => setImportOpen(true)} className="inline-flex items-center gap-1.5 px-3 py-2 border border-border rounded-md text-small text-muted bg-surface hover:bg-bg min-h-[44px] transition-colors">
+                <svg className="w-4 h-4 text-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l4-4m0 0l4 4m-4-4v12" /></svg>
+                Import
+              </button>
+            </>
+          )}
           <Button onClick={() => { setEditing(null); setModalOpen(true); }}>+ เพิ่ม</Button>
         </div>
       </div>

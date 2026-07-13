@@ -169,7 +169,7 @@ router.get('/purchasing-users', ...purchasingOrAdmin, (req, res) => {
 });
 
 router.get('/suppliers', auth, (req, res) => {
-  const { all, page, limit: lim, q = '' } = req.query;
+  const { all, page, limit: lim, q = '', assigned_to, unassigned } = req.query;
   const includeInactive = all === '1';
   if (page !== undefined) {
     const pg = Math.max(1, +page || 1);
@@ -178,8 +178,18 @@ router.get('/suppliers', auth, (req, res) => {
     const activeCl = includeInactive ? '' : 'AND is_active = 1';
     const searchCl = q ? "AND (name LIKE ? OR COALESCE(code,'') LIKE ?)" : '';
     const sp = q ? [`%${q}%`, `%${q}%`] : [];
-    const total = db.prepare(`SELECT COUNT(*) as c FROM suppliers WHERE 1=1 ${activeCl} ${searchCl}`).get(...sp);
-    const rows = db.prepare(`SELECT * FROM suppliers WHERE 1=1 ${activeCl} ${searchCl} ORDER BY name LIMIT ? OFFSET ?`).all(...sp, perPage, offset);
+    // Master List Suppliers (Master List filter สำหรับจัดซื้อ) — เจ้าที่ตัวเองดูแล (assigned_to) หรือเจ้าที่ยังไม่มี
+    // ผู้ดูแลเลย (unassigned) — ไม่กระทบ default (ไม่ส่ง param ใดๆ = เห็นทั้งหมดเหมือนเดิม, admin/purchasing_manager)
+    let assignCl = '';
+    const assignParams = [];
+    if (assigned_to) {
+      assignCl = 'AND EXISTS (SELECT 1 FROM supplier_purchasing_assignees spa WHERE spa.supplier_id = suppliers.id AND spa.user_id = ?)';
+      assignParams.push(assigned_to);
+    } else if (unassigned === '1') {
+      assignCl = 'AND NOT EXISTS (SELECT 1 FROM supplier_purchasing_assignees spa WHERE spa.supplier_id = suppliers.id)';
+    }
+    const total = db.prepare(`SELECT COUNT(*) as c FROM suppliers WHERE 1=1 ${activeCl} ${searchCl} ${assignCl}`).get(...sp, ...assignParams);
+    const rows = db.prepare(`SELECT * FROM suppliers WHERE 1=1 ${activeCl} ${searchCl} ${assignCl} ORDER BY name LIMIT ? OFFSET ?`).all(...sp, ...assignParams, perPage, offset);
     attachSupplierPurchasingAssignees(rows);
     return res.json({ data: rows, total: total.c, page: pg, limit: perPage });
   }
