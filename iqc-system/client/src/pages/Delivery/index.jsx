@@ -1096,7 +1096,7 @@ export default function DeliveryCalendar() {
             {[
               { label: 'รอดำเนินการ', status: 'pending',    cls: 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200' },
               { label: 'ส่งตรงเวลา',  status: 'on_time',    cls: 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' },
-              { label: 'ล่าช้า',      status: 'late',       cls: 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200' },
+              { label: 'ส่งไม่ตรงแผน', status: 'late',      cls: 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200' },
               { label: 'นอกแผน',      status: '_unplanned', cls: 'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200' },
             ].map(b => {
               const count = b.status === '_unplanned'
@@ -1117,7 +1117,7 @@ export default function DeliveryCalendar() {
           {[
             { label: 'รอ',      status: 'pending',    cls: 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200' },
             { label: 'ตรงเวลา', status: 'on_time',   cls: 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' },
-            { label: 'ล่าช้า',  status: 'late',      cls: 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200' },
+            { label: 'ส่งไม่ตรงแผน', status: 'late', cls: 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200' },
             { label: 'นอกแผน',  status: '_unplanned',cls: 'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200' },
           ].map(b => {
             const count = b.status === '_unplanned'
