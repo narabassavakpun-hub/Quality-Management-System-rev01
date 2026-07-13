@@ -542,6 +542,7 @@ app.use('/api/ncr', require('./routes/ncr'));
 app.use('/api/supplier', require('./routes/supplier'));
 app.use('/api/uai', require('./routes/uai'));
 app.use('/api/dashboard', require('./routes/dashboard'));
+app.use('/api/purchasing/dashboard', require('./routes/purchasingDashboard'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/reports', require('./routes/reports'));
 app.use('/api/delivery', require('./routes/delivery'));
