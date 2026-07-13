@@ -130,6 +130,9 @@ function runMigrations() {
     db.pragma('foreign_keys = ON');
   }
 
+  // delivery_schedules: QC ที่กด "บันทึก" ปิดสถานะสุดท้าย (on_time/late) — ใช้แสดง "QC ผู้รับ" ใน tag summary/export
+  safeAddColumn('delivery_schedules', 'received_by', 'INTEGER REFERENCES users(id) ON DELETE RESTRICT');
+
   // delivery_schedule_items: urgent flag + make item_name nullable (now uses product dropdown)
   safeAddColumn('delivery_schedule_items', 'is_urgent', 'INTEGER DEFAULT 0');
   const dsiInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='delivery_schedule_items'").get();

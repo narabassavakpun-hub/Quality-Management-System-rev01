@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import api from '../../utils/api';
+import api, { downloadExcel } from '../../utils/api';
 import { useAuth } from '../../contexts/AuthContext';
 import Modal from '../../components/UI/Modal';
 import Button from '../../components/UI/Button';
@@ -948,6 +948,61 @@ function EntryChip({ s, onClick }) {
   );
 }
 
+// ─── Tag Summary Modal (คลิก tag สรุป — ดูรายการ + export Excel) ──────────────
+
+function TagSummaryModal({ label, bucket, rows, from, to, onClose, onOpenDetail }) {
+  const [exporting, setExporting] = useState(false);
+
+  async function handleExport() {
+    setExporting(true);
+    try {
+      await downloadExcel('/delivery/export/excel', { from, to, bucket }, `delivery-${bucket}-${from}-${to}.xlsx`);
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} title={`รายการ: ${label}`} size="lg">
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-muted text-small">{rows.length} รายการ</p>
+          <Button variant="secondary" onClick={handleExport} loading={exporting}>Export Excel</Button>
+        </div>
+        <div className="border border-border rounded-lg overflow-x-auto max-h-[60vh] overflow-y-auto">
+          <table className="w-full text-small">
+            <thead className="bg-bg sticky top-0">
+              <tr>
+                <th className="px-3 py-2 text-left text-muted font-medium whitespace-nowrap">ผู้ผลิต</th>
+                <th className="px-3 py-2 text-left text-muted font-medium whitespace-nowrap">แผนส่ง</th>
+                <th className="px-3 py-2 text-left text-muted font-medium whitespace-nowrap">ส่งจริง</th>
+                <th className="px-3 py-2 text-left text-muted font-medium whitespace-nowrap">QC ผู้รับ</th>
+                <th className="px-3 py-2 text-left text-muted font-medium">หมายเหตุ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr><td colSpan={5} className="px-3 py-6 text-center text-muted">ไม่มีรายการ</td></tr>
+              ) : rows.map(s => (
+                <tr key={s.id} className="border-t border-border hover:bg-bg cursor-pointer" onClick={() => onOpenDetail(s)}>
+                  <td className="px-3 py-2 whitespace-nowrap">{s.supplier_name}</td>
+                  <td className="px-3 py-2 whitespace-nowrap">{s.scheduled_date} {s.time_slot || ''}</td>
+                  <td className="px-3 py-2 whitespace-nowrap">{s.actual_date || '-'}</td>
+                  <td className="px-3 py-2 whitespace-nowrap">{s.received_by_name || '-'}</td>
+                  <td className="px-3 py-2 max-w-[240px] truncate" title={s.notes || s.late_reason || ''}>{s.notes || s.late_reason || '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex justify-end pt-2 border-t border-border">
+          <Button variant="ghost" onClick={onClose}>ปิด</Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function DeliveryCalendar() {
@@ -962,6 +1017,7 @@ export default function DeliveryCalendar() {
   const [createOpen, setCreateOpen] = useState(false);
   const [unplannedOpen, setUnplannedOpen] = useState(false);
   const [selectedSchedule, setSelectedSchedule] = useState(null);
+  const [tagModal, setTagModal] = useState(null); // { status, full } — คลิก summary tag เปิดดูรายการ
 
   // Deep-link จากลิงก์ในกระดิ่งแจ้งเตือน (เช่น "QC รับทราบ Delivery" — /delivery?schedule=123) — เปิด
   // DetailModal ให้อัตโนมัติ แล้วล้าง query param ออกกันเปิดซ้ำตอน re-render/กด back
@@ -986,6 +1042,22 @@ export default function DeliveryCalendar() {
     staleTime: 0,
   });
 
+  // รายปี — โหลดเฉพาะตอนสลับมาดู viewMode 'year' (ทั้งปีอาจมีหลายร้อยรายการ ไม่ต้องโหลดทุกครั้ง)
+  const yearFrom = `${year}-01-01`;
+  const yearTo   = `${year}-12-31`;
+  const { data: yearData, isLoading: yearLoading } = useQuery({
+    queryKey: ['delivery-year', year],
+    queryFn: () => api.get('/delivery', { params: { from: yearFrom, to: yearTo, limit: 3000 } }).then(r => r.data),
+    enabled: viewMode === 'year',
+    staleTime: 0,
+  });
+  const yearSchedules = yearData?.data || [];
+  const yearByDate = yearSchedules.reduce((acc, s) => {
+    if (!acc[s.scheduled_date]) acc[s.scheduled_date] = [];
+    acc[s.scheduled_date].push(s);
+    return acc;
+  }, {});
+
   const { data: suppliers = [] } = useQuery({
     queryKey: ['suppliers'],
     queryFn: () => api.get('/master/suppliers').then(r => r.data),
@@ -1003,13 +1075,15 @@ export default function DeliveryCalendar() {
 
   // Summary tag ด้านบนปฏิทิน — ใช้ config ชุดเดียวกันทั้ง desktop (full label) และ mobile (short label) กัน
   // logic การนับซ้ำกัน 2 ที่ — _all_waiting/_completed เป็น status พิเศษ (ไม่ใช่ค่าจริงใน DB) รวมหลายสถานะเข้าด้วยกัน
-  function summaryBadgeCount(status) {
-    if (status === '_unplanned') return schedules.filter(s => s.is_unplanned).length;
-    if (status === '_all_waiting') return schedules.filter(s => ['pending', 'acknowledged'].includes(s.status) && !s.is_unplanned).length;
+  // bucketMatches ใช้ร่วมกันทั้ง count และ filter รายการตอนคลิก tag เปิด TagSummaryModal (ต้อง logic ตรงกันเป๊ะ)
+  function bucketMatches(s, status) {
+    if (status === '_unplanned') return !!s.is_unplanned;
+    if (status === '_all_waiting') return ['pending', 'acknowledged'].includes(s.status) && !s.is_unplanned;
     // ส่งเสร็จสิ้น = รับเข้าแล้วจริง ไม่ว่าจะตามแผนหรือนอกแผน (นอกแผนบันทึกเป็น on_time เสมอ — CLAUDE.md §20)
-    if (status === '_completed') return schedules.filter(s => ['on_time', 'late'].includes(s.status)).length;
-    return schedules.filter(s => s.status === status && !s.is_unplanned).length;
+    if (status === '_completed') return ['on_time', 'late'].includes(s.status);
+    return s.status === status && !s.is_unplanned;
   }
+  function summaryBadgeCount(status) { return schedules.filter(s => bucketMatches(s, status)).length; }
   const SUMMARY_BADGES = [
     // รอดำเนินการ: เอาออกจากหน้าจัดซื้อ (แสดงเฉพาะ role อื่น เช่น QC รับเข้า) ตามที่ user ระบุ
     { status: 'pending',      full: 'รอดำเนินการ',     short: 'รอ',         cls: 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200', hideFor: ['purchasing'] },
@@ -1038,6 +1112,10 @@ export default function DeliveryCalendar() {
 
   function prevMonth() { setCurrentDate(d => new Date(d.getFullYear(), d.getMonth()-1, 1)); }
   function nextMonth() { setCurrentDate(d => new Date(d.getFullYear(), d.getMonth()+1, 1)); }
+  function prevYear()  { setCurrentDate(d => new Date(d.getFullYear()-1, d.getMonth(), 1)); }
+  function nextYear()  { setCurrentDate(d => new Date(d.getFullYear()+1, d.getMonth(), 1)); }
+  const navPrev = viewMode === 'year' ? prevYear : prevMonth;
+  const navNext = viewMode === 'year' ? nextYear : nextMonth;
   function goToday()   { setCurrentDate(new Date()); setSelectedDate(today); setViewMode('day'); }
 
   function openDay(dateStr) { setSelectedDate(dateStr); setViewMode('day'); }
@@ -1079,19 +1157,23 @@ export default function DeliveryCalendar() {
         {/* ── Mobile: 2 แถว ── */}
         {/* แถว 1: ← ชื่อเดือนเต็ม → */}
         <div className="flex items-center sm:hidden">
-          <button onClick={prevMonth} className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded hover:bg-bg flex-shrink-0">
+          <button onClick={navPrev} className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded hover:bg-bg flex-shrink-0">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7"/></svg>
           </button>
           <span className="flex-1 text-center font-semibold text-[13px] text-primary">
-            {MONTHS_TH[month]} {year + 543}
+            {viewMode === 'year' ? `ปี ${year + 543}` : `${MONTHS_TH[month]} ${year + 543}`}
           </span>
-          <button onClick={nextMonth} className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded hover:bg-bg flex-shrink-0">
+          <button onClick={navNext} className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded hover:bg-bg flex-shrink-0">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/></svg>
           </button>
         </div>
         {/* แถว 2: view toggle + วันนี้ */}
         <div className="flex items-center gap-2 sm:hidden">
           <div className="flex rounded overflow-hidden border border-border flex-1">
+            <button onClick={() => setViewMode('year')}
+              className={`flex-1 py-1 text-[12px] font-medium min-h-[36px] ${viewMode==='year' ? 'bg-primary text-white' : 'bg-surface text-text'}`}>
+              ปี
+            </button>
             <button onClick={() => setViewMode('month')}
               className={`flex-1 py-1 text-[12px] font-medium min-h-[36px] ${viewMode==='month' ? 'bg-primary text-white' : 'bg-surface text-text'}`}>
               เดือน
@@ -1109,6 +1191,10 @@ export default function DeliveryCalendar() {
         {/* ── Desktop: แถวเดียว ── */}
         <div className="hidden sm:flex sm:flex-wrap sm:items-center sm:gap-3">
           <div className="flex rounded-lg overflow-hidden border border-border">
+            <button onClick={() => setViewMode('year')}
+              className={`px-4 py-2 text-small font-medium min-h-[44px] ${viewMode==='year' ? 'bg-primary text-white' : 'bg-surface text-text hover:bg-bg'}`}>
+              รายปี
+            </button>
             <button onClick={() => setViewMode('month')}
               className={`px-4 py-2 text-small font-medium min-h-[44px] ${viewMode==='month' ? 'bg-primary text-white' : 'bg-surface text-text hover:bg-bg'}`}>
               รายเดือน
@@ -1119,13 +1205,13 @@ export default function DeliveryCalendar() {
             </button>
           </div>
           <div className="flex items-center gap-2 ml-2">
-            <button onClick={prevMonth} className="p-2 rounded hover:bg-bg min-h-[44px] min-w-[44px] flex items-center justify-center">
+            <button onClick={navPrev} className="p-2 rounded hover:bg-bg min-h-[44px] min-w-[44px] flex items-center justify-center">
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7"/></svg>
             </button>
             <span className="font-semibold text-body text-primary min-w-[140px] text-center">
-              {MONTHS_TH[month]} {year + 543}
+              {viewMode === 'year' ? `ปี ${year + 543}` : `${MONTHS_TH[month]} ${year + 543}`}
             </span>
-            <button onClick={nextMonth} className="p-2 rounded hover:bg-bg min-h-[44px] min-w-[44px] flex items-center justify-center">
+            <button onClick={navNext} className="p-2 rounded hover:bg-bg min-h-[44px] min-w-[44px] flex items-center justify-center">
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/></svg>
             </button>
             <button onClick={goToday} className="px-3 py-1.5 text-small border border-border rounded hover:bg-bg min-h-[44px]">วันนี้</button>
@@ -1135,9 +1221,10 @@ export default function DeliveryCalendar() {
               const count = summaryBadgeCount(b.status);
               if (!count) return null;
               return (
-                <span key={b.status} className={`px-2 py-0.5 rounded text-[12px] font-medium ${b.cls}`}>
+                <button key={b.status} onClick={() => setTagModal(b)}
+                  className={`px-2 py-0.5 rounded text-[12px] font-medium hover:opacity-80 transition-opacity ${b.cls}`}>
                   {b.full} {count}
-                </span>
+                </button>
               );
             })}
           </div>
@@ -1149,13 +1236,67 @@ export default function DeliveryCalendar() {
             const count = summaryBadgeCount(b.status);
             if (!count) return null;
             return (
-              <span key={b.status} className={`px-2 py-0.5 rounded text-[12px] font-medium ${b.cls}`}>
+              <button key={b.status} onClick={() => setTagModal(b)}
+                className={`px-2 py-0.5 rounded text-[12px] font-medium ${b.cls}`}>
                 {b.short} {count}
-              </span>
+              </button>
             );
           })}
         </div>
       </div>
+
+      {/* ─── Yearly View ─── */}
+      {viewMode === 'year' && (
+        <div className="card p-3 lg:flex-1 lg:overflow-y-auto lg:min-h-0">
+          {yearLoading ? (
+            <div className="py-16 text-center text-muted">กำลังโหลด...</div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+              {Array.from({ length: 12 }, (_, m) => {
+                const mFirstDay = new Date(year, m, 1).getDay();
+                const mDaysInMonth = new Date(year, m + 1, 0).getDate();
+                const mCells = [];
+                for (let i = 0; i < mFirstDay; i++) mCells.push(null);
+                for (let d = 1; d <= mDaysInMonth; d++) mCells.push(d);
+                return (
+                  <div key={m} className="border border-border rounded-lg overflow-hidden">
+                    <button
+                      onClick={() => { setCurrentDate(new Date(year, m, 1)); setViewMode('month'); }}
+                      className="w-full text-center py-1.5 bg-bg font-semibold text-small text-primary hover:bg-blue-50 dark:hover:bg-blue-900">
+                      {MONTHS_TH[m]}
+                    </button>
+                    <div className="grid grid-cols-7 text-center pb-1">
+                      {DAYS_TH.map((d, i) => (
+                        <div key={d} className={`text-[10px] pt-1 ${i === 0 ? 'text-red-400' : i === 6 ? 'text-blue-400' : 'text-muted'}`}>{d[0]}</div>
+                      ))}
+                      {mCells.map((day, idx) => {
+                        if (!day) return <div key={`e-${m}-${idx}`} className="py-1" />;
+                        const dateStr = `${year}-${String(m + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                        const entries = yearByDate[dateStr] || [];
+                        const isToday = dateStr === today;
+                        const dow = (mFirstDay + day - 1) % 7;
+                        const isHoliday = dow === 0 || holidaySet.has(dateStr);
+                        const hasUrgent = entries.some(e => e.items?.some(it => it.is_urgent));
+                        return (
+                          <button key={dateStr} onClick={() => openDay(dateStr)}
+                            className={`relative py-1 text-[11px] hover:bg-blue-50 dark:hover:bg-blue-900 ${isToday ? 'font-bold' : ''}`}>
+                            <span className={`inline-flex items-center justify-center w-4 h-4 rounded-full ${isToday ? 'bg-primary text-white' : isHoliday ? 'text-red-500 dark:text-red-200' : 'text-text'}`}>
+                              {day}
+                            </span>
+                            {entries.length > 0 && (
+                              <span className={`absolute bottom-0 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full ${hasUrgent ? 'bg-red-500' : 'bg-accent'}`} />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ─── Monthly View ─── */}
       {viewMode === 'month' && (
@@ -1317,6 +1458,17 @@ export default function DeliveryCalendar() {
           suppliers={suppliers}
           role={role}
           holidays={holidays}
+        />
+      )}
+      {tagModal && (
+        <TagSummaryModal
+          label={tagModal.full}
+          bucket={tagModal.status}
+          rows={schedules.filter(s => bucketMatches(s, tagModal.status))}
+          from={from}
+          to={to}
+          onClose={() => setTagModal(null)}
+          onOpenDetail={(s) => { setTagModal(null); openDetail(s); }}
         />
       )}
     </div>

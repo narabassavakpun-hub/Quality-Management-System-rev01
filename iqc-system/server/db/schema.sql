@@ -446,6 +446,7 @@ CREATE TABLE IF NOT EXISTS delivery_schedules (
   rescheduled_date DATE,
   acknowledged_at DATETIME,
   acknowledged_by INTEGER REFERENCES users(id) ON DELETE RESTRICT,
+  received_by INTEGER REFERENCES users(id) ON DELETE RESTRICT,
   created_by INTEGER REFERENCES users(id) ON DELETE RESTRICT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP

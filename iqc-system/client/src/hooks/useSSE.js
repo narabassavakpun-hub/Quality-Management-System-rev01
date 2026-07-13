@@ -10,7 +10,10 @@ function keysFromLink(link, { includeNotifications = false } = {}) {
 
   if (!link) return keys;
 
-  const parts = link.split('/');
+  // ตัด query string ออกก่อน (เช่น "/delivery?schedule=123") — ไม่งั้น segment จะกลาย
+  // เป็น "delivery?schedule=123" ทั้งท่อน ไม่ตรงกับ === 'delivery' เลยข้าม invalidate ไปเฉยๆ
+  const [pathOnly] = link.split('?');
+  const parts = pathOnly.split('/');
   const segment = parts[1];
   const id = parts[2];
 

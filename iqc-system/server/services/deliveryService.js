@@ -81,9 +81,9 @@ function createSchedule({ supplier_id, scheduled_date, time_slot, notes, items, 
 function createUnplanned({ supplier_id, scheduled_date, time_slot, notes, items, actorId, actorName, actorIp }) {
   const createTx = db.transaction(() => {
     const result = db.prepare(`
-      INSERT INTO delivery_schedules (supplier_id, scheduled_date, time_slot, notes, is_unplanned, status, created_by)
-      VALUES (?, ?, ?, ?, 1, 'on_time', ?)
-    `).run(supplier_id, scheduled_date, time_slot || 'fullday', notes || null, actorId);
+      INSERT INTO delivery_schedules (supplier_id, scheduled_date, time_slot, notes, is_unplanned, status, created_by, received_by)
+      VALUES (?, ?, ?, ?, 1, 'on_time', ?, ?)
+    `).run(supplier_id, scheduled_date, time_slot || 'fullday', notes || null, actorId, actorId);
 
     const scheduleId = result.lastInsertRowid;
 
@@ -126,12 +126,25 @@ function acknowledgeSchedule({ schedule, actorId, actorName, actorIp }) {
   ack();
 }
 
-// อัปเดตสถานะจริง (on_time/late/cancelled/rescheduled) + notify (reschedule/holiday) + audit
-function updateStatus({ schedule, status, late_reason, rescheduled_date, actual_date, actorId, actorIp }) {
+// อัปเดตสถานะจริง (on_time/late/cancelled/rescheduled) + notify (reschedule/holiday/รับของแล้ว) + audit
+function updateStatus({ schedule, status, late_reason, rescheduled_date, actual_date, actorId, actorName, actorIp }) {
   const upd = db.transaction(() => {
     const newDate = status === 'rescheduled' && rescheduled_date ? rescheduled_date : schedule.scheduled_date;
-    db.prepare(`UPDATE delivery_schedules SET status=?, late_reason=?, rescheduled_date=?, actual_date=?, scheduled_date=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`)
-      .run(status, late_reason || null, rescheduled_date || null, actual_date || null, newDate, schedule.id);
+    // received_by = QC ที่กด "บันทึก" ปิดสถานะสุดท้าย — เก็บเฉพาะตอน on_time/late (ไม่ใช่ cancelled/rescheduled)
+    db.prepare(`UPDATE delivery_schedules SET status=?, late_reason=?, rescheduled_date=?, actual_date=?, scheduled_date=?,
+        received_by=CASE WHEN ? IN ('on_time','late') THEN ? ELSE received_by END, updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .run(status, late_reason || null, rescheduled_date || null, actual_date || null, newDate, status, actorId, schedule.id);
+
+    // แจ้งเตือนจัดซื้อทันทีเมื่อ QC บันทึกผลรับของ (ตามแผน/นอกแผน) — เดิม branch นี้ไม่มีการแจ้งเตือนเลย
+    // ทำให้ทั้งกระดิ่งจัดซื้อไม่เด้ง และปฏิทินจัดซื้อไม่ invalidate (ไม่มี createNotification = ไม่มี SSE broadcast)
+    // ต้อง refresh หน้าเองถึงจะเห็นสถานะใหม่ (บั๊กที่ user รายงาน)
+    if (status === 'on_time' || status === 'late') {
+      const supplier = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(schedule.supplier_id);
+      const doneMsg = `${actorName} บันทึกรับสินค้าจาก ${supplier?.name} วันที่ ${schedule.scheduled_date} เรียบร้อยแล้ว (${status === 'on_time' ? 'ตามแผน' : 'นอกแผน'})`;
+      for (const uid of resolveNotifyTargetIds(schedule.supplier_id)) {
+        createNotification(uid, 'QC รับสินค้าเรียบร้อยแล้ว', doneMsg, `/delivery?schedule=${schedule.id}`);
+      }
+    }
 
     if (status === 'rescheduled') {
       const scheduleLink = `/delivery?schedule=${schedule.id}`;

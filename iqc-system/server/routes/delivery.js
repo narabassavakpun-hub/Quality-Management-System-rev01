@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const ExcelJS = require('exceljs');
 const router = express.Router();
 const db = require('../db/database');
 const auth = require('../middleware/auth');
@@ -35,10 +36,11 @@ router.get('/', auth, (req, res) => {
   // blockIfNotAssignedPurchasing ด้านล่าง ไม่เกี่ยวกัน
 
   const rows = db.prepare(`
-    SELECT ds.*, s.name as supplier_name, u.full_name as created_by_name
+    SELECT ds.*, s.name as supplier_name, u.full_name as created_by_name, ru.full_name as received_by_name
     FROM delivery_schedules ds
     LEFT JOIN suppliers s ON s.id = ds.supplier_id
     LEFT JOIN users u ON u.id = ds.created_by
+    LEFT JOIN users ru ON ru.id = ds.received_by
     WHERE ${where}
     ORDER BY ds.scheduled_date DESC, ds.created_at DESC
     LIMIT ? OFFSET ?
@@ -92,13 +94,84 @@ router.post('/unplanned', auth, requireRole(['qc_staff', 'qc_supervisor']), requ
   }
 });
 
+// ===== GET /api/delivery/export/excel — export รายการตาม tag สรุป (คลิก tag ในปฏิทิน) =====
+// ต้องอยู่ก่อน GET /:id ไม่งั้น express จะจับ 'export' เป็น :id
+const DELIVERY_BUCKET_SQL = {
+  pending:      "ds.status = 'pending' AND ds.is_unplanned = 0",
+  _all_waiting: "ds.status IN ('pending','acknowledged') AND ds.is_unplanned = 0",
+  on_time:      "ds.status = 'on_time' AND ds.is_unplanned = 0",
+  late:         "ds.status = 'late' AND ds.is_unplanned = 0",
+  _unplanned:   'ds.is_unplanned = 1',
+  // ส่งเสร็จสิ้น = รับเข้าแล้วจริง ไม่ว่าจะตามแผนหรือนอกแผน (ตรงกับ summaryBadgeCount ฝั่ง client)
+  _completed:   "ds.status IN ('on_time','late')",
+};
+const DELIVERY_STATUS_LABEL = { pending: 'รอดำเนินการ', acknowledged: 'QC รับทราบแล้ว', on_time: 'ส่งตามแผน', late: 'ส่งนอกแผน', cancelled: 'ยกเลิก', rescheduled: 'เลื่อนวันส่ง' };
+
+router.get('/export/excel', auth, async (req, res) => {
+  try {
+    const { from, to, bucket } = req.query;
+    let where = '1=1';
+    const params = [];
+    if (from) { where += ' AND ds.scheduled_date >= ?'; params.push(from); }
+    if (to)   { where += ' AND ds.scheduled_date <= ?'; params.push(to); }
+    if (bucket && DELIVERY_BUCKET_SQL[bucket]) where += ' AND ' + DELIVERY_BUCKET_SQL[bucket];
+
+    const rows = db.prepare(`
+      SELECT ds.scheduled_date, ds.time_slot, ds.status, ds.is_unplanned, ds.actual_date, ds.notes, ds.late_reason,
+             s.name as supplier_name, ru.full_name as received_by_name
+      FROM delivery_schedules ds
+      LEFT JOIN suppliers s ON s.id = ds.supplier_id
+      LEFT JOIN users ru ON ru.id = ds.received_by
+      WHERE ${where}
+      ORDER BY ds.scheduled_date DESC, ds.time_slot ASC
+    `).all(...params);
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('สรุปแผนส่งของ');
+    ws.columns = [
+      { header: 'ผู้ผลิต', key: 'supplier_name', width: 28 },
+      { header: 'แผนส่งวันที่', key: 'scheduled_date', width: 14 },
+      { header: 'เวลา', key: 'time_slot', width: 10 },
+      { header: 'สถานะ', key: 'status_label', width: 16 },
+      { header: 'ไม่ได้แจ้งล่วงหน้า', key: 'unplanned_label', width: 16 },
+      { header: 'ส่งจริงวันที่', key: 'actual_date', width: 14 },
+      { header: 'QC ผู้รับ', key: 'received_by_name', width: 18 },
+      { header: 'หมายเหตุ', key: 'notes', width: 30 },
+      { header: 'เหตุผล', key: 'late_reason', width: 30 },
+    ];
+    ws.getRow(1).eachCell(cell => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1A3A5C' } };
+      cell.font = { color: { argb: 'FFFFFFFF' }, bold: true };
+    });
+    rows.forEach(r => ws.addRow({
+      supplier_name: r.supplier_name || '-',
+      scheduled_date: r.scheduled_date,
+      time_slot: r.time_slot || '-',
+      status_label: DELIVERY_STATUS_LABEL[r.status] || r.status,
+      unplanned_label: r.is_unplanned ? 'ใช่' : '',
+      actual_date: r.actual_date || '-',
+      received_by_name: r.received_by_name || '-',
+      notes: r.notes || '',
+      late_reason: r.late_reason || '',
+    }));
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="delivery-${bucket || 'all'}-${from || 'all'}-${to || 'all'}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (e) {
+    if (!res.headersSent) res.status(500).json({ error: 'Export ไม่สำเร็จ: ' + e.message });
+  }
+});
+
 // ===== GET /api/delivery/:id =====
 router.get('/:id', auth, (req, res) => {
   const row = db.prepare(`
-    SELECT ds.*, s.name as supplier_name, u.full_name as created_by_name
+    SELECT ds.*, s.name as supplier_name, u.full_name as created_by_name, ru.full_name as received_by_name
     FROM delivery_schedules ds
     LEFT JOIN suppliers s ON s.id = ds.supplier_id
     LEFT JOIN users u ON u.id = ds.created_by
+    LEFT JOIN users ru ON ru.id = ds.received_by
     WHERE ds.id = ?
   `).get(req.params.id);
   if (!row) return res.status(404).json({ error: 'ไม่พบข้อมูล' });
@@ -181,7 +254,7 @@ router.patch('/:id/status', auth, requireRole(['purchasing', 'purchasing_manager
     return res.status(400).json({ error: 'ไม่สามารถอัปเดตสถานะนี้ได้' });
   }
 
-  deliveryService.updateStatus({ schedule, status, late_reason, rescheduled_date, actual_date, actorId: req.user.id, actorIp: req.ip });
+  deliveryService.updateStatus({ schedule, status, late_reason, rescheduled_date, actual_date, actorId: req.user.id, actorName: req.user.full_name, actorIp: req.ip });
   res.json(db.prepare('SELECT * FROM delivery_schedules WHERE id = ?').get(req.params.id));
 });
 
