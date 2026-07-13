@@ -1,14 +1,19 @@
 import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import SummaryCard from '../../components/UI/SummaryCard';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import SortTh from '../../components/UI/SortTh';
 import Pagination from '../../components/UI/Pagination';
 import Badge from '../../components/UI/Badge';
+import HeroStat, { HeroIcons } from '../../components/UI/HeroStat';
 import api from '../../utils/api';
+import { useAuth } from '../../contexts/AuthContext';
+import DeliveryCalendar from '../Delivery/index';
 
 // Req 2 — Purchasing Dashboard: สรุป + ผู้ผลิตของฉัน (เดียวกับ "Supplier Health", คอลัมน์เหมือนกันทุกตัวตาม
-// requirement เดิม จึงใช้ query/ตารางเดียวกัน ไม่แยกซ้ำ) + NCR/NCP ของฉัน — ข้อมูลจาก /api/purchasing/dashboard/*
-// (scope ตาม supplier_purchasing_assignees อัตโนมัติฝั่ง server, purchasing_manager/admin เห็นทั้งหมด)
+// requirement เดิม จึงใช้ query/ตารางเดียวกัน ไม่แยกซ้ำ) + NCR/NCP ของฉัน + ปฏิทินส่งของ (embed DeliveryCalendar
+// เดิมตรงๆ — self-contained, ไม่ต้องมี prop, สร้าง/แก้ไขแผนส่งของได้ในหน้าเดียวกันเลย)
+// Style ปรับตาม reference ที่ user ส่งมา (การ์ดสีเด่น + ตัวเลขใหญ่ + bar/donut chart) — คงโทนสี/token เดิมของระบบ
+// (primary/warning/success/danger) ไม่ใช้สีนอกระบบ, ตาม CLAUDE.md §15/§25.3
 const BUCKET_LABELS = {
   open: 'เปิด (รอ QC)',
   waiting_review: 'รอ Review',
@@ -19,11 +24,76 @@ const BUCKET_LABELS = {
   cancelled: 'ยกเลิก',
 };
 
+const THAI_DAYS = ['วันอาทิตย์', 'วันจันทร์', 'วันอังคาร', 'วันพุธ', 'วันพฤหัสบดี', 'วันศุกร์', 'วันเสาร์'];
+const THAI_MONTHS = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+function thaiTodayLabel() {
+  const d = new Date();
+  return `${THAI_DAYS[d.getDay()]}ที่ ${d.getDate()} ${THAI_MONTHS[d.getMonth()]} ${d.getFullYear() + 543}`;
+}
+
 function useSummary() {
   return useQuery({
     queryKey: ['purchasing-dashboard-summary'],
     queryFn: () => api.get('/purchasing/dashboard/summary').then(r => r.data),
   });
+}
+
+// ── Bar chart: สถานะ NCR/NCP (bucket distribution) ──
+const BUCKET_CHART_COLORS = ['#D97706', '#D97706', '#2E6DA4', '#2E6DA4', '#16A34A', '#DC2626'];
+function BucketBarChart({ summary }) {
+  const data = [
+    { name: 'รอ Review', value: summary?.ncr_waiting_review || 0 },
+    { name: 'รอส่ง Link', value: summary?.ncr_waiting_send_link || 0 },
+    { name: 'รอ Supplier ตอบ', value: summary?.ncr_waiting_supplier_response || 0 },
+    { name: 'กำลังดำเนินการ', value: summary?.ncr_in_progress || 0 },
+    { name: 'ปิดแล้ว', value: (summary?.ncr_closed || 0) + (summary?.ncp_closed || 0) },
+    { name: 'เกินกำหนด', value: summary?.overdue || 0 },
+  ];
+  return (
+    <ResponsiveContainer width="100%" height={220}>
+      <BarChart data={data} layout="vertical" margin={{ left: 8, right: 16, top: 4, bottom: 4 }}>
+        <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
+        <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={110} />
+        <Tooltip />
+        <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+          {data.map((d, i) => <Cell key={i} fill={BUCKET_CHART_COLORS[i]} />)}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+// ── Donut: อัตราปิดงาน ──
+function ClosingRateDonut({ closed, total }) {
+  const pct = total > 0 ? Math.round((closed / total) * 100) : 0;
+  const data = [{ name: 'ปิดแล้ว', value: closed }, { name: 'ค้าง', value: Math.max(total - closed, 0) }];
+  return (
+    <div className="relative w-[160px] h-[160px]">
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart>
+          <Pie data={data} dataKey="value" cx="50%" cy="50%" innerRadius={50} outerRadius={72} startAngle={90} endAngle={-270} stroke="none" isAnimationActive>
+            <Cell fill="#16A34A" />
+            <Cell fill="rgb(var(--color-border))" />
+          </Pie>
+        </PieChart>
+      </ResponsiveContainer>
+      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+        <span className="text-h1 font-bold text-success">{pct}%</span>
+        <span className="text-[11px] text-muted">ปิดแล้ว ({closed}/{total})</span>
+      </div>
+    </div>
+  );
+}
+
+function TabButton({ active, onClick, children }) {
+  return (
+    <button
+      className={`px-4 py-2 rounded-lg text-body font-medium min-h-[44px] transition-colors ${active ? 'bg-primary text-white' : 'bg-surface border border-border text-text hover:bg-bg'}`}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
 }
 
 function SuppliersSection({ onPickSupplier }) {
@@ -231,6 +301,7 @@ function NcrSection({ navigate, presetSupplierId }) {
 }
 
 export default function PurchasingDash({ navigate }) {
+  const { user } = useAuth();
   const { data: summary, isLoading: summaryLoading, isError: summaryError } = useSummary();
   const [tab, setTab] = useState('suppliers');
   const [presetSupplierId, setPresetSupplierId] = useState(null);
@@ -240,42 +311,53 @@ export default function PurchasingDash({ navigate }) {
     setTab('ncrs');
   }
 
+  const activeWork = (summary?.ncr_waiting_review || 0) + (summary?.ncr_waiting_send_link || 0)
+    + (summary?.ncr_waiting_supplier_response || 0) + (summary?.ncr_in_progress || 0);
+  const closedAll = (summary?.ncr_closed || 0) + (summary?.ncp_closed || 0);
+  const totalAll = (summary?.ncr_total || 0) + (summary?.ncp_total || 0);
+
   return (
     <div className="space-y-6">
-      <h1 className="page-title">หน้าหลัก จัดซื้อ</h1>
-
-      {summaryError && <div className="card text-danger text-small">โหลดสรุปข้อมูลไม่สำเร็จ</div>}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-        <SummaryCard value={summaryLoading ? '-' : summary?.supplier_count} label="Supplier ที่ดูแล" color="primary" />
-        <SummaryCard value={summaryLoading ? '-' : summary?.ncr_total} label="NCR ทั้งหมด" color="primary" />
-        <SummaryCard value={summaryLoading ? '-' : summary?.ncp_total} label="NCP ทั้งหมด" color="primary" />
-        <SummaryCard value={summaryLoading ? '-' : summary?.ncr_waiting_review} label="NCR รอ Review" color="warning" />
-        <SummaryCard value={summaryLoading ? '-' : summary?.ncr_waiting_send_link} label="NCR รอส่ง Link Supplier" color="warning" />
-        <SummaryCard value={summaryLoading ? '-' : summary?.ncr_waiting_supplier_response} label="NCR รอ Supplier ตอบกลับ" color="warning" />
-        <SummaryCard value={summaryLoading ? '-' : summary?.ncr_in_progress} label="NCR กำลังดำเนินการ" color="accent" />
-        <SummaryCard value={summaryLoading ? '-' : summary?.ncr_closed} label="NCR ปิดแล้ว" color="success" />
-        <SummaryCard value={summaryLoading ? '-' : summary?.ncp_open} label="NCP Open" color="warning" />
-        <SummaryCard value={summaryLoading ? '-' : summary?.ncp_closed} label="NCP Closed" color="success" />
-        <SummaryCard value={summaryLoading ? '-' : summary?.overdue} label="เกินกำหนด (Overdue)" color="danger" />
+      <div>
+        <h1 className="page-title">สวัสดี, {user?.full_name}</h1>
+        <p className="text-muted text-small mt-0.5">วันนี้{thaiTodayLabel()}</p>
       </div>
 
-      <div className="flex gap-2">
-        <button
-          className={`px-4 py-2 rounded-lg text-body font-medium min-h-[44px] ${tab === 'suppliers' ? 'bg-primary text-white' : 'bg-surface border border-border text-text hover:bg-bg'}`}
-          onClick={() => setTab('suppliers')}
-        >
-          ผู้ผลิตของฉัน
-        </button>
-        <button
-          className={`px-4 py-2 rounded-lg text-body font-medium min-h-[44px] ${tab === 'ncrs' ? 'bg-primary text-white' : 'bg-surface border border-border text-text hover:bg-bg'}`}
-          onClick={() => setTab('ncrs')}
-        >
-          NCR/NCP ของฉัน
-        </button>
+      {summaryError && <div className="card text-danger text-small">โหลดสรุปข้อมูลไม่สำเร็จ</div>}
+
+      {/* Hero stats — เน้นสี+ตัวเลขใหญ่ */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <HeroStat icon={HeroIcons.building} value={summaryLoading ? '-' : summary?.supplier_count} label="Supplier ที่ดูแล" tone="primary" />
+        <HeroStat icon={HeroIcons.tasks} value={summaryLoading ? '-' : activeWork} label="งานที่ต้องดำเนินการ" tone="warning" />
+        <HeroStat icon={HeroIcons.check} value={summaryLoading ? '-' : closedAll} label="ปิดแล้ว" tone="success" />
+        <HeroStat icon={HeroIcons.alert} value={summaryLoading ? '-' : summary?.overdue} label="เกินกำหนด" tone="danger" emphasize />
+      </div>
+
+      {/* Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="card lg:col-span-2">
+          <h2 className="text-h3 font-semibold text-primary mb-2">สถานะ NCR/NCP</h2>
+          {summaryLoading ? <div className="h-[220px] flex items-center justify-center text-muted">กำลังโหลด...</div> : <BucketBarChart summary={summary} />}
+        </div>
+        <div className="card flex flex-col items-center justify-center">
+          <h2 className="text-h3 font-semibold text-primary mb-2 self-start">อัตราปิดงาน</h2>
+          {summaryLoading ? <div className="h-[160px] flex items-center justify-center text-muted">กำลังโหลด...</div> : <ClosingRateDonut closed={closedAll} total={totalAll} />}
+        </div>
+      </div>
+
+      <div className="flex gap-2 flex-wrap">
+        <TabButton active={tab === 'suppliers'} onClick={() => setTab('suppliers')}>ผู้ผลิตของฉัน</TabButton>
+        <TabButton active={tab === 'ncrs'} onClick={() => setTab('ncrs')}>NCR/NCP ของฉัน</TabButton>
+        <TabButton active={tab === 'delivery'} onClick={() => setTab('delivery')}>ปฏิทินส่งของ</TabButton>
       </div>
 
       {tab === 'suppliers' && <SuppliersSection onPickSupplier={pickSupplier} />}
       {tab === 'ncrs' && <NcrSection navigate={navigate} presetSupplierId={presetSupplierId} />}
+      {tab === 'delivery' && (
+        <div className="card p-0 overflow-hidden">
+          <DeliveryCalendar />
+        </div>
+      )}
     </div>
   );
 }

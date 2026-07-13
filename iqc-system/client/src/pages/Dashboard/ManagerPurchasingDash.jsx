@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import HeroStat, { HeroIcons } from '../../components/UI/HeroStat';
 import SummaryCard from '../../components/UI/SummaryCard';
 import api from '../../utils/api';
 
@@ -18,17 +19,19 @@ export default function ManagerPurchasingDash({ navigate }) {
       <h1 className="page-title">หน้าหลัก ผู้จัดการจัดซื้อ</h1>
 
       {isError && <div className="card text-danger text-small">โหลดข้อมูลไม่สำเร็จ</div>}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <HeroStat icon={HeroIcons.users} value={isLoading ? '-' : summary?.team_member_count} label="จำนวนลูกทีม" tone="primary" />
+        <HeroStat icon={HeroIcons.building} value={isLoading ? '-' : summary?.supplier_count} label="Supplier ทั้งหมด" tone="primary" />
+        <HeroStat icon={HeroIcons.check} value={isLoading ? '-' : closedTotal} label="Closed" tone="success" />
+        <HeroStat icon={HeroIcons.alert} value={isLoading ? '-' : summary?.overdue} label="Overdue" tone="danger" emphasize />
+      </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-        <SummaryCard value={isLoading ? '-' : summary?.team_member_count} label="จำนวนลูกทีม" color="primary" />
-        <SummaryCard value={isLoading ? '-' : summary?.supplier_count} label="Supplier ทั้งหมด" color="primary" />
         <SummaryCard value={isLoading ? '-' : summary?.ncr_total} label="NCR ทั้งหมด" color="primary" />
         <SummaryCard value={isLoading ? '-' : summary?.ncp_total} label="NCP ทั้งหมด" color="primary" />
         <SummaryCard value={isLoading ? '-' : summary?.ncr_waiting_review} label="Waiting Review" color="warning" />
         <SummaryCard value={isLoading ? '-' : summary?.ncr_waiting_send_link} label="Waiting Supplier Link" color="warning" />
         <SummaryCard value={isLoading ? '-' : summary?.ncr_waiting_supplier_response} label="Waiting Supplier Response" color="warning" />
         <SummaryCard value={isLoading ? '-' : summary?.ncr_in_progress} label="In Progress" color="accent" />
-        <SummaryCard value={isLoading ? '-' : closedTotal} label="Closed" color="success" />
-        <SummaryCard value={isLoading ? '-' : summary?.overdue} label="Overdue" color="danger" />
       </div>
 
       <div className="card">
