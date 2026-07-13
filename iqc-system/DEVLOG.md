@@ -137,6 +137,27 @@ History list ใน `DetailModal` (`Delivery/index.jsx`) เดิมแค่ `
 
 ---
 
+**คำขอ (รอบที่ 5):** user รายงาน "เวลาเลื่อก รายปี รายเดือน รายวัน ทำไมข้อมูลใน tag แต่ละสถานะถึงไม่เปลี่ยนไปตามที่
+เลือก เช่น เดือน 7 มี 10 ข้อมูล(ส่งเสร็จสิ้น) เดือน 8 มี 20 ข้อมูล(ส่งเสร็จสิ้น) เมื่อเลือกรายปีต้องแสดง 30"
+
+**Root cause:** ตัวนับ tag สรุป (`summaryBadgeCount`) อ่านจาก `schedules` ซึ่ง scope ตามเดือนของ `currentDate`
+เสมอ ไม่ว่า `viewMode` จะเป็นอะไร — สลับไปรายปีแล้วตัวเลขยังโชว์แค่เดือนเดียวที่โหลดไว้ ไม่รวมทั้งปี พบบั๊กแฝงอีก
+จุด: `openDay()` (ใช้ตอนคลิกวันจากปฏิทิน) ไม่เคย sync `currentDate` (เดือน) ตามวันที่คลิกเลย — ถ้าคลิกวันจากมุมมอง
+รายปีที่เป็นเดือนอื่นจาก `currentDate` เดิม รายวันจะหาไม่เจอข้อมูลเพราะ query เดือนที่โหลดไว้ผิดเดือน
+
+**การแก้:** เพิ่ม `badgeSchedules`/`badgeFrom`/`badgeTo` เลือก source ตาม `viewMode` — `yearSchedules` (ทั้งปี)
+ตอน 'year', `schedules` กรองเฉพาะ `selectedDate` ตอน 'day', `schedules` เดิมตอน 'month' — ใช้ทั้งกับตัวนับ tag
+และ `TagSummaryModal`/export ให้ scope ตรงกัน · แก้ `openDay()` ให้ sync `setCurrentDate` ไปเดือนของวันที่คลิก
+เสมอ (แก้ปัญหาบั๊กแฝงด้วยในตัว)
+
+**Test:** `node --test` → 258/258 เขียว, 0 skip
+
+**Verify:** seed 3 รายการส่งเสร็จสิ้นเดือน ก.ค. + 5 รายการเดือน ส.ค. — มุมมองรายเดือนโชว์ "3" แล้ว "5" ถูกต้องตาม
+เดือนที่เลื่อนไป, มุมมองรายปีโชว์ "8" (รวมถูกต้อง), คลิกวันที่ 1 ก.ค. จากตารางรายปี (ขณะปฏิทินอยู่เดือน ส.ค.)
+สลับไปรายวันแล้วโชว์ "1" พร้อมข้อมูล supplier ถูกต้อง (ยืนยัน `openDay` sync เดือนทำงาน) — commit `ef18e73`
+
+---
+
 ## 2026-07-13 | Session 125 — Purchasing/Supplier Management + Dashboards (Supplier Assignment, Purchasing Dashboard, Manager Dashboard, Notification fixes)
 
 **คำขอ:** ปรับปรุงระบบ Purchasing/Supplier Management/Dashboard ให้ครบวงจร — (1) Purchasing/Purchasing Manager
