@@ -112,8 +112,12 @@ function acknowledgeSchedule({ schedule, actorId, actorName, actorIp }) {
   const ack = db.transaction(() => {
     db.prepare(`UPDATE delivery_schedules SET status='acknowledged', acknowledged_at=CURRENT_TIMESTAMP, acknowledged_by=? WHERE id = ?`).run(actorId, schedule.id);
 
+    // ระบุชื่อผู้ผลิตในข้อความแจ้งเตือน + ลิงก์เจาะจงไปที่รายการนี้เลย (ไม่ใช่แค่ /delivery เฉยๆ) —
+    // DeliveryCalendar อ่าน query param นี้แล้วเปิด DetailModal ให้อัตโนมัติ (ดู client Delivery/index.jsx)
+    const supplier = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(schedule.supplier_id);
+    const supplierName = supplier?.name || '-';
     for (const uid of resolveNotifyTargetIds(schedule.supplier_id)) {
-      createNotification(uid, 'QC รับทราบ Delivery', `${actorName} รับทราบกำหนดส่งวันที่ ${schedule.scheduled_date}`, `/delivery`);
+      createNotification(uid, 'QC รับทราบ Delivery', `${actorName} รับทราบกำหนดส่งวันที่ ${schedule.scheduled_date} — ผู้ผลิต: ${supplierName}`, `/delivery?schedule=${schedule.id}`);
     }
     db.auditLog('delivery_schedules', schedule.id, 'ACKNOWLEDGE', null, { acknowledged_by: actorId }, actorId, actorIp);
   });

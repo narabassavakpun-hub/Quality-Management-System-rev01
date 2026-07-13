@@ -1,5 +1,6 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import api from '../../utils/api';
 import { useAuth } from '../../contexts/AuthContext';
 import Modal from '../../components/UI/Modal';
@@ -83,8 +84,8 @@ function isPastDelivery(scheduledDate, timeSlot) {
 const STATUS_CFG = {
   pending:      { label: 'รอดำเนินการ',            cls: 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200' },
   acknowledged: { label: 'QC รับทราบแล้ว',         cls: 'bg-teal-100 dark:bg-teal-900 text-teal-800 dark:text-teal-200' },
-  on_time:      { label: 'ส่งตรงเวลา',              cls: 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' },
-  late:         { label: 'ส่งล่าช้า / ไม่ตรงแผน',  cls: 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200' },
+  on_time:      { label: 'ส่งตามแผน',                cls: 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' },
+  late:         { label: 'ส่งนอกแผน',                cls: 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200' },
   cancelled:    { label: 'ยกเลิก',                  cls: 'bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-200' },
   rescheduled:  { label: 'เลื่อนวันส่ง',            cls: 'bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200' },
 };
@@ -105,11 +106,22 @@ export function DetailModal({ schedule, onClose, suppliers, role, holidays = [] 
   const qc = useQueryClient();
   const todayStr = toDateStr(new Date());
   const nowHour  = new Date().getHours();
-  const past = isPastDelivery(schedule.scheduled_date, schedule.time_slot);
+
+  // detail = query ที่ refresh ได้ (ต่างจาก schedule prop ซึ่งเป็น snapshot ตอนเปิด modal ครั้งแรก และไม่เปลี่ยนอีก)
+  // ต้องประกาศก่อนคำนวณ canEdit/canAck/canUpdateStatus ด้านล่าง — เดิมคำนวณจาก schedule ตรงๆ ทำให้ปุ่ม/สถานะที่
+  // แสดงค้างเป็นข้อมูลเก่าจนกว่าจะปิด-เปิด modal ใหม่ แม้ mutation จะสำเร็จแล้วก็ตาม
+  const { data: detail = schedule } = useQuery({
+    queryKey: ['delivery-detail', schedule.id],
+    queryFn: () => api.get(`/delivery/${schedule.id}`).then(r => r.data),
+    initialData: schedule,
+    staleTime: 0,
+  });
+
+  const past = isPastDelivery(detail.scheduled_date, detail.time_slot);
   const isQC = ['qc_staff', 'qc_supervisor'].includes(role);
-  const canEdit = role === 'purchasing' && ['pending', 'acknowledged'].includes(schedule.status) && !schedule.is_unplanned && !past;
-  const canAck  = isQC && schedule.status === 'pending';
-  const canUpdateStatus = isQC && schedule.status === 'acknowledged';
+  const canEdit = role === 'purchasing' && ['pending', 'acknowledged'].includes(detail.status) && !detail.is_unplanned && !past;
+  const canAck  = isQC && detail.status === 'pending';
+  const canUpdateStatus = isQC && detail.status === 'acknowledged';
 
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
@@ -138,13 +150,6 @@ export function DetailModal({ schedule, onClose, suppliers, role, holidays = [] 
     updateStatus.mutate();
   }
 
-  const { data: detail = schedule } = useQuery({
-    queryKey: ['delivery-detail', schedule.id],
-    queryFn: () => api.get(`/delivery/${schedule.id}`).then(r => r.data),
-    initialData: schedule,
-    staleTime: 0,
-  });
-
   const { data: history = [] } = useQuery({
     queryKey: ['delivery-history', schedule.id],
     queryFn: () => api.get(`/delivery/${schedule.id}/history`).then(r => r.data),
@@ -167,6 +172,7 @@ export function DetailModal({ schedule, onClose, suppliers, role, holidays = [] 
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['delivery'] });
       qc.invalidateQueries({ queryKey: ['delivery-history', schedule.id] });
+      qc.invalidateQueries({ queryKey: ['delivery-detail', schedule.id] }); // ให้ detail (สถานะ+ปุ่ม) รีเฟรชทันที ไม่ต้องปิด-เปิด modal ใหม่
       setStatusOpen(false);
     },
   });
@@ -205,18 +211,18 @@ export function DetailModal({ schedule, onClose, suppliers, role, holidays = [] 
           <div>
             <p className="font-semibold text-h3 text-primary">{supName}</p>
             <p className="text-muted text-small mt-0.5">
-              {schedule.scheduled_date} {schedule.time_slot ? `เวลา ${schedule.time_slot}` : ''}
+              {detail.scheduled_date} {detail.time_slot ? `เวลา ${detail.time_slot}` : ''}
             </p>
           </div>
           <div className="flex flex-col items-end gap-1">
-            <StatusBadge status={schedule.status} isUnplanned={schedule.is_unplanned} />
+            <StatusBadge status={detail.status} isUnplanned={detail.is_unplanned} />
             {!!detail.has_sample && (
               <span className="inline-flex items-center px-2 py-0.5 rounded text-[12px] font-medium bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200">ส่งงานตัวอย่าง</span>
             )}
           </div>
         </div>
 
-        {schedule.notes && <p className="text-body text-text bg-bg rounded p-2">{schedule.notes}</p>}
+        {detail.notes && <p className="text-body text-text bg-bg rounded p-2">{detail.notes}</p>}
 
         {/* Edit form */}
         {editing ? (
@@ -302,8 +308,8 @@ export function DetailModal({ schedule, onClose, suppliers, role, holidays = [] 
                 <label className="label">สถานะ *</label>
                 <select className="input" value={statusForm.status} onChange={e => setStatusForm(p => ({ ...p, status: e.target.value }))}>
                   <option value="">-- เลือก --</option>
-                  <option value="on_time">ส่งตรงเวลา</option>
-                  <option value="late">ส่งล่าช้า / ไม่ตรงแผน</option>
+                  <option value="on_time">ส่งตามแผน</option>
+                  <option value="late">ส่งนอกแผน</option>
                   {!isQC && <option value="rescheduled">เลื่อนวันส่ง</option>}
                   {!isQC && <option value="cancelled">ยกเลิก</option>}
                 </select>
@@ -511,7 +517,7 @@ export function DetailModal({ schedule, onClose, suppliers, role, holidays = [] 
                       if (ov.notes !== nv.notes) parts.push('แก้ไขหมายเหตุ');
                       desc = `แก้ไขวันเวลาส่งสินค้า${parts.length ? ': ' + parts.join(', ') : ''}`;
                     } else if (h.action === 'STATUS_UPDATE') {
-                      const statusLabel = { pending:'รอดำเนินการ', acknowledged:'รับทราบ', on_time:'ส่งตรงเวลา', late:'ส่งล่าช้า', cancelled:'ยกเลิก', rescheduled:'เลื่อนวันส่ง' };
+                      const statusLabel = { pending:'รอดำเนินการ', acknowledged:'รับทราบ', on_time:'ส่งตามแผน', late:'ส่งนอกแผน', cancelled:'ยกเลิก', rescheduled:'เลื่อนวันส่ง' };
                       desc = `เปลี่ยนสถานะ: ${statusLabel[ov.status] || ov.status} → ${statusLabel[nv.status] || nv.status}`;
                       if (nv.status === 'rescheduled' && nv.scheduled_date) desc += ` (วันใหม่: ${nv.scheduled_date})`;
                       if (nv.late_reason) desc += ` — ${nv.late_reason}`;
@@ -948,6 +954,7 @@ export default function DeliveryCalendar() {
   const { user } = useAuth();
   const role = user?.role;
   const today = toDateStr(new Date());
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [viewMode, setViewMode] = useState('month');   // 'month' | 'day'
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -955,6 +962,17 @@ export default function DeliveryCalendar() {
   const [createOpen, setCreateOpen] = useState(false);
   const [unplannedOpen, setUnplannedOpen] = useState(false);
   const [selectedSchedule, setSelectedSchedule] = useState(null);
+
+  // Deep-link จากลิงก์ในกระดิ่งแจ้งเตือน (เช่น "QC รับทราบ Delivery" — /delivery?schedule=123) — เปิด
+  // DetailModal ให้อัตโนมัติ แล้วล้าง query param ออกกันเปิดซ้ำตอน re-render/กด back
+  useEffect(() => {
+    const scheduleId = searchParams.get('schedule');
+    if (!scheduleId) return;
+    api.get(`/delivery/${scheduleId}`).then(res => setSelectedSchedule(res.data)).catch(() => {});
+    searchParams.delete('schedule');
+    setSearchParams(searchParams, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const year  = currentDate.getFullYear();
   const month = currentDate.getMonth(); // 0-based
