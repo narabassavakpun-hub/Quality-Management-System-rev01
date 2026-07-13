@@ -982,6 +982,24 @@ export default function DeliveryCalendar() {
   const schedules = deliveryData?.data || [];
   const holidaySet = new Set(holidays.map(h => h.holiday_date));
 
+  // Summary tag ด้านบนปฏิทิน — ใช้ config ชุดเดียวกันทั้ง desktop (full label) และ mobile (short label) กัน
+  // logic การนับซ้ำกัน 2 ที่ — _all_waiting/_completed เป็น status พิเศษ (ไม่ใช่ค่าจริงใน DB) รวมหลายสถานะเข้าด้วยกัน
+  function summaryBadgeCount(status) {
+    if (status === '_unplanned') return schedules.filter(s => s.is_unplanned).length;
+    if (status === '_all_waiting') return schedules.filter(s => ['pending', 'acknowledged'].includes(s.status) && !s.is_unplanned).length;
+    // ส่งเสร็จสิ้น = รับเข้าแล้วจริง ไม่ว่าจะตามแผนหรือนอกแผน (นอกแผนบันทึกเป็น on_time เสมอ — CLAUDE.md §20)
+    if (status === '_completed') return schedules.filter(s => ['on_time', 'late'].includes(s.status)).length;
+    return schedules.filter(s => s.status === status && !s.is_unplanned).length;
+  }
+  const SUMMARY_BADGES = [
+    { status: '_all_waiting', full: 'แผนรอส่งทั้งหมด', short: 'รอส่งทั้งหมด', cls: 'bg-indigo-100 dark:bg-indigo-900 text-indigo-800 dark:text-indigo-200' },
+    { status: 'pending',      full: 'รอดำเนินการ',     short: 'รอ',         cls: 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200' },
+    { status: 'on_time',      full: 'ส่งตรงเวลา',      short: 'ตรงเวลา',    cls: 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' },
+    { status: 'late',         full: 'ส่งไม่ตรงแผน',    short: 'ส่งไม่ตรงแผน', cls: 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200' },
+    { status: '_unplanned',   full: 'นอกแผน',          short: 'นอกแผน',     cls: 'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200' },
+    { status: '_completed',   full: 'ส่งเสร็จสิ้น',    short: 'เสร็จสิ้น',  cls: 'bg-teal-100 dark:bg-teal-900 text-teal-800 dark:text-teal-200' },
+  ];
+
   // Group schedules by date, sorted by time_slot ascending
   const byDate = schedules.reduce((acc, s) => {
     const d = s.scheduled_date;
@@ -1093,19 +1111,12 @@ export default function DeliveryCalendar() {
             <button onClick={goToday} className="px-3 py-1.5 text-small border border-border rounded hover:bg-bg min-h-[44px]">วันนี้</button>
           </div>
           <div className="flex gap-2 flex-wrap ml-auto">
-            {[
-              { label: 'รอดำเนินการ', status: 'pending',    cls: 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200' },
-              { label: 'ส่งตรงเวลา',  status: 'on_time',    cls: 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' },
-              { label: 'ส่งไม่ตรงแผน', status: 'late',      cls: 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200' },
-              { label: 'นอกแผน',      status: '_unplanned', cls: 'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200' },
-            ].map(b => {
-              const count = b.status === '_unplanned'
-                ? schedules.filter(s => s.is_unplanned).length
-                : schedules.filter(s => s.status === b.status && !s.is_unplanned).length;
+            {SUMMARY_BADGES.map(b => {
+              const count = summaryBadgeCount(b.status);
               if (!count) return null;
               return (
                 <span key={b.status} className={`px-2 py-0.5 rounded text-[12px] font-medium ${b.cls}`}>
-                  {b.label} {count}
+                  {b.full} {count}
                 </span>
               );
             })}
@@ -1114,19 +1125,12 @@ export default function DeliveryCalendar() {
 
         {/* Summary badges บน mobile */}
         <div className="flex gap-1.5 flex-wrap sm:hidden">
-          {[
-            { label: 'รอ',      status: 'pending',    cls: 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200' },
-            { label: 'ตรงเวลา', status: 'on_time',   cls: 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' },
-            { label: 'ส่งไม่ตรงแผน', status: 'late', cls: 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200' },
-            { label: 'นอกแผน',  status: '_unplanned',cls: 'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200' },
-          ].map(b => {
-            const count = b.status === '_unplanned'
-              ? schedules.filter(s => s.is_unplanned).length
-              : schedules.filter(s => s.status === b.status && !s.is_unplanned).length;
+          {SUMMARY_BADGES.map(b => {
+            const count = summaryBadgeCount(b.status);
             if (!count) return null;
             return (
               <span key={b.status} className={`px-2 py-0.5 rounded text-[12px] font-medium ${b.cls}`}>
-                {b.label} {count}
+                {b.short} {count}
               </span>
             );
           })}
