@@ -534,7 +534,12 @@ export function DetailModal({ schedule, onClose, suppliers, role, holidays = [] 
                     }
                     return (
                       <li key={idx} className="px-3 py-2 text-small flex items-start gap-2">
-                        <span className="text-muted w-32 flex-shrink-0">{h.created_at?.slice(0,16).replace('T',' ')}</span>
+                        {/* audit_logs.created_at เป็น SQLite CURRENT_TIMESTAMP (UTC, ไม่มี timezone marker) —
+                            ต้องต่อ 'Z' ก่อนแปลงแล้วระบุ timeZone Asia/Bangkok เสมอ (เหมือน NCR/UAI Detail
+                            เดิม) ไม่งั้นจะโชว์เวลา UTC ดิบๆ ช้ากว่าเวลาไทยจริง 7 ชั่วโมง */}
+                        <span className="text-muted w-32 flex-shrink-0">
+                          {h.created_at ? new Date(h.created_at + 'Z').toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Bangkok' }) : '-'}
+                        </span>
                         <span className="flex-1">{desc}</span>
                         <span className="text-muted flex-shrink-0">{h.actor_name || '-'}</span>
                       </li>
