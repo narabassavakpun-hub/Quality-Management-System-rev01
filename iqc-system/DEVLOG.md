@@ -179,6 +179,22 @@ History list ใน `DetailModal` (`Delivery/index.jsx`) เดิมแค่ `
 
 ---
 
+**คำขอ (รอบที่ 7, นอกโมดูล Delivery):** user ขอที่หน้า NCR — ช่อง qc_manager "อนุมัติเปิด NCR (ส่ง QMR)" ตรง
+dropdown เลือกมาตรการจัดการ (Disposition) ให้เอาตัวเลือก "ยอมรับใช้พิเศษ(UAI)" และ "ตรวจซ้ำ" ออก
+
+**การแก้:** `NCR/Detail.jsx` ลบ `<option value="uai">`/`<option value="re_inspect">` ออกจาก dropdown Disposition
+ที่โชว์ตอน qc_manager กด "อนุมัติ" NCR major (`status === 'pending_manager'`) เหลือแค่ Return/Rework/Scrap — ไม่
+กระทบปุ่ม "ขอยอมรับใช้พิเศษ (UAI)" แยกต่างหากที่ purchasing กดตอน `pending_supplier` (`canRequestUAI`, ไม่ได้อ่าน
+`ncr.disposition` เลย) และไม่แตะ DB CHECK constraint (`ncrs.disposition IN (...)` ยังอนุญาต `uai`/`re_inspect`
+เหมือนเดิม — เป็นการจำกัดแค่ระดับ UI)
+
+**Test:** `node --test` → 258/258 เขียว, 0 skip
+
+**Verify:** seed NCR major ที่ status `pending_manager` ตรงๆ ผ่าน SQL ยืนยัน dropdown เหลือแค่ 3 ตัวเลือกจริง
+(Return/Rework/Scrap) ไม่มี UAI/ตรวจซ้ำเหลืออยู่เลย — commit `a3cec52`
+
+---
+
 ## 2026-07-13 | Session 125 — Purchasing/Supplier Management + Dashboards (Supplier Assignment, Purchasing Dashboard, Manager Dashboard, Notification fixes)
 
 **คำขอ:** ปรับปรุงระบบ Purchasing/Supplier Management/Dashboard ให้ครบวงจร — (1) Purchasing/Purchasing Manager
