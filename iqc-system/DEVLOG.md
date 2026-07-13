@@ -29,13 +29,13 @@
 
 - 🏁 **Deploy/Backup/Restore architecture เอกสารครบแล้ว (S124)** — R2 backup/restore/bootstrap system (`bootstrap.js`/`lib/backupService.js`/`lib/restoreService.js`/`lib/r2Client.js`, สร้างไว้ตั้งแต่ก่อน S110 แต่ไม่เคยถูกบันทึกใน DEVLOG) มี **CLAUDE.md §27** เอกสารแล้ว + แก้ **AUDIT.md D5** ที่บอกข้อมูลผิด (ว่ายังไม่มี auto-backup) + แก้ root cause DB corrupt ซ้ำ 3 ครั้งใน S119 (`docker-compose.local.yml` bind-mount → named volume) + เปิดทาง phone-testing แบบ native (`vite.config.js` host:true) + เพิ่ม test คลุม `backupService.js` alerting ที่ค้าง uncommitted อยู่ก่อนหน้า
 - 🏁 **Purchasing Supplier-Assignment + Dashboards (S125)** — เพิ่ม role `purchasing_manager`, ตาราง `supplier_purchasing_assignees` (m:n), scope ทั้ง visibility/action/notification ของ NCR-UAI-Delivery ตามผู้ดูแล Supplier, เปิดสิทธิ์ Purchasing/Manager จัดการ Supplier เอง, สร้าง Purchasing Dashboard + Purchasing Manager Dashboard (Team Summary/Members/Member Detail + KPI) ครบ, แก้ notification gap (purchasing_manager/Supplier Response/Overdue) — รายละเอียดเต็มดู session log ด้านล่าง; **CLAUDE.md §11 Role Matrix ยังไม่ได้เพิ่มคอลัมน์ `purchasing_manager`** (เอกสารสรุปเดิม 10 คอลัมน์ ไม่ครอบ role ใหม่นี้ — รอปรับรอบถัดไป, ไม่กระทบโค้ด)
-- 🏁 **Delivery notification/real-time bugs + tag drill-down + yearly view (S126)** — user รายงาน 2 รอบ:
-  (1) กระดิ่ง acknowledge เด้งลิงก์ค้าง + กระดิ่งอื่นๆ ไม่ deep-link เฉพาะจุด, (2) ปฏิทินจัดซื้อไม่ auto-update
-  ตอน QC ปิดสถานะ + ไม่มีกระดิ่งแจ้งรับของ — แก้ครบทั้ง route-effect bug (React Router ไม่ remount ตอน query
-  param เปลี่ยน), missing deep-link ในเกือบทุก notification call site, และบั๊กจริงใน `useSSE.js`'s
-  `keysFromLink()` (ไม่ตัด query string ก่อน match ทำให้ SSE invalidate เงียบทุกลิงก์ที่มี `?schedule=`) —
-  เพิ่มด้วย: tag สรุปสถานะคลิกดูรายการ+export Excel ได้ (คอลัมน์ใหม่ `delivery_schedules.received_by`), มุมมอง
-  ปฏิทินรายปี — รายละเอียดเต็มดู session log ด้านล่าง
+- 🏁 **Delivery notification/real-time bugs + tag drill-down + yearly view + actual-time (S126)** — user รายงาน
+  3 รอบ: (1) กระดิ่ง acknowledge เด้งลิงก์ค้าง + กระดิ่งอื่นๆ ไม่ deep-link เฉพาะจุด, (2) ปฏิทินจัดซื้อไม่
+  auto-update ตอน QC ปิดสถานะ + ไม่มีกระดิ่งแจ้งรับของ, (3) tag summary modal ขาดคอลัมน์สถานะ/เวลาส่งจริง +
+  เปลี่ยนชื่อ "นอกแผน"→"ไม่มีแผนส่ง" กันสับสนกับสถานะ "ส่งนอกแผน" — แก้ครบทั้ง route-effect bug (React Router ไม่
+  remount ตอน query param เปลี่ยน), missing deep-link ในเกือบทุก notification call site, บั๊กจริงใน
+  `useSSE.js`'s `keysFromLink()` (ไม่ตัด query string ก่อน match), เพิ่มคอลัมน์ `received_by`/`actual_time`,
+  tag สรุปสถานะคลิกดูรายการ+export Excel ได้, มุมมองปฏิทินรายปี — รายละเอียดเต็มดู session log ด้านล่าง
 
 **Technical Debt / Roadmap:** ดู [`../AUDIT.md`](../AUDIT.md) §12 (Refactor Roadmap) — **P0 ปิดครบแล้ว (S105)**; P1 ปิดครบ; P2 ปิดครบ (S103); เหลือ P3 (horizontal scale, TypeScript) + gap ใหม่ (ipqc_records removal decision, ipqc_inspections test coverage, fgqc reset-all FK gap) + restore-drill ยังไม่ automate ใน CI (ดู AUDIT.md D5) + CLAUDE.md §11 Role Matrix ต้องเพิ่ม purchasing_manager (S125)
 
@@ -43,7 +43,7 @@
 
 ---
 
-## 2026-07-13 | Session 126 — Delivery: notification deep-link bugs, real-time sync bug, tag drill-down + export, yearly calendar view
+## 2026-07-13 | Session 126 — Delivery: notification deep-link bugs, real-time sync bug, tag drill-down + export, yearly calendar view, actual-time + unplanned rename
 
 **คำขอ (รอบที่ 1):** user รายงาน 2 บั๊ก — (1) หลัง QC กด "รับทราบ" กระดิ่งจัดซื้อเด้งแจ้งเตือนถูกต้อง แต่คลิกลิงก์
 ที่กระดิ่งไปหน้ารายละเอียดส่งของแล้ว modal ไม่เปิด ค้างอยู่ ต้องรีเฟรชเองถึงจะขึ้น (2) หน้า qc_staff กระดิ่งกดแล้ว
@@ -93,6 +93,34 @@ methodology ที่ใช้ทั้ง session นี้)
 **Verify รอบ 2:** Playwright บน server แยก + DB ใหม่อีกครั้ง — ปฏิทินจัดซื้อ flip เป็น "ส่งของแล้ว" + กระดิ่งขึ้น
 ภายใน ~2 วิ โดยไม่รีเฟรชเลย, tag "ส่งเสร็จสิ้น" เปิด modal ถูก supplier/QC ผู้รับ + export คืนไฟล์ xlsx
 (`Content-Type` ถูกต้อง), มุมมองรายปีขึ้นครบ 12 เดือน คลิกวันที่สลับไปรายวันด้วยวันที่ถูกต้อง — commit `1be6f53`
+
+---
+
+**คำขอ (รอบที่ 3):** user รายงานต่อ 6 เรื่องละเอียดขึ้นจาก tag summary modal ที่เพิ่งทำในรอบ 2 — (1) ตาราง "ส่งจริง"
+มีแต่วันที่ไม่มีเวลา และไม่มีคอลัมน์สถานะ (คลิก "ส่งเสร็จสิ้น" แล้วแยกไม่ออกว่าแถวไหนตามแผน/นอกแผน) (2) หน้า
+รายละเอียดฝั่ง QC ให้กรอกเวลาที่ของมาส่งได้ด้วย ไม่ใช่แค่วันที่ (3) เปลี่ยนชื่อ tag "นอกแผน" เป็น "ไม่มีแผนส่ง" (กัน
+สับสนกับสถานะ "ส่งนอกแผน" ที่เป็นคนละความหมาย) (4) เปลี่ยนชื่อปุ่ม/หัวฟอร์มบันทึกนอกแผนของ qc_staff ตามข้อ 3
+(5) ในตารางนอกแผน ถ้า QC บันทึกวันเวลาแล้วให้ย้ายจากช่อง "แผนส่ง" ไปช่อง "ส่งจริง" (แผนส่งโชว์ "-" แทน เพราะของที่
+ไม่มีแผนไม่มี "แผน" จริงๆ) (6) ปรับขนาดกล่อง modal ให้พอกับข้อมูลที่เพิ่มขึ้น
+
+**การแก้:**
+- เพิ่มคอลัมน์ใหม่ `delivery_schedules.actual_time` (migration แบบ safeAddColumn คู่กับ `actual_date` เดิมที่มีแต่
+  วันที่) — เพิ่ม input `type="time"` ในฟอร์ม "อัปเดตสถานะ" ของ QC (`DetailModal`), thread ผ่าน
+  `updateStatus`/`PATCH /:id/status`/export ครบ
+- `TagSummaryModal` เพิ่มคอลัมน์ "สถานะ" (badge ต่อแถวจาก `STATUS_CFG` เดิม, override เป็น "ไม่มีแผนส่ง" เมื่อ
+  `is_unplanned`) และคอลัมน์ "ส่งจริง" โชว์เวลาด้วย — ตรงกับ Excel export ที่ปรับ column เดียวกัน
+- เปลี่ยนข้อความ "นอกแผน" → "ไม่มีแผนส่ง" ที่ summary tag (`_unplanned` bucket), ปุ่ม "+" หน้า qc_staff, และ
+  modal บันทึก unplanned (ทั้ง title และปุ่ม submit) — คำว่า "ส่งนอกแผน" (สถานะ `late`) ไม่ถูกแตะเพราะเป็นคนละ
+  concept กัน (ของมาช้ากว่าแผน vs ไม่มีแผนตั้งแต่แรก)
+- `TagSummaryModal`/export: แถว `is_unplanned` แสดง "แผนส่ง" เป็น "-" และย้าย `scheduled_date`+`time_slot`
+  (ค่าเดียวที่มีจริงตอนสร้าง unplanned record) ไปแสดงใน "ส่งจริง" แทน — ตรงกับความจริงที่ไม่มี "แผน" มาก่อน
+- `Modal` ของ `TagSummaryModal` ขยายจาก `size="lg"` เป็น `size="xl"` ให้พอกับคอลัมน์ที่เพิ่ม
+
+**Test:** `node --test` → 258/258 เขียว, 0 skip
+
+**Verify:** Playwright บน server แยก + DB ใหม่ — actual_time input โผล่ในฟอร์ม QC และ round-trip ไปจนถึง export,
+ปุ่ม/หัวฟอร์ม unplanned อ่านว่า "ไม่มีแผนส่ง"/"บันทึกการส่งของไม่มีในแผน" ถูกต้อง, modal tag "ส่งเสร็จสิ้น" โชว์
+สถานะ + เวลาที่บันทึกจริง, modal tag "ไม่มีแผนส่ง" โชว์ "-" ใต้แผนส่งและวันเวลาจริงใต้ส่งจริง — commit `47a15b3`
 
 ---
 
