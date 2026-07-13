@@ -1115,7 +1115,14 @@ export default function DeliveryCalendar() {
     if (status === '_completed') return ['on_time', 'late'].includes(s.status);
     return s.status === status && !s.is_unplanned;
   }
-  function summaryBadgeCount(status) { return schedules.filter(s => bucketMatches(s, status)).length; }
+  // Tag สรุปต้องนับตามช่วงที่กำลังดูอยู่จริง (รายปี/รายเดือน/รายวัน) — ไม่ใช่ยึดเดือนปัจจุบันเสมอ
+  // (บั๊กที่ user รายงาน: สลับเป็นรายปีแล้วตัวเลขไม่รวมทั้งปี ยังโชว์แค่เดือนเดียว)
+  const badgeSchedules = viewMode === 'year' ? yearSchedules
+    : viewMode === 'day' ? schedules.filter(s => s.scheduled_date === selectedDate)
+    : schedules;
+  const badgeFrom = viewMode === 'year' ? yearFrom : viewMode === 'day' ? selectedDate : from;
+  const badgeTo   = viewMode === 'year' ? yearTo   : viewMode === 'day' ? selectedDate : to;
+  function summaryBadgeCount(status) { return badgeSchedules.filter(s => bucketMatches(s, status)).length; }
   const SUMMARY_BADGES = [
     // รอดำเนินการ: เอาออกจากหน้าจัดซื้อ (แสดงเฉพาะ role อื่น เช่น QC รับเข้า) ตามที่ user ระบุ
     { status: 'pending',      full: 'รอดำเนินการ',     short: 'รอ',         cls: 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200', hideFor: ['purchasing'] },
@@ -1150,7 +1157,14 @@ export default function DeliveryCalendar() {
   const navNext = viewMode === 'year' ? nextYear : nextMonth;
   function goToday()   { setCurrentDate(new Date()); setSelectedDate(today); setViewMode('day'); }
 
-  function openDay(dateStr) { setSelectedDate(dateStr); setViewMode('day'); }
+  // ต้อง sync currentDate (เดือน) ตามวันที่คลิกด้วยเสมอ — ไม่งั้นถ้าคลิกวันจากมุมมองรายปี (เดือนอื่นที่ไม่ใช่
+  // เดือนที่ currentDate ชี้อยู่) query เดือนที่โหลดไว้ (schedules/byDate) จะไม่มีข้อมูลของวันนั้นเลย
+  function openDay(dateStr) {
+    const d = new Date(dateStr);
+    setCurrentDate(new Date(d.getFullYear(), d.getMonth(), 1));
+    setSelectedDate(dateStr);
+    setViewMode('day');
+  }
 
   const daySchedules = (byDate[selectedDate] || []).slice().sort((a,b) => (a.time_slot||'').localeCompare(b.time_slot||''));
 
@@ -1495,9 +1509,9 @@ export default function DeliveryCalendar() {
         <TagSummaryModal
           label={tagModal.full}
           bucket={tagModal.status}
-          rows={schedules.filter(s => bucketMatches(s, tagModal.status))}
-          from={from}
-          to={to}
+          rows={badgeSchedules.filter(s => bucketMatches(s, tagModal.status))}
+          from={badgeFrom}
+          to={badgeTo}
           onClose={() => setTagModal(null)}
           onOpenDetail={(s) => { setTagModal(null); openDetail(s); }}
         />
