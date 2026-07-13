@@ -124,6 +124,19 @@ methodology ที่ใช้ทั้ง session นี้)
 
 ---
 
+**คำขอ (รอบที่ 4):** user รายงาน "ตรง ประวัติการดำเนินการ เวลาไม่ได้ +7"
+
+**Root cause:** `audit_logs.created_at` เก็บด้วย SQLite `CURRENT_TIMESTAMP` (UTC ดิบ ไม่มี timezone marker) —
+History list ใน `DetailModal` (`Delivery/index.jsx`) เดิมแค่ `.slice(0,16).replace('T',' ')` ตัดสตริงดิบมาโชว์
+ตรงๆ ไม่ได้แปลง timezone เลย ทำให้เวลาที่เห็นช้ากว่าเวลาไทยจริง 7 ชั่วโมง — คนละจุดกับ `NCR/Detail.jsx`/
+`UAI/Detail.jsx` ที่มี pattern แปลงถูกต้องอยู่แล้ว (`new Date(ts + 'Z').toLocaleString('th-TH', { timeZone:
+'Asia/Bangkok' })`) แก้โดยใช้ pattern เดียวกันให้ตรงกับที่อื่นในระบบ
+
+**Verify:** seed audit_logs row ตรงด้วย raw `created_at` UTC "08:49:38" ยืนยันหน้าเว็บโชว์ "15:49" (ถูกต้อง
++7) แทนที่จะโชว์ "08:49" ดิบ — commit `52c3315`
+
+---
+
 ## 2026-07-13 | Session 125 — Purchasing/Supplier Management + Dashboards (Supplier Assignment, Purchasing Dashboard, Manager Dashboard, Notification fixes)
 
 **คำขอ:** ปรับปรุงระบบ Purchasing/Supplier Management/Dashboard ให้ครบวงจร — (1) Purchasing/Purchasing Manager
