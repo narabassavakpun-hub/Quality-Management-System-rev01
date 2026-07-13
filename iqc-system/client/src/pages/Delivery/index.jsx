@@ -101,7 +101,7 @@ function StatusBadge({ status, isUnplanned }) {
 
 // ─── Detail/Edit Modal ────────────────────────────────────────────────────────
 
-function DetailModal({ schedule, onClose, suppliers, role, holidays = [] }) {
+export function DetailModal({ schedule, onClose, suppliers, role, holidays = [] }) {
   const qc = useQueryClient();
   const todayStr = toDateStr(new Date());
   const nowHour  = new Date().getHours();
@@ -575,7 +575,7 @@ function holidayReason(dateStr, holidays = []) {
   return null;
 }
 
-function CreateModal({ onClose, suppliers, defaultDate, holidays = [] }) {
+export function CreateModal({ onClose, suppliers, defaultDate, holidays = [] }) {
   const qc = useQueryClient();
   const todayStr = toDateStr(new Date());
   const nowHour = new Date().getHours();

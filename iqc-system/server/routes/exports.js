@@ -8,6 +8,7 @@ const db = require('../db/database');
 const auth = require('../middleware/auth');
 const requireRole = require('../middleware/requireRole');
 const { FONT_FACE_CSS } = require('../lib/pdfFont');
+const purchasingDashboardService = require('../services/purchasingDashboardService');
 
 // BUG-006: 5 PDF exports per minute per IP (CLAUDE.md spec)
 const pdfRateLimit = rateLimit({
@@ -1528,6 +1529,118 @@ ${rows.length === 0
       });
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="receiving-today-${date}.pdf"`);
+      res.send(buffer);
+    } finally {
+      await closeIsolated(ctx);
+      releasePdfSlot();
+    }
+  } catch (e) {
+    if (!res.headersSent) res.status(500).json({ error: 'Export ไม่สำเร็จ: ' + e.message });
+  }
+});
+
+// ===== GET /api/purchasing-dashboard/pdf — Export Purchasing Dashboard (สรุป + ตาราง Supplier) เป็น PDF =====
+// scope ตาม role ผู้เรียกเหมือนหน้าจอ (purchasing เห็นเฉพาะ supplier ที่ดูแล, purchasing_manager/admin เห็นทั้งหมด)
+// — ใช้ purchasingDashboardService ตัวเดียวกับที่หน้าจอเรียก ไม่มี query ซ้ำ
+router.get('/purchasing-dashboard/pdf', auth, requireRole(['purchasing', 'purchasing_manager', 'admin']), pdfRateLimit, async (req, res) => {
+  try {
+    const summary = purchasingDashboardService.getSummary(req.user);
+    const { data: suppliers } = purchasingDashboardService.getSuppliers(req.user, { limit: 1000, sort: 'name', dir: 'asc' });
+    const exportTime = new Date().toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Bangkok' });
+
+    const STAT_LABELS = [
+      ['supplier_count', 'Supplier ที่ดูแล'],
+      ['ncr_total', 'NCR ทั้งหมด'],
+      ['ncp_total', 'NCP ทั้งหมด'],
+      ['ncr_waiting_review', 'รอ Review'],
+      ['ncr_waiting_send_link', 'รอส่ง Link'],
+      ['ncr_waiting_supplier_response', 'รอ Supplier ตอบกลับ'],
+      ['ncr_in_progress', 'กำลังดำเนินการ'],
+      ['ncr_closed', 'NCR ปิดแล้ว'],
+      ['ncp_open', 'NCP Open'],
+      ['ncp_closed', 'NCP Closed'],
+      ['overdue', 'เกินกำหนด'],
+    ];
+    const statCells = STAT_LABELS.map(([key, label]) => `
+      <div class="stat-box">
+        <div class="stat-value">${esc(summary[key] ?? 0)}</div>
+        <div class="stat-label">${esc(label)}</div>
+      </div>`).join('');
+
+    const theadRow = `<tr>
+      <th>รหัส</th><th>ผู้ผลิต</th><th>สถานะ</th><th>NCR</th><th>NCP</th><th>เปิด</th>
+      <th>รอ Review</th><th>รอส่ง Link</th><th>รอ Supplier ตอบกลับ</th><th>กำลังดำเนินการ</th><th>ปิดแล้ว</th><th>เกินกำหนด</th>
+    </tr>`;
+    const dataRows = suppliers.map(s => `
+      <tr>
+        <td>${esc(s.code || '-')}</td>
+        <td>${esc(s.name)}</td>
+        <td>${s.is_active ? 'ใช้งาน' : 'ปิดใช้งาน'}</td>
+        <td>${s.ncr_total}</td><td>${s.ncp_total}</td><td>${s.open_count}</td>
+        <td>${s.waiting_review_count}</td><td>${s.waiting_send_link_count}</td><td>${s.waiting_supplier_response_count}</td>
+        <td>${s.in_progress_count}</td><td>${s.closed_count}</td>
+        <td${s.overdue_count > 0 ? ' style="color:#DC2626;font-weight:700;"' : ''}>${s.overdue_count}</td>
+      </tr>`).join('');
+
+    const companyName = db.getSetting('company_name') || '';
+    const logoFile = db.getSetting('company_logo') || '';
+    const logoSrc = logoFile ? (imgToBase64('general', logoFile) || '') : '';
+    const headerTemplate = `
+      <div style="font-family:'IBM Plex Sans Thai','Tahoma','Leelawadee UI',sans-serif;width:100%;padding:0 8mm;box-sizing:border-box;color:#1F2937;">
+        <div style="display:flex;align-items:center;gap:8px;border-bottom:2px solid #1A3A5C;padding-bottom:4px;">
+          ${logoSrc ? `<img src="${logoSrc}" style="max-height:32px;max-width:110px;object-fit:contain;" />` : ''}
+          <div style="flex:1;">
+            ${companyName ? `<div style="font-size:10px;font-weight:700;color:#1A3A5C;">${esc(companyName)}</div>` : ''}
+            <div style="font-size:12px;font-weight:700;color:#1A3A5C;">รายงาน Dashboard จัดซื้อ</div>
+            <div style="font-size:8px;color:#6B7280;">ผู้ออกรายงาน: ${esc(req.user.full_name)} &nbsp;|&nbsp; Export: ${esc(exportTime)} &nbsp;|&nbsp; ${suppliers.length} Supplier</div>
+          </div>
+        </div>
+      </div>`;
+    const footerTemplate = `
+      <div style="font-family:'IBM Plex Sans Thai','Tahoma','Leelawadee UI',sans-serif;font-size:9px;color:#6B7280;width:100%;text-align:center;">
+        หน้า <span class="pageNumber"></span>/<span class="totalPages"></span>
+      </div>`;
+
+    const html = `<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8">
+<style>
+  ${FONT_FACE_CSS}
+  body{font-family:'IBM Plex Sans Thai','Segoe UI',Arial,sans-serif;font-size:11px;color:#1F2937;margin:0;}
+  .stats-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
+  .stat-box{border:1px solid #D1D5DB;border-radius:4px;padding:6px 10px;min-width:90px;}
+  .stat-value{font-size:16px;font-weight:700;color:#1A3A5C;}
+  .stat-label{font-size:9px;color:#6B7280;}
+  table{width:100%;border-collapse:collapse;}
+  thead{display:table-header-group;}
+  th{background:#1A3A5C;color:#fff;padding:6px;font-size:10px;text-align:left;white-space:nowrap;}
+  td{padding:5px 6px;border-bottom:1px solid #E5E7EB;font-size:10px;vertical-align:middle;}
+  tr{page-break-inside:avoid;}
+  .no-data{text-align:center;color:#6B7280;padding:40px;font-size:14px;}
+</style>
+</head><body>
+<div class="stats-row">${statCells}</div>
+${suppliers.length === 0
+  ? '<div class="no-data">ไม่มีข้อมูล Supplier</div>'
+  : `<table><thead>${theadRow}</thead><tbody>${dataRows}</tbody></table>`}
+</body></html>`;
+
+    await acquirePdfSlot();
+    let ctx;
+    try {
+      const { page, context } = await openIsolatedPage();
+      ctx = context;
+      await page.setContent(html, { waitUntil: 'domcontentloaded' });
+      await page.evaluate(async () => { await document.fonts.ready; });
+      const buffer = await page.pdf({
+        format: 'A4',
+        landscape: true,
+        printBackground: true,
+        displayHeaderFooter: true,
+        headerTemplate,
+        footerTemplate,
+        margin: { top: '30mm', bottom: '14mm', left: '8mm', right: '8mm' },
+      });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="purchasing-dashboard-${new Date().toISOString().slice(0, 10)}.pdf"`);
       res.send(buffer);
     } finally {
       await closeIsolated(ctx);

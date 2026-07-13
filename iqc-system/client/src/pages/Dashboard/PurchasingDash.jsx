@@ -5,13 +5,13 @@ import SortTh from '../../components/UI/SortTh';
 import Pagination from '../../components/UI/Pagination';
 import Badge from '../../components/UI/Badge';
 import HeroStat, { HeroIcons } from '../../components/UI/HeroStat';
-import api from '../../utils/api';
+import MiniDeliveryCalendar from './MiniDeliveryCalendar';
+import api, { downloadPdf } from '../../utils/api';
 import { useAuth } from '../../contexts/AuthContext';
-import DeliveryCalendar from '../Delivery/index';
 
 // Req 2 — Purchasing Dashboard: สรุป + ผู้ผลิตของฉัน (เดียวกับ "Supplier Health", คอลัมน์เหมือนกันทุกตัวตาม
-// requirement เดิม จึงใช้ query/ตารางเดียวกัน ไม่แยกซ้ำ) + NCR/NCP ของฉัน + ปฏิทินส่งของ (embed DeliveryCalendar
-// เดิมตรงๆ — self-contained, ไม่ต้องมี prop, สร้าง/แก้ไขแผนส่งของได้ในหน้าเดียวกันเลย)
+// requirement เดิม จึงใช้ query/ตารางเดียวกัน ไม่แยกซ้ำ) + NCR/NCP ของฉัน + ปฏิทินส่งของแบบย่อฝังในหน้าเดียว (ไม่ใช่
+// tab แยก ให้ทุกอย่างอยู่หน้าเดียวไม่ต้อง scroll ไปหา — ดู MiniDeliveryCalendar.jsx)
 // Style ปรับตาม reference ที่ user ส่งมา (การ์ดสีเด่น + ตัวเลขใหญ่ + bar/donut chart) — คงโทนสี/token เดิมของระบบ
 // (primary/warning/success/danger) ไม่ใช้สีนอกระบบ, ตาม CLAUDE.md §15/§25.3
 const BUCKET_LABELS = {
@@ -50,7 +50,7 @@ function BucketBarChart({ summary }) {
     { name: 'เกินกำหนด', value: summary?.overdue || 0 },
   ];
   return (
-    <ResponsiveContainer width="100%" height={220}>
+    <ResponsiveContainer width="100%" height={190}>
       <BarChart data={data} layout="vertical" margin={{ left: 8, right: 16, top: 4, bottom: 4 }}>
         <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
         <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={110} />
@@ -305,10 +305,22 @@ export default function PurchasingDash({ navigate }) {
   const { data: summary, isLoading: summaryLoading, isError: summaryError } = useSummary();
   const [tab, setTab] = useState('suppliers');
   const [presetSupplierId, setPresetSupplierId] = useState(null);
+  const [exporting, setExporting] = useState(false);
 
   function pickSupplier(id) {
     setPresetSupplierId(id);
     setTab('ncrs');
+  }
+
+  async function handleExportPdf() {
+    setExporting(true);
+    try {
+      await downloadPdf('/purchasing-dashboard/pdf', {}, `purchasing-dashboard-${new Date().toISOString().slice(0, 10)}.pdf`);
+    } catch {
+      alert('Export PDF ไม่สำเร็จ');
+    } finally {
+      setExporting(false);
+    }
   }
 
   const activeWork = (summary?.ncr_waiting_review || 0) + (summary?.ncr_waiting_send_link || 0)
@@ -317,47 +329,56 @@ export default function PurchasingDash({ navigate }) {
   const totalAll = (summary?.ncr_total || 0) + (summary?.ncp_total || 0);
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="page-title">สวัสดี, {user?.full_name}</h1>
-        <p className="text-muted text-small mt-0.5">วันนี้{thaiTodayLabel()}</p>
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="page-title">สวัสดี, {user?.full_name}</h1>
+          <p className="text-muted text-small mt-0.5">วันนี้{thaiTodayLabel()}</p>
+        </div>
+        <button
+          onClick={handleExportPdf}
+          disabled={exporting}
+          className="inline-flex items-center gap-1.5 px-3 py-2 border border-border rounded-md text-small text-muted bg-surface hover:bg-bg min-h-[44px] transition-colors disabled:opacity-50"
+        >
+          <svg className="w-4 h-4 text-danger flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+          {exporting ? 'กำลัง Export...' : 'Export PDF'}
+        </button>
       </div>
 
       {summaryError && <div className="card text-danger text-small">โหลดสรุปข้อมูลไม่สำเร็จ</div>}
 
-      {/* Hero stats — เน้นสี+ตัวเลขใหญ่ */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <HeroStat icon={HeroIcons.building} value={summaryLoading ? '-' : summary?.supplier_count} label="Supplier ที่ดูแล" tone="primary" />
-        <HeroStat icon={HeroIcons.tasks} value={summaryLoading ? '-' : activeWork} label="งานที่ต้องดำเนินการ" tone="warning" />
-        <HeroStat icon={HeroIcons.check} value={summaryLoading ? '-' : closedAll} label="ปิดแล้ว" tone="success" />
-        <HeroStat icon={HeroIcons.alert} value={summaryLoading ? '-' : summary?.overdue} label="เกินกำหนด" tone="danger" emphasize />
-      </div>
+      {/* ซ้าย: hero stats + charts / ขวา: ปฏิทินส่งของแบบย่อ — จัดหน้าเดียวไม่ต้อง scroll ไปหา */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-4 items-start">
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <HeroStat icon={HeroIcons.building} value={summaryLoading ? '-' : summary?.supplier_count} label="Supplier ที่ดูแล" tone="primary" />
+            <HeroStat icon={HeroIcons.tasks} value={summaryLoading ? '-' : activeWork} label="งานที่ต้องดำเนินการ" tone="warning" />
+            <HeroStat icon={HeroIcons.check} value={summaryLoading ? '-' : closedAll} label="ปิดแล้ว" tone="success" />
+            <HeroStat icon={HeroIcons.alert} value={summaryLoading ? '-' : summary?.overdue} label="เกินกำหนด" tone="danger" emphasize />
+          </div>
 
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="card lg:col-span-2">
-          <h2 className="text-h3 font-semibold text-primary mb-2">สถานะ NCR/NCP</h2>
-          {summaryLoading ? <div className="h-[220px] flex items-center justify-center text-muted">กำลังโหลด...</div> : <BucketBarChart summary={summary} />}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="card lg:col-span-2">
+              <h2 className="text-h3 font-semibold text-primary mb-2">สถานะ NCR/NCP</h2>
+              {summaryLoading ? <div className="h-[190px] flex items-center justify-center text-muted">กำลังโหลด...</div> : <BucketBarChart summary={summary} />}
+            </div>
+            <div className="card flex flex-col items-center justify-center">
+              <h2 className="text-h3 font-semibold text-primary mb-2 self-start">อัตราปิดงาน</h2>
+              {summaryLoading ? <div className="h-[160px] flex items-center justify-center text-muted">กำลังโหลด...</div> : <ClosingRateDonut closed={closedAll} total={totalAll} />}
+            </div>
+          </div>
         </div>
-        <div className="card flex flex-col items-center justify-center">
-          <h2 className="text-h3 font-semibold text-primary mb-2 self-start">อัตราปิดงาน</h2>
-          {summaryLoading ? <div className="h-[160px] flex items-center justify-center text-muted">กำลังโหลด...</div> : <ClosingRateDonut closed={closedAll} total={totalAll} />}
-        </div>
+
+        <MiniDeliveryCalendar />
       </div>
 
       <div className="flex gap-2 flex-wrap">
         <TabButton active={tab === 'suppliers'} onClick={() => setTab('suppliers')}>ผู้ผลิตของฉัน</TabButton>
         <TabButton active={tab === 'ncrs'} onClick={() => setTab('ncrs')}>NCR/NCP ของฉัน</TabButton>
-        <TabButton active={tab === 'delivery'} onClick={() => setTab('delivery')}>ปฏิทินส่งของ</TabButton>
       </div>
 
       {tab === 'suppliers' && <SuppliersSection onPickSupplier={pickSupplier} />}
       {tab === 'ncrs' && <NcrSection navigate={navigate} presetSupplierId={presetSupplierId} />}
-      {tab === 'delivery' && (
-        <div className="card p-0 overflow-hidden">
-          <DeliveryCalendar />
-        </div>
-      )}
     </div>
   );
 }
