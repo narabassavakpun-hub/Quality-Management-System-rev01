@@ -91,11 +91,19 @@ const STATUS_CFG = {
 };
 
 function StatusBadge({ status, isUnplanned }) {
+  // ไม่มีแผนส่ง (is_unplanned) เก็บ status='on_time' ในฐานข้อมูลเสมอ (ไม่มีการ "วางแผน" มาก่อนจริงๆ) — โชว์
+  // เฉพาะป้าย "ไม่มีแผนส่ง" ป้ายเดียว ไม่โชว์ "ส่งตามแผน" คู่กัน (ขัดแย้งในตัวเอง ทำให้ user สับสน)
+  if (isUnplanned) {
+    return (
+      <span className="flex flex-wrap gap-1">
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[12px] font-medium bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200">ไม่มีแผนส่ง</span>
+      </span>
+    );
+  }
   const cfg = STATUS_CFG[status] || { label: status, cls: 'bg-gray-100 dark:bg-gray-900 text-gray-600 dark:text-gray-200' };
   return (
     <span className="flex flex-wrap gap-1">
       <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[12px] font-medium ${cfg.cls}`}>{cfg.label}</span>
-      {!!isUnplanned && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[12px] font-medium bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200">ไม่ได้แจ้งล่วงหน้า</span>}
     </span>
   );
 }
