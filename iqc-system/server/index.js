@@ -602,6 +602,20 @@ function archiveOldNotifications() {
 archiveOldNotifications();
 setInterval(archiveOldNotifications, 24 * 60 * 60 * 1000).unref();
 
+// ===== Overdue NCR notification (Req 6 — Purchasing Dashboard) =====
+// แจ้ง Purchasing Owner + Purchasing Manager ครั้งเดียวต่อ NCR ที่เกินกำหนด — รันตอนบูต + ทุก 1 ชม.
+const { checkOverdueNcrNotifications } = require('./lib/overdueNotifier');
+function runOverdueCheck() {
+  try {
+    const n = checkOverdueNcrNotifications();
+    if (n > 0) console.log(`[overdue] แจ้งเตือน NCR เกินกำหนด ${n} รายการ`);
+  } catch (e) {
+    console.error('[overdue] check error:', e.message);
+  }
+}
+runOverdueCheck();
+setInterval(runOverdueCheck, 60 * 60 * 1000).unref();
+
 // ===== Backup ไป Cloudflare R2 (optional — no-op ถ้าไม่ได้ตั้ง R2_* env, ดู DEPLOYMENT.md) =====
 // รอบถี่ (~10 นาที) แทนที่จะเป็นรอบเดียว/วัน เพราะ container ephemeral (เช่น Render free tier ที่ไม่มี
 // persistent disk) หายได้จาก sleep/wake, maintenance restart, OOM-kill — ไม่ใช่แค่ตอน redeploy เท่านั้น

@@ -198,6 +198,8 @@ function runMigrations() {
   safeAddColumn('ncrs', 'link_copied_at', 'DATETIME');
   safeAddColumn('ncrs', 'link_copied_by', 'INTEGER REFERENCES users(id)');
   safeAddColumn('ncrs', 'link_copied_count', 'INTEGER DEFAULT 0');
+  // Req 6 (Purchasing dashboard) — กันแจ้งเตือน "เกินกำหนด" ซ้ำทุกรอบที่ scheduler รัน (แจ้งครั้งเดียวต่อรายการ)
+  safeAddColumn('ncrs', 'overdue_notified_at', 'DATETIME');
 
   // supplier_responses: respondent name + track superseded responses
   safeAddColumn('supplier_responses', 'respondent_name', 'TEXT');

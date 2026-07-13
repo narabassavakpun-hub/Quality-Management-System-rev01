@@ -25,6 +25,13 @@ function canPurchasingActOnSupplier(userId, supplierId) {
   return assignees.length === 0 || assignees.includes(userId);
 }
 
+// ผู้จัดการจัดซื้อทุกคน (active) — ใช้เสริม resolveNotifyTargetIds เฉพาะ event ที่ spec (CLAUDE.md §22 Req 6 เดิม)
+// ระบุให้แจ้ง manager ด้วย: NCR รอ Review/ปิดแล้ว/เกินกำหนด — ไม่ใช่ทุก event (Waiting Send Link/Supplier Response
+// แจ้งเฉพาะ Purchasing Owner ตาม spec) จึงแยกเป็นฟังก์ชันของตัวเอง ไม่รวมเข้า resolveNotifyTargetIds ตรงๆ
+function getPurchasingManagerIds() {
+  return getUsersByRole('purchasing_manager').map(u => u.id);
+}
+
 // SQL fragment ต่อท้าย WHERE เพื่อกรอง list ให้ purchasing เห็นเฉพาะ supplier ที่ไม่มีผู้ดูแล หรือตัวเองเป็นผู้ดูแล
 // — ใช้ `supplierIdExpr` เป็น column/expression ของ supplier_id ในคิวรีนั้น (เช่น 'b.supplier_id')
 // ต้อง push userId เข้า params ต่อจาก param อื่นๆ ตามตำแหน่ง `?` ที่ปรากฏ (มี 1 ตัวใน fragment นี้)
@@ -35,4 +42,4 @@ function purchasingVisibilitySQL(supplierIdExpr) {
   )`;
 }
 
-module.exports = { getSupplierAssigneeIds, resolveNotifyTargetIds, canPurchasingActOnSupplier, purchasingVisibilitySQL };
+module.exports = { getSupplierAssigneeIds, resolveNotifyTargetIds, canPurchasingActOnSupplier, purchasingVisibilitySQL, getPurchasingManagerIds };
