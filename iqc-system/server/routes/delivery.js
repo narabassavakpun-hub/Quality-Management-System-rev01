@@ -8,7 +8,7 @@ const requireRole = require('../middleware/requireRole');
 const uploads = require('../middleware/upload');
 const { getUsersByRole, getReceivingQCStaff, createNotification, sendTelegram } = require('../lib/notify');
 const { requireReceivingQC } = require('../middleware/requireRole');
-const { canPurchasingActOnSupplier, purchasingVisibilitySQL } = require('../lib/purchasingScope');
+const { canPurchasingActOnSupplier } = require('../lib/purchasingScope');
 const deliveryService = require('../services/deliveryService');
 
 // role='purchasing' เท่านั้นที่ถูกจำกัด (purchasing_manager/qc_staff/qc_supervisor ผ่านเสมอ — มี guard ของตัวเองอยู่แล้ว)
@@ -30,7 +30,9 @@ router.get('/', auth, (req, res) => {
   if (supplier_id) { where += ' AND ds.supplier_id = ?'; params.push(supplier_id); }
   if (status) { where += ' AND ds.status = ?'; params.push(status); }
   if (is_unplanned !== undefined) { where += ' AND ds.is_unplanned = ?'; params.push(Number(is_unplanned)); }
-  if (req.user.role === 'purchasing') { where += ' AND ' + purchasingVisibilitySQL('ds.supplier_id'); params.push(req.user.id); }
+  // จัดซื้อเห็นปฏิทินแผนส่งของทุก Supplier เหมือน QC (ตัดสินใจโดย user — เดิม scope ตามผู้ดูแลเหมือน NCR/UAI ทำให้
+  // ตัวเลข tag สรุปผลระหว่างจัดซื้อกับ QC ไม่ตรงกัน) — สิทธิ์แก้ไข/acknowledge ยังคง scope ตามผู้ดูแลเหมือนเดิมที่
+  // blockIfNotAssignedPurchasing ด้านล่าง ไม่เกี่ยวกัน
 
   const rows = db.prepare(`
     SELECT ds.*, s.name as supplier_name, u.full_name as created_by_name

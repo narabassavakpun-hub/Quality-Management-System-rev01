@@ -181,13 +181,16 @@ test('SCOPE-DEL-03 purchasing_manager แก้ไขได้แม้ไม่
   assert.equal(res.status, 200);
 });
 
-test('SCOPE-DEL-04 GET list: จัดซื้อไม่เห็น schedule ของ Supplier ที่มีผู้ดูแลคนอื่น', async () => {
+test('SCOPE-DEL-04 GET list: จัดซื้อเห็นปฏิทินแผนส่งของทุก Supplier เหมือน QC (ตัดสินใจ user — ต่างจาก NCR/UAI ที่ยัง scope ตามผู้ดูแล)', async () => {
   const idAssigned = makeDeliverySchedule(supAssigned);
   const idOpen = makeDeliverySchedule(supOpen);
   const list = await api('GET', '/api/delivery?limit=100', { cookie: C.pur2 });
   const ids = list.body.data.map(r => r.id);
-  assert.ok(!ids.includes(idAssigned));
+  assert.ok(ids.includes(idAssigned), 'จัดซื้อต้องเห็น schedule ของ Supplier ที่มีผู้ดูแลคนอื่นด้วย (ไม่ scope การเห็นอีกต่อไป)');
   assert.ok(ids.includes(idOpen));
+  // แต่สิทธิ์แก้ไขยังคง scope ตามผู้ดูแลเหมือนเดิม (ดู SCOPE-DEL-01/02/03) — เห็นได้ ไม่ได้แปลว่าแก้ไขได้
+  const patchOther = await api('PATCH', `/api/delivery/${idAssigned}`, { cookie: C.pur2, body: { notes: 'x' } });
+  assert.equal(patchOther.status, 403);
 });
 
 test('SCOPE-DEL-05 qc_staff ไม่ถูกกรองด้วย logic นี้ (ไม่ใช่ purchasing) — ยังเห็น/acknowledge schedule ได้ปกติ', async () => {
