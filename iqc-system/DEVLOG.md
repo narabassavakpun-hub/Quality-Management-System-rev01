@@ -4,7 +4,7 @@
 
 ## 📌 Current State (2026-07-13)
 
-**Version:** rev01 · Production · **Latest code:** Session 125 (2026-07-13)
+**Version:** rev01 · Production · **Latest code:** Session 126 (2026-07-13)
 
 **Architecture Summary**
 - Backend: Express 4.18 + better-sqlite3 (WAL, FK ON), **102 ตาราง** (+`environment_presets`, S118; +`supplier_purchasing_assignees`, S125), ~33 route files, SSE + Telegram, port 3001
@@ -29,10 +29,70 @@
 
 - 🏁 **Deploy/Backup/Restore architecture เอกสารครบแล้ว (S124)** — R2 backup/restore/bootstrap system (`bootstrap.js`/`lib/backupService.js`/`lib/restoreService.js`/`lib/r2Client.js`, สร้างไว้ตั้งแต่ก่อน S110 แต่ไม่เคยถูกบันทึกใน DEVLOG) มี **CLAUDE.md §27** เอกสารแล้ว + แก้ **AUDIT.md D5** ที่บอกข้อมูลผิด (ว่ายังไม่มี auto-backup) + แก้ root cause DB corrupt ซ้ำ 3 ครั้งใน S119 (`docker-compose.local.yml` bind-mount → named volume) + เปิดทาง phone-testing แบบ native (`vite.config.js` host:true) + เพิ่ม test คลุม `backupService.js` alerting ที่ค้าง uncommitted อยู่ก่อนหน้า
 - 🏁 **Purchasing Supplier-Assignment + Dashboards (S125)** — เพิ่ม role `purchasing_manager`, ตาราง `supplier_purchasing_assignees` (m:n), scope ทั้ง visibility/action/notification ของ NCR-UAI-Delivery ตามผู้ดูแล Supplier, เปิดสิทธิ์ Purchasing/Manager จัดการ Supplier เอง, สร้าง Purchasing Dashboard + Purchasing Manager Dashboard (Team Summary/Members/Member Detail + KPI) ครบ, แก้ notification gap (purchasing_manager/Supplier Response/Overdue) — รายละเอียดเต็มดู session log ด้านล่าง; **CLAUDE.md §11 Role Matrix ยังไม่ได้เพิ่มคอลัมน์ `purchasing_manager`** (เอกสารสรุปเดิม 10 คอลัมน์ ไม่ครอบ role ใหม่นี้ — รอปรับรอบถัดไป, ไม่กระทบโค้ด)
+- 🏁 **Delivery notification/real-time bugs + tag drill-down + yearly view (S126)** — user รายงาน 2 รอบ:
+  (1) กระดิ่ง acknowledge เด้งลิงก์ค้าง + กระดิ่งอื่นๆ ไม่ deep-link เฉพาะจุด, (2) ปฏิทินจัดซื้อไม่ auto-update
+  ตอน QC ปิดสถานะ + ไม่มีกระดิ่งแจ้งรับของ — แก้ครบทั้ง route-effect bug (React Router ไม่ remount ตอน query
+  param เปลี่ยน), missing deep-link ในเกือบทุก notification call site, และบั๊กจริงใน `useSSE.js`'s
+  `keysFromLink()` (ไม่ตัด query string ก่อน match ทำให้ SSE invalidate เงียบทุกลิงก์ที่มี `?schedule=`) —
+  เพิ่มด้วย: tag สรุปสถานะคลิกดูรายการ+export Excel ได้ (คอลัมน์ใหม่ `delivery_schedules.received_by`), มุมมอง
+  ปฏิทินรายปี — รายละเอียดเต็มดู session log ด้านล่าง
 
 **Technical Debt / Roadmap:** ดู [`../AUDIT.md`](../AUDIT.md) §12 (Refactor Roadmap) — **P0 ปิดครบแล้ว (S105)**; P1 ปิดครบ; P2 ปิดครบ (S103); เหลือ P3 (horizontal scale, TypeScript) + gap ใหม่ (ipqc_records removal decision, ipqc_inspections test coverage, fgqc reset-all FK gap) + restore-drill ยังไม่ automate ใน CI (ดู AUDIT.md D5) + CLAUDE.md §11 Role Matrix ต้องเพิ่ม purchasing_manager (S125)
 
 **เอกสารอ้างอิง:** [`../CLAUDE.md`](../CLAUDE.md) · [`../PRD.md`](../PRD.md) · [`../brand.md`](../brand.md) · [`../design-dashboard.md`](../design-dashboard.md) · [`../testcase.md`](../testcase.md) · [`../AUDIT.md`](../AUDIT.md)
+
+---
+
+## 2026-07-13 | Session 126 — Delivery: notification deep-link bugs, real-time sync bug, tag drill-down + export, yearly calendar view
+
+**คำขอ (รอบที่ 1):** user รายงาน 2 บั๊ก — (1) หลัง QC กด "รับทราบ" กระดิ่งจัดซื้อเด้งแจ้งเตือนถูกต้อง แต่คลิกลิงก์
+ที่กระดิ่งไปหน้ารายละเอียดส่งของแล้ว modal ไม่เปิด ค้างอยู่ ต้องรีเฟรชเองถึงจะขึ้น (2) หน้า qc_staff กระดิ่งกดแล้ว
+ไม่เด้งไปที่ปุ่ม "รับทราบ" ของ supplier นั้นให้เลย ต้องหาเองคลิกเอง
+
+**Root cause รอบ 1:**
+- Bug 1: `Delivery/index.jsx`'s deep-link `useEffect` (อ่าน query param `?schedule=` แล้วเปิด DetailModal)
+  มี dependency เป็น `[]` เฉยๆ ทำงานแค่ตอน mount ครั้งแรก — ถ้าผู้ใช้อยู่หน้า `/delivery` อยู่แล้วแล้วกดลิงก์
+  แจ้งเตือนใหม่ (path เดิม แค่ query string เปลี่ยน) React Router ไม่ remount component เลย effect ไม่ทำงานซ้ำ
+  จนกว่าจะรีเฟรชหน้าเอง — แก้เป็น dep บนค่า `scheduleParam` จริง
+- Bug 2: มีแค่ notification "QC รับทราบ" อันเดียวที่มี deep link `?schedule=<id>` ส่วน notification อื่นที่ QC
+  ได้รับ (แจ้งกำหนดส่งใหม่, นอกเวลาทำงาน, วันหยุด, เลื่อนวัน, แก้ไขแผน) ใน `deliveryService.js` ยังลิงก์ไปหน้า
+  `/delivery` เฉยๆ ไม่มี id — เพิ่ม deep link ให้ทุกจุด (ยกเว้น `deleteSchedule` เพราะ record ถูกลบไปแล้วตอน
+  notification ยิง ลิงก์เจาะจงจะ 404)
+
+**Verify รอบ 1:** Playwright บน server แยก + DB ใหม่ — ฝั่งจัดซื้ออยู่หน้า `/delivery` อยู่แล้ว กดกระดิ่ง → modal
+เปิดทันทีไม่ต้องรีเฟรช, ฝั่ง QC อยู่หน้าอื่น กดกระดิ่งแจ้งกำหนดส่งใหม่ → เด้งตรงไปที่ modal ของ supplier นั้นพร้อม
+ปุ่ม "รับทราบ" ทันที — commit `c107f8c`
+
+---
+
+**คำขอ (รอบที่ 2):** user รายงานต่อ 3 เรื่อง — (1) QC กดปุ่ม "บันทึก" (ปิดสถานะตามแผน/นอกแผน) ปฏิทินจัดซื้อไม่
+อัปเดตทันที ต้องรีเฟรชเอง และกระดิ่งจัดซื้อไม่เด้งแจ้งว่ารับสินค้าเรียบร้อยแล้วเลย (2) tag สรุปสถานะ (ส่งตามแผน/
+ส่งนอกแผน/ส่งเสร็จสิ้น ฯลฯ) ให้คลิกดูรายการข้างในได้ (ผู้ผลิต/แผนส่ง/ส่งจริง/QC ผู้รับ/comment) + export Excel
+(3) เพิ่มมุมมอง "รายปี" ในปฏิทิน (มีรายเดือน/รายวันอยู่แล้ว)
+
+**Root cause (1) — 2 บั๊กซ้อนกัน:**
+- บั๊กจริงใน `useSSE.js`'s `keysFromLink()`: split link ด้วย `/` โดยไม่ตัด query string ออกก่อน ทำให้ลิงก์แบบ
+  `/delivery?schedule=123` (ที่เพิ่มไปรอบ 1) กลายเป็น segment `"delivery?schedule=123"` ทั้งท่อน ไม่ตรงกับ
+  `=== 'delivery'` เลย — SSE invalidate query เงียบๆ ไม่ทำงานเลยสำหรับ notification ที่มี deep link เกือบทั้งหมด
+  (กระทบกว้างกว่าที่ user รายงานแค่ 1 จุด)
+- `updateStatus`'s branch on_time/late ไม่เคยเรียก `createNotification` เลยสักครั้ง (มีแต่ branch rescheduled) —
+  ไม่มีทั้ง SSE push และกระดิ่งจัดซื้อ แก้โดยเพิ่ม notification "QC รับสินค้าเรียบร้อยแล้ว" ไปยัง
+  `resolveNotifyTargetIds(supplier)` พร้อม deep link, และ stamp คอลัมน์ใหม่ `delivery_schedules.received_by`
+  (migration แบบ safeAddColumn) ไว้ใช้ต่อใน (2)
+
+**การแก้ (2)/(3):** tag คลิกเปิด `TagSummaryModal` ใหม่ (ตาราง ผู้ผลิต/แผนส่ง/ส่งจริง/QC ผู้รับ/หมายเหตุ, กรอง
+จาก schedules ที่โหลดในเดือนปัจจุบันอยู่แล้ว ใช้ predicate เดียวกับตัวนับ tag) + ปุ่ม Export Excel เรียก endpoint
+ใหม่ `GET /api/delivery/export/excel?bucket=&from=&to=` (generate ฝั่ง server ตาม CLAUDE.md §13, bucket mapping
+ชุดเดียวกับฝั่ง client) · เพิ่ม viewMode `'year'` คู่ `month`/`day` — grid 12 mini-month ต่อปี (query แยก
+`['delivery-year', year]` โหลดเฉพาะตอนสลับมาดู), จุดสีบอกวันที่มีรายการ, คลิกหัวเดือนเข้ารายเดือน/คลิกวันเข้า
+รายวัน
+
+**Test:** `node --test` → 258/258 เขียว, 0 skip (ไม่เพิ่ม test ใหม่ — ยืนยันด้วย Playwright live-verify แทนตาม
+methodology ที่ใช้ทั้ง session นี้)
+
+**Verify รอบ 2:** Playwright บน server แยก + DB ใหม่อีกครั้ง — ปฏิทินจัดซื้อ flip เป็น "ส่งของแล้ว" + กระดิ่งขึ้น
+ภายใน ~2 วิ โดยไม่รีเฟรชเลย, tag "ส่งเสร็จสิ้น" เปิด modal ถูก supplier/QC ผู้รับ + export คืนไฟล์ xlsx
+(`Content-Type` ถูกต้อง), มุมมองรายปีขึ้นครบ 12 เดือน คลิกวันที่สลับไปรายวันด้วยวันที่ถูกต้อง — commit `1be6f53`
 
 ---
 
