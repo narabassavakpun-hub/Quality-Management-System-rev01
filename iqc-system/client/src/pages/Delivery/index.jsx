@@ -360,8 +360,11 @@ export function DetailModal({ schedule, onClose, suppliers, role, holidays = [] 
               {['on_time','late'].includes(statusForm.status) && (
                 <div>
                   <label className="label">เวลาที่มาส่ง *</label>
-                  {/* lang="en-GB" บังคับ 24 ชม. เสมอ — ไม่งั้น input type=time จะโชว์ AM/PM ตาม locale ของเครื่อง/browser */}
-                  <input type="time" lang="en-GB" className="input" value={statusForm.actual_time} onChange={e => setStatusForm(p => ({ ...p, actual_time: e.target.value }))} />
+                  {/* ใช้ TimePicker (select ธรรมดา) แทน input type=time — lang="en-GB" เคยลองแล้วแก้ไม่ได้จริง
+                      เพราะ picker widget ของ native input ผูกกับ regional format ของ Windows/browser ที่เครื่อง
+                      ผู้ใช้เอง ไม่ใช่ lang attribute ของ HTML (ยืนยันจาก screenshot จริงที่ user ส่งมา ยังมี AM/PM
+                      โผล่อยู่ดี) — select เป็น 24 ชม. เสมอ ไม่มีทางโผล่ AM/PM เพราะไม่ได้พึ่ง native widget เลย */}
+                  <TimePicker value={statusForm.actual_time} onChange={v => setStatusForm(p => ({ ...p, actual_time: v }))} />
                 </div>
               )}
             </div>
