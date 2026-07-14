@@ -151,10 +151,15 @@ function IssueTalkBadge({ count }) {
   );
 }
 
+// จัดซื้อ/ผู้จัดการจัดซื้อ — เมนูมีกลุ่มย่อยแค่ 2 กลุ่ม (IQC, Master List) ตามคำขอ user ให้โชว์หัวข้อย่อยครบ
+// ทุกกลุ่มเลยโดยไม่ต้องกดคลิก แทน accordion เดิม (เปิดได้ทีละกลุ่ม + ยุบเมื่อเปลี่ยนหน้า)
+const ALWAYS_EXPAND_ROLES = ['purchasing', 'purchasing_manager'];
+
 export default function Sidebar({ collapsed, onToggle }) {
   const { user, logout } = useAuth();
   const location = useLocation();
   const [changePwOpen, setChangePwOpen] = useState(false);
+  const alwaysExpand = ALWAYS_EXPAND_ROLES.includes(user?.role);
   const visibleItems = NAV_ITEMS.filter(item =>
     item.roles.includes(user?.role) && (!item.condition || item.condition(user))
   );
@@ -169,12 +174,15 @@ export default function Sidebar({ collapsed, onToggle }) {
   const issueTalkUnread = unreadData?.total ?? 0;
 
   // auto-expand เฉพาะกลุ่มที่ path ปัจจุบันอยู่จริง (accordion — เปิดได้ทีละกลุ่มเท่านั้น)
+  // ยกเว้น ALWAYS_EXPAND_ROLES — เปิดทุกกลุ่มค้างไว้เสมอ ไม่ยุบตามการนำทาง
   const [openGroups, setOpenGroups] = useState(() => {
+    if (alwaysExpand) return new Set(visibleItems.filter(i => i.children).map(i => i.path));
     const p = findOpenGroupPath(location.pathname, visibleItems);
     return p ? new Set([p]) : new Set();
   });
 
   useEffect(() => {
+    if (alwaysExpand) return; // ไม่ยุบ/ไม่เปลี่ยนตาม route
     const p = findOpenGroupPath(location.pathname, visibleItems);
     setOpenGroups(p ? new Set([p]) : new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -221,14 +229,16 @@ export default function Sidebar({ collapsed, onToggle }) {
           return (
             <div key={item.path}>
               <button
-                onClick={() => toggleGroup(item.path)}
-                className={`flex items-center gap-3 px-4 py-3 text-body transition-colors min-h-[48px] w-full text-left ${isGroupActive ? 'text-white font-medium' : 'text-white/70 hover:bg-white/10 hover:text-white'}`}
+                onClick={alwaysExpand ? undefined : () => toggleGroup(item.path)}
+                className={`flex items-center gap-3 px-4 py-3 text-body transition-colors min-h-[48px] w-full text-left ${alwaysExpand ? 'cursor-default' : ''} ${isGroupActive ? 'text-white font-medium' : 'text-white/70 hover:bg-white/10 hover:text-white'}`}
               >
                 {Icons[item.icon]}
                 <span className="flex-1">{item.label}</span>
-                <span className={`transition-transform duration-200 ${isGroupOpen ? 'rotate-180' : ''}`}>
-                  {Icons.chevron}
-                </span>
+                {!alwaysExpand && (
+                  <span className={`transition-transform duration-200 ${isGroupOpen ? 'rotate-180' : ''}`}>
+                    {Icons.chevron}
+                  </span>
+                )}
               </button>
 
               {isGroupOpen && (
