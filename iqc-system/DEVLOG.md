@@ -490,6 +490,72 @@ SupervisorDash/WarehouseDash ที่แก้ label ใหม่) — commit `
 
 ---
 
+**คำขอ (รอบที่ 12):** user ขอย้ายกล่อง "รอรับเข้าวันนี้" ใน `QCStaffDash.jsx` (desktop) จากคอลัมน์ "NCR Monitor" ไป
+อยู่ในคอลัมน์ "แนวโน้มรับเข้า" แทน (รู้สึกว่าไม่เข้าพวกกับการ์ด NCR อื่นๆ ในคอลัมน์เดิม)
+
+**การแก้:** ย้าย JSX block เดิมทั้งก้อนจากคอลัมน์ขวาไปไว้บนสุดของคอลัมน์กลาง (เหนือกราฟพื้นที่ 7 วัน) — ไม่แตะ
+logic/data ใดๆ ทั้งสิ้น ย้ายตำแหน่งอย่างเดียว
+
+**Test:** `node --test` → 260/260 เขียว (ไม่กระทบ backend)
+
+**Verify:** screenshot ยืนยันตำแหน่งใหม่ถูกต้อง คอลัมน์ NCR Monitor โล่งขึ้น — commit `a45c18a`
+
+---
+
+**คำขอ (รอบที่ 13):** user ขอ 3 เรื่องใน `QCStaffDash.jsx` (desktop): (1) สลับกล่อง "บิลล่าสุด" กับ "ภาพรวมคุณภาพ"
+ระหว่างคอลัมน์กลาง/ขวา (2) เปลี่ยนชื่อคอลัมน์ "NCR Monitor" เป็น "NCR/NCP Monitor" (3) เปลี่ยนชื่อกล่อง "ภาพรวม
+คุณภาพ" เป็น "สรุปภาพรวม NCR/NCP"
+
+**การแก้:** สลับตำแหน่ง JSX block "บิลล่าสุด"↔"ภาพรวมคุณภาพ" ระหว่าง 2 คอลัมน์ (ไม่แตะ logic/data) + เปลี่ยนข้อความ
+`CatLabel` และ `<p>` หัวข้อกล่องตามที่ขอ
+
+**Test:** `node --test` → 260/260 เขียว (ไม่กระทบ backend)
+
+**Verify:** screenshot ยืนยันลำดับใหม่: คอลัมน์กลาง = รอรับเข้าวันนี้→กราฟ 7 วัน→บิลล่าสุด, คอลัมน์ขวา (ชื่อใหม่
+"NCR/NCP Monitor") = NCR/NCP→NCR ตามขั้นตอน→สรุปภาพรวม NCR/NCP — commit `b01088a`
+
+---
+
+**คำขอ (รอบที่ 14):** user ขอ 2 เรื่องใหญ่ใน `QCStaffDash.jsx` (desktop): (1) เปลี่ยนกล่อง "อัตราผ่านการตรวจ" ในคอลัมน์
+"คุณภาพการรับเข้า" เป็น "ปฏิทินส่งของ" แทน + ย้าย "รอรับเข้าวันนี้"/"บิลล่าสุด" มาอยู่ใต้ปฏิทินนี้ (ตามลำดับ) + ย้าย
+"บิลรายวัน 7 วัน" (เดิมอยู่คอลัมน์นี้) ไปแทนที่ "รับเข้า / ไม่ผ่าน 7 วัน" ในคอลัมน์กลาง (เอาตัวหลังออก) (2) อัปเกรด
+"บิลรายวัน 7 วัน" จาก fix 7 วันตายตัว เป็น filter ได้ (รายวัน/รายเดือน/รายปี + เปรียบเทียบ YoY/MoM) แบ่งครึ่งช่อง
+ครึ่งบนเป็นกราฟแนวโน้ม ครึ่งล่างเป็นหลอดจัดอันดับผู้ผลิตที่รับเข้ามากสุด→น้อยสุด filter ได้เหมือนกัน — ถาม
+`AskUserQuestion` 2 ข้อก่อนเริ่มเพราะเป็นงาน backend aggregation ใหม่ทั้งหมด เดางานผิดจะเสียเวลาสร้างซ้ำ: (1) เกณฑ์
+จัดอันดับ "รับเข้ามากสุด" — user เลือก **"จำนวนบิลที่รับเข้า (นับบิล)"** ไม่ใช่ผลรวม qty (2) รูปแบบเปรียบเทียบ
+YoY/MoM — user เลือก **"กราฟซ้อน 2 ชุดข้อมูล"** (แนะนำ) ไม่ใช่แค่ตัวเลข %
+
+**การแก้ (backend, `routes/dashboard.js`):** เพิ่ม `computePeriod(granularity, compare, anchorDate)` helper กลาง
+คำนวณช่วงวันที่ current+comparison ให้ 2 endpoint ใหม่ใช้ร่วมกัน (period ต้องตรงกันเป๊ะระหว่างกราฟกับหลอดจัดอันดับ):
+`GET /bills-trend` (bucket ตาม granularity, คืน current+comparison array) และ `GET /bills-by-supplier` (จัดอันดับ
+ตามจำนวนบิล, คืน current+comparison ต่อ supplier) — กฎการรองรับเปรียบเทียบ: `day` รองรับทั้ง mom/yoy, `month`
+รองรับเฉพาะ yoy (mom ไม่มีความหมายเมื่อ bucket เป็นเดือนอยู่แล้ว), `year` ไม่รองรับเปรียบเทียบเลย (ไม่มี "ช่วงเดียวกัน
+ปีก่อน" ที่สมเหตุสมผลของ bucket ปี) — บังคับทั้ง client (`<select disabled>`) และ server (`parseCompare` เขียนทับ
+เป็น `none` เสมอถ้า granularity ไม่รองรับ)
+
+**บั๊กที่เจอระหว่างพัฒนา (แก้แล้วก่อน commit):** `fetchBuckets()` ตอนแรกใช้ `period.bucketCount` (จำนวนวันของ "เดือน
+ปัจจุบัน" เท่านั้น) เป็นความยาว array ให้ทั้ง current และ comparison bucket — ทำให้ตอนเทียบ ก.ค.(31 วัน) กับ
+มิ.ย.(30 วัน) แบบ MoM กราฟเปรียบเทียบจะมีวันที่ 31 หลอกที่ไม่มีจริงโผล่มา — แก้โดยอ่านจำนวนวันจาก `end` date ของแต่ละ
+ช่วงเอง (`Number(end.slice(8,10))`) แทน — เขียน `test/billsTrend.test.js` (12 เคส) ครอบ bucket boundary/mom-yoy
+window/ranking order ไว้ด้วย จับบั๊กนี้ได้จริงตอนรัน test ครั้งแรก (ไม่ใช่แค่เขียนดักไว้เฉยๆ)
+
+**การแก้ (frontend):** สร้าง `MiniDeliveryCalendarDark.jsx` ใหม่ (คัดลอก logic ปฏิทิน/click-to-detail/holiday จาก
+`MiniDeliveryCalendar.jsx` เดิม แต่เปลี่ยนจาก semantic token เป็น `D` token — เหตุผลเดียวกับที่แก้ "รอรับเข้าวันนี้"/
+"บิลล่าสุด" ไปก่อนหน้านี้ในไฟล์นี้: หน้า `QCStaffDash` มืดถาวรเสมอตาม CLAUDE.md §25.2 ใช้ `.card` เดิมตรงๆ จะกลาย
+เป็นกล่องขาวลอยตอน light mode — `CreateModal`/`DetailModal` เป็น overlay คนละชั้นจากพื้นหลังหน้าเลยใช้ของเดิมได้ปกติ
+ไม่ต้อง reskin) และ `BillsTrendPanel.jsx` ใหม่ (filter bar ใช้ dropdown เดียวกันควบคุมทั้ง 2 ครึ่ง ไม่แยก dropdown
+ต่อครึ่งเพื่อกันสับสนว่ามองคนละช่วงเวลา — กราฟบนใช้ recharts `BarChart` 2 `dataKey` (current/comparison) ซ้อนกัน,
+หลอดจัดอันดับล่างใช้ horizontal bar 2 แถบซ้อนต่อ supplier เมื่อเปิดโหมดเปรียบเทียบ)
+
+**Test:** `node --test` → 272/272 เขียว (260 เดิม + 12 ใหม่จาก `billsTrend.test.js`)
+
+**Verify:** ตั้ง server แยก + seed บิลหลายเดือน/หลาย supplier + Playwright ยืนยัน: มุมมองเริ่มต้น (รายวัน) โชว์
+ปฏิทิน+รายการ+อันดับถูกต้อง (เรียง กระจกไทย(6) > อลูมิเนียม(4) > ยูพีวีซี(2) > ฮาร์ดแวร์(1)), สลับเป็นรายเดือน+YoY
+กราฟ/legend ("ปีนี้"/"ปีก่อน")/หลอดจัดอันดับ 2 แถบอัปเดตถูกต้อง, สลับเป็นรายปี dropdown เปรียบเทียบถูก disable
+อัตโนมัติและกราฟ 5 ปีถูกต้อง (screenshot ยืนยันทั้ง 3 มุมมอง) — commit `f599424`
+
+---
+
 ## 2026-07-13 | Session 125 — Purchasing/Supplier Management + Dashboards (Supplier Assignment, Purchasing Dashboard, Manager Dashboard, Notification fixes)
 
 **คำขอ:** ปรับปรุงระบบ Purchasing/Supplier Management/Dashboard ให้ครบวงจร — (1) Purchasing/Purchasing Manager
