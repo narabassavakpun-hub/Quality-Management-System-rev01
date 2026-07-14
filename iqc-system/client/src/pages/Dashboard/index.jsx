@@ -9,6 +9,7 @@ import ManagerPurchasingDash from './ManagerPurchasingDash';
 import ExecutiveDash from './ExecutiveDash';
 import ProductionDash from './ProductionDash';
 import AdminDash from './AdminDash';
+import WarehouseDash from './WarehouseDash';
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -26,6 +27,8 @@ export default function Dashboard() {
     cpo: <ExecutiveDash navigate={navigate} />,
     production_manager: <ProductionDash navigate={navigate} />,
     admin: <AdminDash navigate={navigate} />,
+    warehouse_supervisor: <WarehouseDash navigate={navigate} />,
+    warehouse_manager: <WarehouseDash navigate={navigate} />,
   };
 
   return roleMap[user?.role] || <div className="page-title">ยินดีต้อนรับ</div>;
