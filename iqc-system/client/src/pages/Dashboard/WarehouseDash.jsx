@@ -8,7 +8,7 @@ import { DetailModal } from '../Delivery/index';
 
 // Dashboard สำหรับ warehouse_supervisor/warehouse_manager (เพิ่มใหม่ตามคำขอ user คู่กับ role นี้) — ขอบเขตงาน
 // ของคลังแคบมาก (ดู sidebar ที่จำกัดไว้แค่ /delivery ตาม AskUserQuestion ตอนเพิ่ม role): ดูปฏิทินรับเข้า +
-// รับแจ้งเตือน + กดรับทราบเท่านั้น หน้านี้เลยเน้น "รายการรอรับทราบ" เป็นหลัก ไม่ใช่ KPI/รายงานแบบ dashboard อื่น
+// รับแจ้งเตือน + กดรับทราบเท่านั้น หน้านี้เลยเน้น "รายการสินค้าที่รอรับเข้าวันนี้" เป็นหลัก ไม่ใช่ KPI/รายงานแบบ dashboard อื่น
 // ใช้ theme token (bg-surface/text-text/.card/HeroStat) เหมือน PurchasingDash.jsx — อ่านง่าย รองรับ light/dark
 // ทันที ไม่ใช้ dark D-token ตายตัวแบบ AdminDash (ตาม feedback เรื่องอ่านยาก/ไม่มีโหมดกลางวันในรอบก่อนหน้า)
 // ใช้ MiniDeliveryCalendar/DetailModal ที่มีอยู่แล้วจาก Delivery/index.jsx — ไม่เขียน calendar/modal ใหม่ซ้ำ
@@ -55,6 +55,13 @@ export default function WarehouseDash() {
   const acknowledgedCount = schedules.filter(s => s.status === 'acknowledged').length;
   const completedToday = schedules.filter(s => ['on_time', 'late'].includes(s.status) && s.scheduled_date === today).length;
 
+  // "รอรับเข้า" = ยังไม่ถูกบันทึกว่าของมาส่งจริง (pending หรือ acknowledged) — กว้างกว่า pendingToday ข้างบน
+  // ที่นับเฉพาะ status='pending' (ยังไม่รับทราบ) เพราะรายการนี้ต้องการโชว์ "ของที่ต้องเฝ้าดูวันนี้" ทั้งหมด
+  // ไม่ว่าจะรับทราบแล้วหรือยัง
+  const todayAwaiting = schedules
+    .filter(s => s.scheduled_date === today && ['pending', 'acknowledged'].includes(s.status))
+    .sort((a, b) => (a.time_slot || '').localeCompare(b.time_slot || ''));
+
   const [selectedSchedule, setSelectedSchedule] = useState(null);
   async function openDetail(s) {
     const res = await api.get(`/delivery/${s.id}`);
@@ -77,14 +84,14 @@ export default function WarehouseDash() {
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4 items-start">
         <div className="card">
-          <h2 className="text-h3 font-semibold text-primary mb-3">รายการรอรับทราบ</h2>
+          <h2 className="text-h3 font-semibold text-primary mb-3">รายการสินค้าที่รอรับเข้าวันนี้</h2>
           {isLoading ? (
             <p className="text-muted text-small py-6 text-center">กำลังโหลด...</p>
-          ) : pending.length === 0 ? (
-            <p className="text-muted text-small py-6 text-center">ไม่มีรายการรอรับทราบ</p>
+          ) : todayAwaiting.length === 0 ? (
+            <p className="text-muted text-small py-6 text-center">ไม่มีรายการรอรับเข้าวันนี้</p>
           ) : (
             <div className="space-y-2">
-              {pending.map(s => (
+              {todayAwaiting.map(s => (
                 <button
                   key={s.id}
                   onClick={() => openDetail(s)}
@@ -94,8 +101,10 @@ export default function WarehouseDash() {
                     <p className="font-medium text-text truncate">{s.supplier_name}</p>
                     <p className="text-small text-muted">{s.scheduled_date}{s.time_slot ? ` เวลา ${s.time_slot}` : ''}</p>
                   </div>
-                  {s.scheduled_date === today && (
-                    <span className="badge bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-200 flex-shrink-0">วันนี้</span>
+                  {s.status === 'pending' ? (
+                    <span className="badge bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-200 flex-shrink-0">รอรับทราบ</span>
+                  ) : (
+                    <span className="badge bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-200 flex-shrink-0">รับทราบแล้ว</span>
                   )}
                 </button>
               ))}

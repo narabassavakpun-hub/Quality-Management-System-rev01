@@ -1,8 +1,33 @@
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area, CartesianGrid } from 'recharts';
+import api from '../../utils/api';
+import { useAuth } from '../../contexts/AuthContext';
+import { DetailModal } from '../Delivery/index';
 import { D, useStats, DarkTip, RadialGauge, CatLabel, useCountUp } from './shared';
 
+function toDateStr(d) { return d.toISOString().slice(0, 10); }
+
 export default function QCStaffDash({ navigate }) {
+  const { user } = useAuth();
   const { data, isLoading } = useStats();
+
+  // "รายการสินค้าที่รอรับเข้าวันนี้" — เพิ่มตามคำขอ user (เดิมมีแค่หน้าคลัง) ใช้ DetailModal เดิมจาก
+  // Delivery/index.jsx ร่วมกัน — สไตล์การ์ดใช้ D token (dark ตายตัว) แทน semantic token ตามที่หน้านี้ทั้งหน้าใช้
+  // dark palette แบบ inline style เสมอ (ไม่ผูก .dark class) — ถ้าใช้ bg-surface/text-text ธรรมดาจะขัดกันเวลา
+  // ผู้ใช้ตั้งค่า light mode เพราะพื้นหลังหน้านี้ยังมืดอยู่เสมอ (ดู CLAUDE.md §25.2)
+  const today = toDateStr(new Date());
+  const { data: todayDelivery } = useQuery({
+    queryKey: ['delivery', today, today],
+    queryFn: () => api.get('/delivery', { params: { from: today, to: today, limit: 100 } }).then(r => r.data),
+  });
+  const todayAwaiting = (todayDelivery?.data || []).filter(s => ['pending', 'acknowledged'].includes(s.status));
+
+  const [selectedSchedule, setSelectedSchedule] = useState(null);
+  async function openDetail(s) {
+    const res = await api.get(`/delivery/${s.id}`);
+    setSelectedSchedule(res.data);
+  }
 
   const todayBillsCount = data?.today_bills ?? 0;
   const weekBillsCount  = data?.week_bills ?? 0;
@@ -200,6 +225,34 @@ export default function QCStaffDash({ navigate }) {
               ))}
             </div>
           )}
+        </div>
+
+        {/* รายการสินค้าที่รอรับเข้าวันนี้ */}
+        <div className="rounded-xl p-4" style={{ background: D.card, border: `1px solid ${D.border}` }}>
+          <div className="flex justify-between items-center mb-3">
+            <div className="text-[14px] font-semibold" style={{ color: D.text }}>รายการสินค้าที่รอรับเข้าวันนี้</div>
+            <button onClick={() => navigate('/delivery')} className="text-[13px]" style={{ color: D.cyan }}>ดูทั้งหมด</button>
+          </div>
+          <div className="space-y-2">
+            {todayAwaiting.length === 0 ? (
+              <p className="text-[13px] text-center py-4" style={{ color: D.muted }}>ไม่มีรายการรอรับเข้าวันนี้</p>
+            ) : todayAwaiting.map(s => (
+              <button key={s.id} onClick={() => openDetail(s)}
+                className="w-full text-left rounded-lg px-3 py-3 min-h-[56px] flex items-center justify-between gap-2"
+                style={{ background: D.bg }}>
+                <div className="min-w-0">
+                  <p className="text-[14px] font-semibold truncate" style={{ color: D.text }}>{s.supplier_name}</p>
+                  <p className="text-[12px]" style={{ color: D.muted }}>{s.scheduled_date}{s.time_slot ? ` เวลา ${s.time_slot}` : ''}</p>
+                </div>
+                <span className="text-[11px] px-2 py-0.5 rounded-full flex-shrink-0" style={{
+                  background: s.status === 'pending' ? '#EF444418' : '#38BDF818',
+                  color: s.status === 'pending' ? '#F87171' : D.cyan,
+                }}>
+                  {s.status === 'pending' ? 'รอรับทราบ' : 'รับทราบแล้ว'}
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Recent Bills */}
@@ -419,6 +472,38 @@ export default function QCStaffDash({ navigate }) {
         <div className="flex flex-col gap-2 min-h-0">
           <CatLabel color={D.orange} text="NCR Monitor" />
 
+          {/* รายการสินค้าที่รอรับเข้าวันนี้ — flex-none */}
+          <div className="flex-none rounded-xl p-3 flex flex-col"
+            style={{ background: D.card, border: `1px solid ${D.border}` }}>
+            <div className="flex-none flex justify-between items-center mb-2">
+              <p className="text-[11px] font-semibold" style={{ color: D.text }}>รอรับเข้าวันนี้</p>
+              <button onClick={() => navigate('/delivery')} className="text-[9px] hover:underline" style={{ color: D.cyan }}>ดูทั้งหมด</button>
+            </div>
+            {todayAwaiting.length === 0 ? (
+              <p className="text-[10px] py-1" style={{ color: D.muted }}>ไม่มีรายการวันนี้</p>
+            ) : (
+              <div className="space-y-1.5 max-h-[110px] overflow-y-auto"
+                style={{ scrollbarWidth: 'thin', scrollbarColor: `${D.border} transparent` }}>
+                {todayAwaiting.map(s => (
+                  <button key={s.id} onClick={() => openDetail(s)}
+                    className="w-full text-left rounded-lg px-2 py-1.5 flex items-center justify-between gap-2 transition-colors"
+                    style={{ background: D.bg }}>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-semibold truncate" style={{ color: D.text }}>{s.supplier_name}</p>
+                      <p className="text-[9px]" style={{ color: D.muted }}>{s.scheduled_date.slice(5)}{s.time_slot ? ` ${s.time_slot}` : ''}</p>
+                    </div>
+                    <span className="text-[8px] px-1.5 py-0.5 rounded-full flex-shrink-0" style={{
+                      background: s.status === 'pending' ? '#EF444418' : '#38BDF818',
+                      color: s.status === 'pending' ? '#F87171' : D.cyan,
+                    }}>
+                      {s.status === 'pending' ? 'รอรับทราบ' : 'รับทราบแล้ว'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* NCR vs NCP split card — flex-none */}
           <div className="flex-none rounded-xl p-3"
             style={{ background: D.card, border: `1px solid ${D.border}` }}>
@@ -548,6 +633,16 @@ export default function QCStaffDash({ navigate }) {
         </div>
       </div>
     </div>
+
+    {selectedSchedule && (
+      <DetailModal
+        schedule={selectedSchedule}
+        onClose={() => setSelectedSchedule(null)}
+        suppliers={[]}
+        role={user?.role}
+        holidays={[]}
+      />
+    )}
     </>
   );
 }
