@@ -253,7 +253,7 @@ console error เลย — commit `4692c10`
 
 ---
 
-## 2026-07-14 | Session 127 — Deploy-safety Q&A, Purchasing Manager nav/dashboard fixes, delivery status-form fixes, warehouse roles
+## 2026-07-14 | Session 127 — Deploy-safety Q&A, Purchasing Manager nav/dashboard fixes, delivery status-form fixes, warehouse roles + dashboard
 
 **คำขอ (รอบที่ 1):** user ถาม (ไม่ใช่คำสั่งแก้โค้ด) — ตอนนี้ deploy บน Render + backup ไป Cloudflare R2 การที่
 พัฒนาเพิ่มแล้วกระทบ `.db` (เช่น migration ใหม่ที่เพิ่มใน S126) จะทำให้ deploy รอบใหม่ที่ restore backup มาแทน
@@ -424,6 +424,31 @@ role ซึ่งกลับยากถ้าตีความผิด: (1) 
 **Verify:** Playwright ยืนยัน flow เต็ม — จัดซื้อสร้างแผน → คลัง (`warehouse_supervisor`) ได้กระดิ่งแจ้งเตือน +
 sidebar โชว์แค่ "ปฏิทินส่งของ" ใต้กลุ่ม IQC (ไม่มีบิล/NCR/UAI) → กดรับทราบสำเร็จ → qc_staff ไม่มีปุ่มรับทราบเลย
 แต่กดอัปเดตสถานะ (บันทึกวันเวลามาส่งจริง) ได้หลังคลังรับทราบแล้ว ตรงตามที่ user ต้องการเป๊ะ — commit `14fac2e`
+
+---
+
+**คำขอ (รอบที่ 9):** user ขอเพิ่มหน้า dashboard ให้กับ ID หัวหน้าคลัง/ผู้จัดการคลัง (2 role ที่เพิ่งเพิ่มในรอบที่ 8)
+
+**สิ่งที่พบ:** `Dashboard/index.jsx`'s `roleMap` ไม่มี entry ให้ 2 role ใหม่นี้เลย — ตกไปโชว์ fallback ว่างเปล่า
+"ยินดีต้อนรับ" ที่หน้า `/` เพราะ role อื่นทุกตัวมี component เฉพาะของตัวเองแต่ role คลังไม่มี
+
+**การแก้:** สร้าง `WarehouseDash.jsx` ใหม่ 1 ไฟล์ ใช้ร่วมกันทั้ง 2 role (เหมือน `ExecutiveDash` ที่ cco/cmo/cpo ใช้
+ร่วมกัน) — เนื้อหาเน้นตามขอบเขตงานที่ตกลงกันไว้ในรอบที่ 8 (ดูปฏิทิน + รับทราบเท่านั้น ไม่มี Master List/รายงานอื่น):
+4 การ์ด HeroStat (รอรับทราบวันนี้/รอรับทราบทั้งหมดเดือนนี้/รับทราบแล้วรอของเข้า/รับของเสร็จวันนี้), รายการ "รอรับทราบ"
+ที่กดแล้วเปิด `DetailModal` เดิมจาก `Delivery/index.jsx` ได้ทันที (มีปุ่ม "รับทราบ" ให้กดในนั้นเลย ไม่ต้องเข้าไปหน้า
+ปฏิทินก่อน), และฝัง `MiniDeliveryCalendar` เดิม — ไม่เขียน calendar/modal ใหม่ซ้ำ ใช้ query key `['delivery', from,
+to]` เดียวกับ `MiniDeliveryCalendar`/หน้าปฏิทินเต็ม เพื่อแชร์ cache + ให้ `invalidateQueries(['delivery'])` จากที่
+อื่น (เช่นกดรับทราบใน modal) รีเฟรชการ์ด/รายการนี้ให้อัตโนมัติ ใช้ semantic theme token (`bg-surface`/`text-text`/
+`.card`/`HeroStat`) แบบเดียวกับ `PurchasingDash.jsx`/`ManagerPurchasingDash.jsx` (รอบที่ 4 ด้านบน) — ไม่ใช้ dark `D`
+token ตายตัว เพื่อให้อ่านง่าย + รองรับ light/dark ทันที แล้วเพิ่ม import + 2 entry ใน `roleMap` ของ
+`Dashboard/index.jsx`
+
+**Test:** `node --test` → 260/260 เขียว (ไม่กระทบ backend เลย เป็น frontend-only)
+
+**Verify:** ตั้ง server แยก + seed ข้อมูลจำลอง (2 แผนรอรับทราบวันนี้/1 รอรับทราบในอีก 2 วัน/1 รับทราบแล้ว/1 รับของ
+เสร็จวันนี้) แล้ว Playwright ยืนยัน: การ์ด KPI ตรงเลขทั้ง 4 ใบ (2/3/1/1), รายการรอรับทราบโชว์ 3 supplier ถูกต้องพร้อม
+badge "วันนี้" 2 อัน, คลิกแถวเปิด modal พร้อมปุ่ม "รับทราบ" (ยืนยันด้วย screenshot), กดรับทราบแล้วเลขการ์ด+รายการ
+อัปเดตสดถูกต้อง (เหลือ 1 รอรับทราบวันนี้ supplier ที่กดไปหายจากรายการ) — commit `5c9c04b`
 
 ---
 
