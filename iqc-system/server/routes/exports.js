@@ -1539,33 +1539,92 @@ ${rows.length === 0
   }
 });
 
-// ===== GET /api/purchasing-dashboard/pdf — Export Purchasing Dashboard (สรุป + ตาราง Supplier) เป็น PDF =====
+// ===== GET /api/purchasing-dashboard/pdf — Export Purchasing Dashboard เป็น PDF =====
 // scope ตาม role ผู้เรียกเหมือนหน้าจอ (purchasing เห็นเฉพาะ supplier ที่ดูแล, purchasing_manager/admin เห็นทั้งหมด)
 // — ใช้ purchasingDashboardService ตัวเดียวกับที่หน้าจอเรียก ไม่มี query ซ้ำ
+// ออกแบบใหม่ทั้งหมด (Session 127 ตามคำขอ user) ให้เนื้อหา/สัดส่วนสอดคล้องกับหน้าจอ PurchasingDash.jsx จริงที่ทำ
+// ไปก่อนหน้านี้ใน session เดียวกัน (Hero KPI 4 ช่อง + กราฟ bucket + วงกลมอัตราปิดงาน) แทนตาราง stat-box แบนราบ 11
+// ช่องเดิมที่ไม่มีลำดับความสำคัญเลย — เพิ่มตาราง "รายการเกินกำหนด" ใหม่ (ข้อมูลที่ actionable ที่สุดแต่ PDF เดิม
+// ไม่เคยมีเลย ทั้งที่หน้าจอ hero stat วง "เกินกำหนด" เน้นด้วย emphasize/ขอบแดงอยู่แล้ว) ก่อนตาราง supplier summary
+// เดิม (คงไว้แต่จัดสไตล์ใหม่ให้เข้าชุด) — วงกลม % ปิดงานใช้ conic-gradient ล้วน (Chromium ใน Puppeteer เรนเดอร์ได้
+// เต็มที่ ไม่ต้องพึ่งรูปภาพ/chart library ฝั่ง server)
 router.get('/purchasing-dashboard/pdf', auth, requireRole(['purchasing', 'purchasing_manager', 'admin']), pdfRateLimit, async (req, res) => {
   try {
     const summary = purchasingDashboardService.getSummary(req.user);
     const { data: suppliers } = purchasingDashboardService.getSuppliers(req.user, { limit: 1000, sort: 'name', dir: 'asc' });
+    const { data: overdueItems, total: overdueTotal } = purchasingDashboardService.getNcrList(req.user, { overdue: '1', limit: 50, page: 1 });
     const exportTime = new Date().toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Bangkok' });
 
-    const STAT_LABELS = [
-      ['supplier_count', 'Supplier ที่ดูแล'],
-      ['ncr_total', 'NCR ทั้งหมด'],
-      ['ncp_total', 'NCP ทั้งหมด'],
-      ['ncr_waiting_review', 'รอ Review'],
-      ['ncr_waiting_send_link', 'รอส่ง Link'],
-      ['ncr_waiting_supplier_response', 'รอ Supplier ตอบกลับ'],
-      ['ncr_in_progress', 'กำลังดำเนินการ'],
-      ['ncr_closed', 'NCR ปิดแล้ว'],
-      ['ncp_open', 'NCP Open'],
-      ['ncp_closed', 'NCP Closed'],
-      ['overdue', 'เกินกำหนด'],
+    const activeWork = (summary.ncr_waiting_review || 0) + (summary.ncr_waiting_send_link || 0)
+      + (summary.ncr_waiting_supplier_response || 0) + (summary.ncr_in_progress || 0);
+    const closedAll = (summary.ncr_closed || 0) + (summary.ncp_closed || 0);
+    const totalAll = (summary.ncr_total || 0) + (summary.ncp_total || 0);
+    const closingPct = totalAll > 0 ? Math.round((closedAll / totalAll) * 100) : 0;
+
+    // Hero KPI — 4 ช่องหลัก ตรงกับ HeroStat 4 ใบบนหน้าจอเป๊ะ (primary/warning/success/danger)
+    const HERO_STATS = [
+      { value: summary.supplier_count, label: 'Supplier ที่ดูแล', color: '#1A3A5C' },
+      { value: activeWork, label: 'งานที่ต้องดำเนินการ', color: '#D97706' },
+      { value: closedAll, label: 'ปิดแล้ว', color: '#16A34A' },
+      { value: summary.overdue, label: 'เกินกำหนด', color: '#DC2626' },
     ];
-    const statCells = STAT_LABELS.map(([key, label]) => `
-      <div class="stat-box">
-        <div class="stat-value">${esc(summary[key] ?? 0)}</div>
-        <div class="stat-label">${esc(label)}</div>
+    const heroCells = HERO_STATS.map(h => `
+      <div class="hero-box" style="border-top:4px solid ${h.color};">
+        <div class="hero-value" style="color:${h.color};">${esc(h.value ?? 0)}</div>
+        <div class="hero-label">${esc(h.label)}</div>
       </div>`).join('');
+
+    // แถบ bucket breakdown — ตรงกับ BucketBarChart บนหน้าจอ (6 หมวดเดียวกัน + สีเดียวกัน)
+    const BUCKET_BARS = [
+      { label: 'รอ Review', value: summary.ncr_waiting_review || 0, color: '#D97706' },
+      { label: 'รอส่ง Link', value: summary.ncr_waiting_send_link || 0, color: '#D97706' },
+      { label: 'รอ Supplier ตอบ', value: summary.ncr_waiting_supplier_response || 0, color: '#2E6DA4' },
+      { label: 'กำลังดำเนินการ', value: summary.ncr_in_progress || 0, color: '#2E6DA4' },
+      { label: 'ปิดแล้ว', value: closedAll, color: '#16A34A' },
+      { label: 'เกินกำหนด', value: summary.overdue || 0, color: '#DC2626' },
+    ];
+    const maxBucket = Math.max(1, ...BUCKET_BARS.map(b => b.value));
+    const bucketRows = BUCKET_BARS.map(b => `
+      <div class="bucket-row">
+        <div class="bucket-label">${esc(b.label)}</div>
+        <div class="bucket-track"><div class="bucket-fill" style="width:${Math.round((b.value / maxBucket) * 100)}%;background:${b.color};"></div></div>
+        <div class="bucket-value">${b.value}</div>
+      </div>`).join('');
+
+    // วงกลมอัตราปิดงาน — conic-gradient ล้วน ไม่พึ่งรูปภาพ/chart library
+    const donutHtml = `
+      <div class="donut" style="background:conic-gradient(#16A34A 0% ${closingPct}%, #E5E7EB ${closingPct}% 100%);">
+        <div class="donut-hole">
+          <div class="donut-pct">${closingPct}%</div>
+          <div class="donut-sub">ปิดแล้ว (${closedAll}/${totalAll})</div>
+        </div>
+      </div>`;
+
+    // ตารางรายการเกินกำหนด — ข้อมูลใหม่ที่ PDF เดิมไม่เคยมี (actionable ที่สุดของหน้า dashboard)
+    const overdueTheadRow = `<tr><th>รหัส NCR/NCP</th><th>ผู้ผลิต</th><th>ประเภท</th><th>สถานะ</th><th>วันที่เปิด</th><th>กำหนดเสร็จ</th><th>เกินมา (วัน)</th></tr>`;
+    const todayMs = Date.now();
+    const overdueDataRows = overdueItems.map(n => {
+      const dueMs = n.disposition_due_date ? new Date(n.disposition_due_date + 'T00:00:00').getTime() : null;
+      const daysOver = dueMs ? Math.max(0, Math.round((todayMs - dueMs) / 86400000)) : '-';
+      return `
+      <tr>
+        <td>${esc(n.ncr_code)}</td>
+        <td>${esc(n.supplier_name)}</td>
+        <td>${n.severity === 'major' ? 'NCR' : 'NCP'}</td>
+        <td>${esc(statusLabel(n.status))}</td>
+        <td>${esc((n.created_at || '').slice(0, 10))}</td>
+        <td>${esc(n.disposition_due_date || '-')}</td>
+        <td style="color:#DC2626;font-weight:700;">${daysOver}</td>
+      </tr>`;
+    }).join('');
+    const overdueSection = summary.overdue > 0 ? `
+      <div class="section-title overdue-title">รายการเกินกำหนด (${overdueTotal})</div>
+      <table><thead>${overdueTheadRow}</thead><tbody>${overdueDataRows}</tbody></table>
+      ${overdueTotal > overdueItems.length ? `<div class="note">แสดง ${overdueItems.length} จาก ${overdueTotal} รายการ — ดูรายการทั้งหมดในระบบ</div>` : ''}
+    ` : `
+      <div class="section-title">รายการเกินกำหนด</div>
+      <div class="no-data-inline">ไม่มีรายการเกินกำหนด</div>
+    `;
 
     const theadRow = `<tr>
       <th>รหัส</th><th>ผู้ผลิต</th><th>สถานะ</th><th>NCR</th><th>NCP</th><th>เปิด</th>
@@ -1605,19 +1664,55 @@ router.get('/purchasing-dashboard/pdf', auth, requireRole(['purchasing', 'purcha
 <style>
   ${FONT_FACE_CSS}
   body{font-family:'IBM Plex Sans Thai','Segoe UI',Arial,sans-serif;font-size:11px;color:#1F2937;margin:0;}
-  .stats-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
-  .stat-box{border:1px solid #D1D5DB;border-radius:4px;padding:6px 10px;min-width:90px;}
-  .stat-value{font-size:16px;font-weight:700;color:#1A3A5C;}
-  .stat-label{font-size:9px;color:#6B7280;}
-  table{width:100%;border-collapse:collapse;}
+  .section-title{font-size:14px;font-weight:700;color:#1A3A5C;margin:16px 0 8px;border-bottom:2px solid #1A3A5C;padding-bottom:4px;page-break-after:avoid;}
+  .section-title:first-child{margin-top:0;}
+  .overdue-title{border-bottom-color:#DC2626;color:#DC2626;}
+
+  /* Hero KPI row */
+  .hero-row{display:flex;gap:10px;margin-bottom:16px;}
+  .hero-box{flex:1;border:1px solid #D1D5DB;border-radius:6px;padding:10px 12px;background:#F5F6F8;}
+  .hero-value{font-size:26px;font-weight:700;line-height:1.1;}
+  .hero-label{font-size:10px;color:#6B7280;margin-top:4px;}
+
+  /* Bucket breakdown + donut row */
+  .split-row{display:flex;gap:16px;margin-bottom:8px;align-items:stretch;}
+  .split-left{flex:2;border:1px solid #D1D5DB;border-radius:6px;padding:12px;}
+  .split-right{flex:1;border:1px solid #D1D5DB;border-radius:6px;padding:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;}
+  .split-heading{font-size:11px;font-weight:700;color:#1A3A5C;margin-bottom:8px;}
+  .bucket-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+  .bucket-label{width:100px;font-size:9px;color:#6B7280;flex-shrink:0;}
+  .bucket-track{flex:1;height:8px;background:#E5E7EB;border-radius:4px;overflow:hidden;}
+  .bucket-fill{height:100%;border-radius:4px;}
+  .bucket-value{width:24px;text-align:right;font-size:9px;font-weight:700;color:#1F2937;flex-shrink:0;}
+  .donut{width:110px;height:110px;border-radius:50%;display:flex;align-items:center;justify-content:center;}
+  .donut-hole{width:76px;height:76px;border-radius:50%;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;}
+  .donut-pct{font-size:18px;font-weight:700;color:#16A34A;}
+  .donut-sub{font-size:7px;color:#6B7280;text-align:center;}
+
+  table{width:100%;border-collapse:collapse;margin-bottom:6px;}
   thead{display:table-header-group;}
   th{background:#1A3A5C;color:#fff;padding:6px;font-size:10px;text-align:left;white-space:nowrap;}
   td{padding:5px 6px;border-bottom:1px solid #E5E7EB;font-size:10px;vertical-align:middle;}
   tr{page-break-inside:avoid;}
+  tr:nth-child(even) td{background:#F9FAFB;}
   .no-data{text-align:center;color:#6B7280;padding:40px;font-size:14px;}
+  .no-data-inline{color:#16A34A;font-size:10px;padding:6px 0 12px;}
+  .note{color:#6B7280;font-size:9px;margin:-2px 0 12px;}
 </style>
 </head><body>
-<div class="stats-row">${statCells}</div>
+<div class="hero-row">${heroCells}</div>
+<div class="split-row">
+  <div class="split-left">
+    <div class="split-heading">สถานะ NCR/NCP</div>
+    ${bucketRows}
+  </div>
+  <div class="split-right">
+    <div class="split-heading">อัตราปิดงาน</div>
+    ${donutHtml}
+  </div>
+</div>
+${overdueSection}
+<div class="section-title">ผู้ผลิตของฉัน (${suppliers.length})</div>
 ${suppliers.length === 0
   ? '<div class="no-data">ไม่มีข้อมูล Supplier</div>'
   : `<table><thead>${theadRow}</thead><tbody>${dataRows}</tbody></table>`}
