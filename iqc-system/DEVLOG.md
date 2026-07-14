@@ -675,6 +675,19 @@ screenshot ยืนยันภาพจริงตรงกับผลตร
 
 ---
 
+**คำขอ (รอบที่ 19):** user ขอให้ปฏิทินส่งของมุมมอง "รายปี" ปรับขนาดตัวเลขจำนวนต่อเดือนให้เล็กลง (เดิม `text-h3`
+16px ดูใหญ่เกินไปเทียบกับ grid 12 ช่องเล็กๆ และ label เดือนที่เป็น `text-small`)
+
+**การแก้:** ลดตัวเลขจำนวนจาก `text-h3` เป็น `text-small` ให้ขนาดเดียวกับ label เดือน + ลด padding/gap ของ grid
+เล็กน้อย (`p-2`→`p-1.5`, `gap-2`→`gap-1.5`) ให้กระชับขึ้นตามสัดส่วนใหม่
+
+**Test:** `node --test` → 272/272 เขียว (ไม่กระทบ backend เลย เป็น frontend-only)
+
+**Verify:** screenshot มุมมองรายปียืนยันตัวเลขเล็กลงตามสัดส่วน label เดือน อ่านง่ายไม่ล้นเด่นเกินไป — commit
+`bf32c4c`
+
+---
+
 ## 2026-07-13 | Session 125 — Purchasing/Supplier Management + Dashboards (Supplier Assignment, Purchasing Dashboard, Manager Dashboard, Notification fixes)
 
 **คำขอ:** ปรับปรุงระบบ Purchasing/Supplier Management/Dashboard ให้ครบวงจร — (1) Purchasing/Purchasing Manager
