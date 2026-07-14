@@ -308,6 +308,29 @@ affordance ให้กดเพราะกดไม่ได้แล้วจ
 
 ---
 
+**คำขอ (รอบที่ 4):** user ขอปรับ dashboard ผู้จัดการจัดซื้ออีกรอบ — ปรับ layout ใหม่, ปรับขนาดตัวอักษรให้อ่านง่าย
+เห็นชัด, และให้ dashboard มีโหมดกลางวัน/กลางคืน
+
+**สิ่งที่พบ:** รอบก่อน (ดูรอบที่ 9 ของ S126 ด้านบน) ใช้ dark `D` token แบบ hardcode ตายตัวเหมือน AdminDash —
+ได้สไตล์ที่ user ขอตอนนั้น แต่ผลข้างเคียงคือ (1) ไม่มีโหมดกลางวันเลย (สีล็อกมืดถาวรตาม CLAUDE.md §25.2 ของกลุ่ม
+"8 ไฟล์เดิม") (2) font size เล็กมาก (9-11px) ตามสไตล์ operational dashboard หนาแน่นที่ AdminDash ใช้ ซึ่งกลับมา
+เป็นปัญหาอ่านยากตามที่ user feedback รอบนี้
+
+**การแก้:** เปลี่ยนจาก `D` token (shared.jsx) มาใช้ semantic theme token ของระบบทั้งหมด (`bg-surface`/`text-text`/
+`text-muted`/`.card`/`.table`) แบบเดียวกับ `PurchasingDash.jsx` — token กลุ่มนี้ผูกกับ ThemeContext อยู่แล้ว
+(CLAUDE.md §25) ได้โหมดกลางวัน/กลางคืน/auto ฟรีโดยไม่ต้องเขียน logic toggle เพิ่มเลย และเปลี่ยนขนาดตัวอักษรจาก
+px เล็กๆ เป็น class มาตรฐาน (`text-h1`/`h2`/`h3`/`body`) + เปลี่ยน layout จาก fixed 100vh 3-column หนาแน่น เป็น
+หน้าปกติ scroll ได้ตามธรรมชาติ (HeroStat KPI row, bar chart+donut, panel เกินกำหนดไฮไลต์แดง, ตารางทีมเต็ม) —
+สีกราฟใช้ `rgb(var(--color-x))` (เทคนิคเดียวกับ donut ของ `PurchasingDash.jsx`) ให้สลับสีเองตาม theme โดยไม่ต้อง
+ตรวจ JS เลย — ไม่แตะ `shared.jsx` เลย (ยังใช้กับ dashboard มืดถาวรตัวอื่นอยู่)
+
+**Test:** `node --test` → 258/258 เขียว, 0 skip
+
+**Verify:** Playwright ยืนยันทั้ง light mode (ค่าเริ่มต้น) และ dark mode (สลับผ่าน `iqc_theme_preference` +
+reload) — screenshot ทั้งสองโหมด ทุก section อ่านง่ายชัดเจน ไม่มี console error — commit `0144d69`
+
+---
+
 ## 2026-07-13 | Session 125 — Purchasing/Supplier Management + Dashboards (Supplier Assignment, Purchasing Dashboard, Manager Dashboard, Notification fixes)
 
 **คำขอ:** ปรับปรุงระบบ Purchasing/Supplier Management/Dashboard ให้ครบวงจร — (1) Purchasing/Purchasing Manager
