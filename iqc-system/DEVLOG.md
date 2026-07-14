@@ -576,6 +576,45 @@ progress bar ถูกต้อง ตำแหน่งอยู่ระหว
 
 ---
 
+**คำขอ (รอบที่ 16):** user ขอ 4 เรื่องใน `QCStaffDash.jsx` (desktop): (1) เพิ่มปุ่มเลือกมุมมองปฏิทิน รายปี/รายเดือน/
+รายวัน + ปรับกล่องปฏิทินให้สูงเท่ากล่อง "บิลรับเข้า" (2) ย้าย "รอรับเข้าวันนี้" ไปอยู่ระดับเดียวกับ "ผู้ผลิตที่รับเข้า
+มากสุด" + สูงครึ่งหนึ่งของกล่องนั้น (3) "บิลล่าสุด" สูงครึ่งหนึ่งของกล่อง "ผู้ผลิตที่รับเข้ามากสุด" เหมือนกัน (4) เพิ่ม
+โหมดสว่างให้ dashboard นี้ด้วย (เดิมมืดตายตัวตาม CLAUDE.md §25.2 — user ขอยกเว้นเฉพาะหน้านี้ตรงๆ)
+
+**สิ่งที่พบ (ข้อ 1-3):** โครง flex ของ 3 คอลัมน์เดิมทำให้ข้อ 2/3 แก้พร้อมกับข้อ 1 ได้ในตาโครงสร้างเดียว — ถ้าคอลัมน์
+ซ้ายมี top-level children แค่ 2 ตัวเป็น `flex-1`/`flex-1` เหมือนคอลัมน์กลาง (แนวโน้มรับเข้า: กราฟ/หลอดจัดอันดับ)
+ความสูงจะเท่ากันโดยอัตโนมัติจาก CSS ไม่ต้องคำนวณ pixel เอง — เลยยุบ "รอรับเข้าวันนี้"+"บิลล่าสุด" ให้อยู่ใน wrapper
+`flex-1` เดียวกัน (ตัวที่ 2 ของคอลัมน์) แล้วแบ่งข้างในเป็น `flex-1`/`flex-1` อีกที ได้ผลลัพธ์ตรงตามคำขอทั้ง 3 ข้อ
+พร้อมกัน
+
+**การแก้ (ข้อ 1):** สร้าง `QCDeliveryCalendar.jsx` ใหม่แทน `MiniDeliveryCalendarDark.jsx` เดิม (ลบไฟล์เดิมทิ้ง) —
+เพิ่มปุ่ม รายปี/รายเดือน/รายวัน: รายเดือน = grid ปฏิทินเดิม, รายวัน = agenda list วันเดียว (prev/next วัน), รายปี =
+grid 12 เดือนพร้อมจำนวนแผนต่อเดือน คลิกแล้วสลับไปโหมดรายเดือนของเดือนนั้นทันที — แยกไฟล์ต่างหากจาก
+`MiniDeliveryCalendar.jsx` ต้นฉบับ (ที่ PurchasingDash/WarehouseDash/SupervisorDash ใช้ร่วมกัน) เพราะ feature นี้
+user ขอเฉพาะกล่องปฏิทินในหน้านี้ ไม่ได้ขอให้กระทบ dashboard อื่น
+
+**การแก้ (ข้อ 4, ใหญ่สุด):** เพิ่ม `T` object ใหม่ใน `shared.jsx` (เพิ่มเข้าไปเฉยๆ ไม่แก้ `D` เดิม — dashboard มืด
+ตายตัวอื่น เช่น AdminDash ไม่กระทบ) แมป `bg/surface/border/text/muted/accent/success` เป็น `rgb(var(--color-x))`
+(theme-reactive ตรงๆ ในค่า inline style/recharts prop) — **ค้นพบสำคัญ:** ค่า dark-mode ของ CSS variable เหล่านี้ใน
+`index.css` ถูกตั้งให้ตรงกับ hex ของ `D` object เป๊ะอยู่แล้วตั้งแต่ต้น (เช่น `--color-bg` dark = `#0B1929` = `D.bg`)
+เพราะงั้นแปลงจาก `D`→`T` **ไม่เปลี่ยนหน้าตาตอน dark mode เลยแม้แต่พิกเซลเดียว** เปลี่ยนแค่ตอน light mode เท่านั้น —
+orange/yellow/purple **ไม่แมป** เป็น semantic token เพราะชุด 10 token หลักไม่มีช่องสำหรับสีกลุ่มนี้แยกจากกัน (ลอง
+แมป orange→warning แล้วพบว่า dark-mode warning ดันเท่ากับ yellow token พอดี ทำให้ NCR-major กับ NCP-minor กลาย
+เป็นสีเดียวกันในโหมดมืด) จึงเก็บเป็น hex คงที่เหมือนเดิมทั้ง 2 โหมด (ใช้แยกหมวดหมู่ ไม่ใช่สีโครงสร้างที่ต้องสลับ) —
+แปลง `QCStaffDash.jsx` (ทั้ง mobile+desktop) และ `BillsTrendPanel.jsx` จาก `D`→`T` ทั้งหมด — `DarkTip`/
+`RadialGauge`/`CatLabel` (helper ใน `shared.jsx` ที่ dashboard มืดตายตัวอื่นใช้ร่วม) **ไม่แตะ** ยังคง chrome มืด
+ภายในของตัวเอง (เช่น พื้น tooltip) เป็น trade-off ที่ยอมรับได้ ดีกว่าเสี่ยงแก้ของที่ dashboard อื่นพึ่งพาอยู่
+
+**Test:** `node --test` → 272/272 เขียว (ไม่กระทบ backend เลย เป็น frontend-only)
+
+**Verify:** ตั้ง server แยก + seed ข้อมูลจำลอง + Playwright บังคับ `iqc_theme_preference` เป็น light/dark ผ่าน
+`localStorage` ก่อน login แล้ว screenshot ทั้ง 2 โหมด: light mode การ์ด/พื้นหลัง/ตัวอักษรสลับเป็นสีอ่อนถูกต้องหมด,
+ปุ่มเลือกมุมมองปฏิทินทำงานถูกต้องทั้ง 3 โหมด (year แสดง 12 เดือน+จำนวน, day แสดง agenda วันเดียว), ความสูงกล่อง
+ซ้าย-กลางตรงกันตามที่ตั้งใจ; dark mode เทียบกับ screenshot ก่อนหน้า **เหมือนเดิมทุกพิกเซล** ตามที่คาดไว้ — commit
+`b554a4b`
+
+---
+
 ## 2026-07-13 | Session 125 — Purchasing/Supplier Management + Dashboards (Supplier Assignment, Purchasing Dashboard, Manager Dashboard, Notification fixes)
 
 **คำขอ:** ปรับปรุงระบบ Purchasing/Supplier Management/Dashboard ให้ครบวงจร — (1) Purchasing/Purchasing Manager
