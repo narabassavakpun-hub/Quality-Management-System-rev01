@@ -298,25 +298,25 @@ export default function QCStaffDash({ navigate }) {
       </div>
     </div>
 
-    {/* ══ DESKTOP layout (>=md) — หน้าปกติ scroll ได้ตามธรรมชาติ (เดิมล็อก 100vh หนาแน่นตามสไตล์ operational
-        dashboard เก่า พอเพิ่มโหมดสว่าง+ตัวอักษรอ่านง่ายขึ้นแล้วยัดทุกอย่างในกล่องสูงคงที่ไม่พอ — เอา fixed-height/
-        overflow-hidden ออก ให้หน้ายาวได้ตามเนื้อหาแล้ว scroll ทั้งหน้าแทน เหมือนแนวทางที่ทำกับ
-        ManagerPurchasingDash.jsx ไปแล้วก่อนหน้านี้) — คอลัมน์ยังคงสูงเท่ากันในแต่ละแถวเพราะ CSS Grid stretch
-        เป็นค่า default (align-items: stretch) อยู่แล้ว ไม่ต้องพึ่ง fixed viewport เพื่อให้ flex-1:flex-1 ตรงกัน
-        ระหว่างคอลัมน์เหมือนเดิม ══ */}
-    <div className="hidden md:block -m-4" style={{ background: T.bg }}>
+    {/* ══ DESKTOP layout (>=md) — ล็อกพอดี viewport ไม่ต้อง scroll ทั้งหน้า (user ยืนยันขอแบบนี้ — ก่อนหน้านี้เคย
+        ลองเอา fixed-height ออกให้ scroll ธรรมชาติตอนเพิ่มฟอนต์ใหญ่ขึ้น แต่ user ขอกลับมาให้พอดีจอเหมือนเดิม) —
+        แก้ด้วยการคง fixed viewport ไว้ แต่ให้แต่ละคอลัมน์ scroll ภายในตัวเองได้ (overflow-y-auto + min-h-0) แทน
+        ถ้าเนื้อหาในคอลัมน์ไหนเกินพื้นที่ที่จัดสรร (เช่น NCR ตามขั้นตอนมีหลายแถว) — กัน "ทั้งหน้า" ต้อง scroll โดยไม่
+        บังคับให้ทุกการ์ดพอดีเป๊ะเสมอ (ข้อมูลจริงมีจำนวนแถวไม่แน่นอน) ══ */}
+    <div className="hidden md:flex md:flex-col -m-4 overflow-hidden"
+      style={{ height: 'calc(100vh - 64px)', background: T.bg }}>
 
       {/* ══ HEADER ══ */}
-      <div className="flex items-center justify-between px-4 py-3"
+      <div className="flex-none flex items-center justify-between px-4 py-2.5"
         style={{ borderBottom: `1px solid ${T.border}` }}>
         <div className="flex items-center gap-2.5">
-          <span className="text-h2 font-bold" style={{ color: T.text }}>IQC Dashboard</span>
+          <span className="text-h3 font-bold" style={{ color: T.text }}>IQC Dashboard</span>
           <span className="text-small px-2 py-0.5 rounded-full" style={{ background: T.border, color: T.muted }}>QC Staff</span>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-small" style={{ color: T.muted }}>{todayStr}</span>
           <button onClick={() => navigate('/bills/new')}
-            className="px-3.5 py-2 rounded-lg text-small font-semibold transition-opacity hover:opacity-80"
+            className="px-3.5 py-1.5 rounded-lg text-small font-semibold transition-opacity hover:opacity-80"
             style={{ background: T.accent, color: '#fff' }}>
             + สร้างบิลใหม่
           </button>
@@ -324,7 +324,7 @@ export default function QCStaffDash({ navigate }) {
       </div>
 
       {/* ══ KPI ROW ══ */}
-      <div className="grid grid-cols-4 gap-3 px-4 pt-3">
+      <div className="flex-none grid grid-cols-4 gap-3 px-4 pt-3">
         {[
           { label: 'บิลวันนี้',    n: kpiN0, color: T.accent,   sub: 'รับเข้า',       path: '/bills' },
           { label: 'สัปดาห์นี้',   n: kpiN1, color: T.success,  sub: '7 วันล่าสุด',  path: '/bills' },
@@ -332,12 +332,12 @@ export default function QCStaffDash({ navigate }) {
           { label: 'NCP เปิดอยู่', n: kpiN3, color: T.yellow, sub: 'Minor / ยังไม่ปิด', path: '/ncr' },
         ].map(k => (
           <button key={k.label} onClick={() => navigate(k.path)}
-            className="rounded-xl px-4 py-3 text-left transition-opacity hover:opacity-80"
+            className="rounded-xl px-4 py-2.5 text-left transition-opacity hover:opacity-80"
             style={{ background: T.surface, border: `1px solid ${T.border}` }}>
-            <div className="text-h1 font-bold tabular-nums leading-none" style={{ color: k.color }}>
+            <div className="text-h2 font-bold tabular-nums leading-none" style={{ color: k.color }}>
               {isLoading ? '—' : k.n}
             </div>
-            <div className="flex items-center justify-between mt-2">
+            <div className="flex items-center justify-between mt-1.5">
               <span className="text-small font-semibold" style={{ color: T.text }}>{k.label}</span>
               <span className="text-small" style={{ color: T.muted }}>{k.sub}</span>
             </div>
@@ -345,22 +345,22 @@ export default function QCStaffDash({ navigate }) {
         ))}
       </div>
 
-      {/* ══ MAIN 3-COLUMN AREA ══ */}
-      <div className="grid grid-cols-3 gap-4 px-4 py-4 items-stretch">
+      {/* ══ MAIN 3-COLUMN AREA (flex-1 เติมพื้นที่ที่เหลือพอดี) ══ */}
+      <div className="flex-1 min-h-0 grid grid-cols-3 gap-4 px-4 py-3">
 
         {/* ──── LEFT: คุณภาพการรับเข้า ──── */}
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3 min-h-0">
           <CatLabel color={T.success} text="คุณภาพการรับเข้า" />
 
           {/* ปฏิทินส่งของ — flex-1 (แทนที่ "อัตราผ่านการตรวจ" เดิม, สูงเท่ากล่อง "บิลรับเข้า" ของคอลัมน์กลาง
               เพราะทั้งคู่เป็น flex-1 ตัวแรกจาก 2 ตัวของคอลัมน์ตัวเองเหมือนกัน) */}
-          <div className="flex-1 min-h-[320px]">
+          <div className="flex-1 min-h-0">
             <QCDeliveryCalendar />
           </div>
 
           {/* กล่องล่าง — flex-1 (สูงเท่ากล่อง "ผู้ผลิตที่รับเข้ามากสุด" ของคอลัมน์กลาง) แบ่งครึ่งเป็น
               "รอรับเข้าวันนี้"/"บิลล่าสุด" คนละ flex-1 ข้างในตามคำขอ user */}
-          <div className="flex-1 min-h-[320px] flex flex-col gap-3">
+          <div className="flex-1 min-h-0 flex flex-col gap-3">
             {/* รอรับเข้าวันนี้ — flex-1 (ครึ่งบนของกล่องล่าง) */}
             <div className="flex-1 min-h-0 rounded-xl p-4 flex flex-col overflow-hidden"
               style={{ background: T.surface, border: `1px solid ${T.border}` }}>
@@ -434,14 +434,21 @@ export default function QCStaffDash({ navigate }) {
         </div>
 
         {/* ──── CENTER: แนวโน้มรับเข้า ──── */}
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3 min-h-0">
           <CatLabel color={T.accent} text="แนวโน้มรับเข้า" />
           <BillsTrendPanel navigate={navigate} />
         </div>
 
         {/* ──── RIGHT: NCR/NCP Monitor ──── */}
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3 min-h-0">
           <CatLabel color={T.orange} text="NCR/NCP Monitor" />
+
+          {/* การ์ดกลุ่มนี้ทั้งหมดเป็น flex-none (สูงตามเนื้อหาจริง) ยกเว้นการ์ดสุดท้าย (gauges) ที่เป็น flex-1 —
+              คอลัมน์นี้เดียวที่ min-h-0 overflow-y-auto (ต่างจาก LEFT/CENTER ที่แบ่ง flex-1:flex-1 พอดีเป๊ะ) เพราะ
+              จำนวนการ์ด/แถวใน "NCR ตามขั้นตอน" ผันแปรตามข้อมูลจริง ไม่คงที่ — ถ้ารวมกันสูงเกินพื้นที่ที่จัดสรรไว้
+              ให้ scroll ภายในคอลัมน์นี้เอง แทนที่จะดันทั้งหน้าให้ต้อง scroll (ตามคำขอ user ข้อ 3) */}
+          <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pr-1"
+            style={{ scrollbarWidth: 'thin', scrollbarColor: `${T.border} transparent` }}>
 
           {/* NCR vs NCP split card — flex-none */}
           <div className="flex-none rounded-xl p-4"
@@ -558,8 +565,8 @@ export default function QCStaffDash({ navigate }) {
             )}
           </div>
 
-          {/* 3 Radial gauges — flex-1 (1 ส่วน) จัดกึ่งกลางแนวตั้ง */}
-          <div className="flex-1 min-h-[180px] rounded-xl p-4 flex flex-col"
+          {/* 3 Radial gauges — flex-none (คอลัมน์นี้ scroll ได้เองแล้ว ไม่ต้อง flex-grow แย่งพื้นที่) */}
+          <div className="flex-none min-h-[160px] rounded-xl p-4 flex flex-col"
             style={{ background: T.surface, border: `1px solid ${T.border}` }}>
             <p className="flex-none text-h3 font-semibold mb-1" style={{ color: T.text }}>สรุปภาพรวม NCR/NCP</p>
             <div className="flex-1 flex items-center justify-around">
@@ -572,6 +579,7 @@ export default function QCStaffDash({ navigate }) {
             </div>
           </div>
 
+          </div>
         </div>
       </div>
     </div>

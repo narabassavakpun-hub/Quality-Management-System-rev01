@@ -54,33 +54,11 @@ export default function BillsTrendPanel({ navigate }) {
 
   return (
     <>
-      {/* Filter bar — ใช้ร่วมกันทั้งกราฟแนวโน้มและหลอดจัดอันดับด้านล่าง */}
-      <div className="flex-none flex items-center gap-2 mb-1">
-        <select
-          value={granularity}
-          onChange={e => handleGranularityChange(e.target.value)}
-          className="text-small rounded-md px-2.5 py-1.5 min-h-[32px]"
-          style={{ background: T.surface, border: `1px solid ${T.border}`, color: T.text }}
-        >
-          {Object.entries(GRANULARITY_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-        </select>
-        <select
-          value={compare}
-          onChange={e => setCompare(e.target.value)}
-          disabled={granularity === 'year'}
-          className="text-small rounded-md px-2.5 py-1.5 min-h-[32px] disabled:opacity-40"
-          style={{ background: T.surface, border: `1px solid ${T.border}`, color: T.text }}
-        >
-          <option value="none">ไม่เปรียบเทียบ</option>
-          {granularity === 'day' && <option value="mom">เทียบเดือนก่อน (MoM)</option>}
-          {granularity !== 'year' && <option value="yoy">เทียบปีก่อน (YoY)</option>}
-        </select>
-      </div>
-
-      {/* ครึ่งบน: กราฟแนวโน้ม — flex-1 */}
-      <div className="flex-1 min-h-[280px] rounded-xl p-4 flex flex-col"
+      {/* ครึ่งบน: กราฟแนวโน้ม — flex-1 — ย้าย filter dropdown เข้ามาอยู่ในกรอบการ์ดเดียวกัน (เหมือนปุ่มเลือกมุมมอง
+          ของ QCDeliveryCalendar) แทนที่จะลอยอยู่นอกกรอบด้านบนแบบเดิม */}
+      <div className="flex-1 min-h-0 rounded-xl p-4 flex flex-col"
         style={{ background: T.surface, border: `1px solid ${T.border}` }}>
-        <div className="flex-none flex items-center justify-between mb-2">
+        <div className="flex-none flex items-center justify-between mb-2 gap-2">
           <p className="text-h3 font-semibold" style={{ color: T.text }}>บิลรับเข้า ({GRANULARITY_LABEL[granularity]})</p>
           {hasCompare && (
             <div className="flex gap-3">
@@ -94,6 +72,27 @@ export default function BillsTrendPanel({ navigate }) {
               </div>
             </div>
           )}
+        </div>
+        <div className="flex-none flex items-center gap-2 mb-2">
+          <select
+            value={granularity}
+            onChange={e => handleGranularityChange(e.target.value)}
+            className="text-small rounded-md px-2.5 py-1.5 min-h-[32px]"
+            style={{ background: T.bg, border: `1px solid ${T.border}`, color: T.text }}
+          >
+            {Object.entries(GRANULARITY_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+          <select
+            value={compare}
+            onChange={e => setCompare(e.target.value)}
+            disabled={granularity === 'year'}
+            className="text-small rounded-md px-2.5 py-1.5 min-h-[32px] disabled:opacity-40"
+            style={{ background: T.bg, border: `1px solid ${T.border}`, color: T.text }}
+          >
+            <option value="none">ไม่เปรียบเทียบ</option>
+            {granularity === 'day' && <option value="mom">เทียบเดือนก่อน (MoM)</option>}
+            {granularity !== 'year' && <option value="yoy">เทียบปีก่อน (YoY)</option>}
+          </select>
         </div>
         <div className="flex-1 min-h-0">
           {trendLoading ? (
@@ -114,7 +113,7 @@ export default function BillsTrendPanel({ navigate }) {
       </div>
 
       {/* ครึ่งล่าง: จัดอันดับผู้ผลิตที่รับเข้ามากสุด — flex-1 */}
-      <div className="flex-1 min-h-[280px] rounded-xl p-4 flex flex-col overflow-hidden"
+      <div className="flex-1 min-h-0 rounded-xl p-4 flex flex-col overflow-hidden"
         style={{ background: T.surface, border: `1px solid ${T.border}` }}>
         <div className="flex-none flex items-center justify-between mb-3">
           <p className="text-h3 font-semibold" style={{ color: T.text }}>ผู้ผลิตที่รับเข้ามากสุด</p>
