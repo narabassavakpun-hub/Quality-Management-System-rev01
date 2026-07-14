@@ -1,7 +1,7 @@
 // qc_staff ที่ไม่ใช่สถานี incoming (QC รับเข้า) เห็นเฉพาะเมนูที่ไม่มี condition หรือ condition ผ่าน
 const onlyReceivingQC = (user) => user.role !== 'qc_staff' || user.qc_station === 'incoming';
 
-const ALL_QC_ROLES = ['admin','qc_staff','qc_supervisor','qc_manager','qmr','purchasing','purchasing_manager','cco','cmo','cpo','production_manager','prod_supervisor'];
+const ALL_QC_ROLES = ['admin','qc_staff','qc_supervisor','qc_manager','qmr','purchasing','purchasing_manager','cco','cmo','cpo','production_manager','prod_supervisor','warehouse_supervisor','warehouse_manager'];
 const PROD_QC_ROLES = ['admin','qc_staff','qc_supervisor','qc_manager','cpo','production_manager','prod_supervisor'];
 
 // ป้าย role ภาษาไทย — จุดรวมเดียว (แก้ CLAUDE.md §12/AUDIT.md Q5 drift ที่เคยกระจายซ้ำใน Admin/Users.jsx + UAI/Detail.jsx)
@@ -18,6 +18,8 @@ export const ROLE_LABELS = {
   cpo: 'CPO',
   production_manager: 'ผู้จัดการฝ่ายผลิต',
   prod_supervisor: 'หัวหน้างานผลิต',
+  warehouse_supervisor: 'หัวหน้าคลัง',
+  warehouse_manager: 'ผู้จัดการคลัง',
 };
 
 // role ที่สร้าง user ได้จริงผ่าน Admin/Users.jsx — ตรงกับ schema CHECK ปัจจุบัน (11 roles รวม prod_supervisor)
@@ -37,7 +39,7 @@ export const NAV_ITEMS = [
       { path: '/bills',    label: 'บิลรับเข้า',    icon: 'receipt',  roles: ['admin','qc_staff','qc_supervisor','qc_manager'], condition: onlyReceivingQC },
       { path: '/ncr',     label: 'NCR/NCP',        icon: 'alert',    roles: ['admin','qc_staff','qc_supervisor','qc_manager','qmr','purchasing','purchasing_manager','cco','cmo','cpo','production_manager'], condition: onlyReceivingQC },
       { path: '/uai',     label: 'UAI',            icon: 'document', roles: ['admin','qc_manager','qmr','purchasing','purchasing_manager','cco','cmo','cpo','production_manager'] },
-      { path: '/delivery', label: 'ปฏิทินส่งของ', icon: 'calendar', roles: ['admin','qc_staff','qc_supervisor','qc_manager','purchasing','purchasing_manager'], condition: onlyReceivingQC },
+      { path: '/delivery', label: 'ปฏิทินส่งของ', icon: 'calendar', roles: ['admin','qc_staff','qc_supervisor','qc_manager','purchasing','purchasing_manager','warehouse_supervisor','warehouse_manager'], condition: onlyReceivingQC },
       { path: '/fg-production/material-defects', label: 'ของเสียวัตถุดิบ', icon: 'alert', roles: ['admin','qc_staff','qc_supervisor','qc_manager'], condition: onlyReceivingQC },
     ],
   },

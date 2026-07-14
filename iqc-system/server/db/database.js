@@ -1343,6 +1343,64 @@ function migrateUsersRoleConstraint() {
   }
 }
 
+// เพิ่ม role คลัง (warehouse_supervisor/warehouse_manager) — รับหน้าที่กด "รับทราบ" แผนรับเข้าแทน
+// qc_staff/qc_supervisor เดิม (ตามคำขอ user) — pattern เดียวกับ migrateUsersRoleConstraint() ด้านบนเป๊ะ
+// (rebuild ตาราง + shared column intersection กัน DB เก่าข้าม generation)
+function migrateUsersRoleConstraintWarehouse() {
+  const info = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").get();
+  if (!info || info.sql.includes('warehouse_manager')) return; // already up-to-date
+
+  console.log('[Migration] Updating users.role CHECK constraint (add warehouse_supervisor/warehouse_manager)...');
+
+  const oldColSet = new Set(db.prepare('PRAGMA table_info(users)').all().map(c => c.name));
+  const newColList = [
+    'id','username','password_hash','full_name','role','is_active','created_at',
+    'session_token','qc_station','telegram_chat_id','factory_assignment',
+  ];
+  const shared = newColList.filter(c => oldColSet.has(c)).join(',');
+  if (!shared) { console.error('[Migration] users: no shared columns — aborting to avoid data loss'); return; }
+
+  db.pragma('foreign_keys = OFF');
+  db.pragma('legacy_alter_table = ON');
+  try {
+    db.transaction(() => {
+      db.prepare('ALTER TABLE users RENAME TO users_old').run();
+      db.prepare(`
+        CREATE TABLE users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT UNIQUE NOT NULL,
+          password_hash TEXT NOT NULL,
+          full_name TEXT NOT NULL,
+          role TEXT NOT NULL CHECK(role IN (
+            'admin','qc_staff','qc_supervisor','qc_manager',
+            'qmr','purchasing','purchasing_manager','cco','cmo','cpo','production_manager','prod_supervisor',
+            'warehouse_supervisor','warehouse_manager'
+          )),
+          is_active INTEGER DEFAULT 1,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          session_token TEXT,
+          qc_station TEXT,
+          telegram_chat_id TEXT,
+          factory_assignment TEXT
+        )
+      `).run();
+      db.prepare(`INSERT INTO users (${shared}) SELECT ${shared} FROM users_old`).run();
+      db.prepare('DROP TABLE users_old').run();
+    })();
+    console.log('[Migration] users.role constraint updated — warehouse_supervisor/warehouse_manager added');
+  } catch (e) {
+    console.error('[Migration] users role migration failed:', e.message);
+    try {
+      const exists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'").get();
+      if (!exists) db.prepare('ALTER TABLE users_old RENAME TO users').run();
+    } catch {}
+    throw e;
+  } finally {
+    db.pragma('legacy_alter_table = OFF');
+    db.pragma('foreign_keys = ON');
+  }
+}
+
 // ===== SYNC SEQUENCES — ensure sequence counters never collide with existing codes =====
 // Format: NCR-2026-0001 and UAI-2026-0001 → sequence starts at position 10
 function syncSequences() {
@@ -1763,6 +1821,8 @@ try {
 
 // Relax users.role CHECK for DB เก่า (เพิ่ม prod_supervisor) — ต้องรันก่อน seedData() ที่ seed prod_sup1
 migrateUsersRoleConstraint();
+// Relax users.role CHECK for DB เก่า (เพิ่ม warehouse_supervisor/warehouse_manager)
+migrateUsersRoleConstraintWarehouse();
 
 seedData();
 syncSequences();

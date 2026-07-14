@@ -226,8 +226,10 @@ router.delete('/:id', auth, requireRole(['purchasing', 'purchasing_manager']), (
   res.json({ ok: true });
 });
 
-// ===== POST /api/delivery/:id/acknowledge — QC รับทราบ =====
-router.post('/:id/acknowledge', auth, requireRole(['qc_staff', 'qc_supervisor']), requireReceivingQC, (req, res) => {
+// ===== POST /api/delivery/:id/acknowledge — คลัง (หัวหน้าคลัง/ผู้จัดการคลัง) รับทราบ =====
+// ย้ายจาก qc_staff/qc_supervisor มาเป็นคลังทั้งหมด (ตามคำขอ user) — qc_staff เหลือแค่หน้าที่บันทึกวันเวลา
+// มาส่งจริงผ่าน PATCH /:id/status เท่านั้น ดู isQC/isWarehouse split ใน client (Delivery/index.jsx)
+router.post('/:id/acknowledge', auth, requireRole(['warehouse_supervisor', 'warehouse_manager']), (req, res) => {
   const schedule = db.prepare('SELECT * FROM delivery_schedules WHERE id = ?').get(req.params.id);
   if (!schedule) return res.status(404).json({ error: 'ไม่พบข้อมูล' });
   if (schedule.status !== 'pending') return res.status(400).json({ error: 'รับทราบได้เฉพาะ status=pending' });

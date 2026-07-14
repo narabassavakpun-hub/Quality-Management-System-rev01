@@ -19,14 +19,15 @@ const uid = (un) => db.prepare('SELECT id FROM users WHERE username = ?').get(un
 const setSess = (un, s) => db.prepare('UPDATE users SET session_token=? WHERE username=?').run(s, un);
 db.prepare("UPDATE users SET qc_station='incoming' WHERE username='qc_staff1'").run();
 
-// จัดซื้อคนที่ 2 + purchasing_manager ไม่ได้ seed มาเป็นค่าเริ่มต้น — สร้างเพิ่มเพื่อทดสอบ
+// จัดซื้อคนที่ 2 + purchasing_manager + คลัง ไม่ได้ seed มาเป็นค่าเริ่มต้น — สร้างเพิ่มเพื่อทดสอบ
 db.prepare("INSERT INTO users (username, password_hash, full_name, role, is_active) VALUES ('purchasing2','x','คนที่ไม่ได้รับมอบหมาย','purchasing',1)").run();
 db.prepare("INSERT INTO users (username, password_hash, full_name, role, is_active) VALUES ('pur_mgr','x','ผู้จัดการจัดซื้อ','purchasing_manager',1)").run();
+db.prepare("INSERT INTO users (username, password_hash, full_name, role, is_active) VALUES ('warehouse_test1','x','คลังทดสอบ','warehouse_supervisor',1)").run();
 
 const C = {};
 for (const [k, un] of [
   ['staff', 'qc_staff1'], ['sup', 'supervisor1'], ['mgr', 'manager1'], ['qmr', 'qmr1'],
-  ['pur1', 'purchasing1'], ['pur2', 'purchasing2'], ['purMgr', 'pur_mgr'],
+  ['pur1', 'purchasing1'], ['pur2', 'purchasing2'], ['purMgr', 'pur_mgr'], ['wh', 'warehouse_test1'],
   ['cco', 'cco1'], ['cmo', 'cmo1'], ['cpo', 'cpo1'], ['prod', 'prodmgr1'],
 ]) {
   const row = db.prepare('SELECT id FROM users WHERE username = ?').get(un);
@@ -193,10 +194,14 @@ test('SCOPE-DEL-04 GET list: จัดซื้อเห็นปฏิทิน
   assert.equal(patchOther.status, 403);
 });
 
-test('SCOPE-DEL-05 qc_staff ไม่ถูกกรองด้วย logic นี้ (ไม่ใช่ purchasing) — ยังเห็น/acknowledge schedule ได้ปกติ', async () => {
+test('SCOPE-DEL-05 qc_staff ไม่ถูกกรองด้วย logic นี้ (ไม่ใช่ purchasing) — ยังเห็น schedule ได้ปกติ (acknowledge ย้ายไปคลังแล้ว)', async () => {
   const id = makeDeliverySchedule(supAssigned, 'pending');
   const list = await api('GET', '/api/delivery?limit=100', { cookie: C.staff });
   assert.ok(list.body.data.map(r => r.id).includes(id));
-  const ack = await api('POST', `/api/delivery/${id}/acknowledge`, { cookie: C.staff });
+});
+
+test('SCOPE-DEL-05b คลัง (warehouse_supervisor) ไม่ถูกกรองด้วย logic นี้เช่นกัน — acknowledge schedule ของ Supplier ที่มีผู้ดูแลคนอื่นได้ปกติ', async () => {
+  const id = makeDeliverySchedule(supAssigned, 'pending');
+  const ack = await api('POST', `/api/delivery/${id}/acknowledge`, { cookie: C.wh });
   assert.equal(ack.status, 200);
 });

@@ -83,7 +83,7 @@ function isPastDelivery(scheduledDate, timeSlot) {
 
 const STATUS_CFG = {
   pending:      { label: 'รอดำเนินการ',            cls: 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200' },
-  acknowledged: { label: 'QC รับทราบแล้ว',         cls: 'bg-teal-100 dark:bg-teal-900 text-teal-800 dark:text-teal-200' },
+  acknowledged: { label: 'รับทราบแล้ว',            cls: 'bg-teal-100 dark:bg-teal-900 text-teal-800 dark:text-teal-200' },
   on_time:      { label: 'ส่งตามแผน',                cls: 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' },
   late:         { label: 'ส่งนอกแผน',                cls: 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200' },
   cancelled:    { label: 'ยกเลิก',                  cls: 'bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-200' },
@@ -127,8 +127,11 @@ export function DetailModal({ schedule, onClose, suppliers, role, holidays = [] 
 
   const past = isPastDelivery(detail.scheduled_date, detail.time_slot);
   const isQC = ['qc_staff', 'qc_supervisor'].includes(role);
+  // คลัง (หัวหน้าคลัง/ผู้จัดการคลัง) เป็นผู้กด "รับทราบ" แทน qc_staff/qc_supervisor เดิม — qc_staff/qc_supervisor
+  // เหลือแค่บันทึกวันเวลามาส่งจริงผ่าน canUpdateStatus (ดู routes/delivery.js's acknowledge endpoint)
+  const isWarehouse = ['warehouse_supervisor', 'warehouse_manager'].includes(role);
   const canEdit = role === 'purchasing' && ['pending', 'acknowledged'].includes(detail.status) && !detail.is_unplanned && !past;
-  const canAck  = isQC && detail.status === 'pending';
+  const canAck  = isWarehouse && detail.status === 'pending';
   const canUpdateStatus = isQC && detail.status === 'acknowledged';
 
   const [editing, setEditing] = useState(false);
@@ -554,7 +557,7 @@ export function DetailModal({ schedule, onClose, suppliers, role, holidays = [] 
                       if (nv.status === 'rescheduled' && nv.scheduled_date) desc += ` (วันใหม่: ${nv.scheduled_date})`;
                       if (nv.late_reason) desc += ` — ${nv.late_reason}`;
                     } else if (h.action === 'ACKNOWLEDGE') {
-                      desc = 'QC รับทราบแผนส่งของ';
+                      desc = 'คลังรับทราบแผนส่งของ';
                     } else {
                       desc = h.action;
                     }
@@ -1077,7 +1080,7 @@ export default function DeliveryCalendar() {
   const [selectedSchedule, setSelectedSchedule] = useState(null);
   const [tagModal, setTagModal] = useState(null); // { status, full } — คลิก summary tag เปิดดูรายการ
 
-  // Deep-link จากลิงก์ในกระดิ่งแจ้งเตือน (เช่น "QC รับทราบ Delivery" — /delivery?schedule=123) — เปิด
+  // Deep-link จากลิงก์ในกระดิ่งแจ้งเตือน (เช่น "คลังรับทราบ Delivery" — /delivery?schedule=123) — เปิด
   // DetailModal ให้อัตโนมัติ แล้วล้าง query param ออกกันเปิดซ้ำตอน re-render/กด back
   // ต้อง dep บนค่า param จริง (ไม่ใช่ [] เฉยๆ) — ถ้าผู้ใช้อยู่หน้า /delivery อยู่แล้วแล้วกดลิงก์แจ้งเตือนใหม่
   // React Router ไม่ remount component (path เดิม แค่ query string เปลี่ยน) effect ที่ dep [] จะไม่ทำงานซ้ำ
