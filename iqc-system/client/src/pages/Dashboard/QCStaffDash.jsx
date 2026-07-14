@@ -422,6 +422,38 @@ export default function QCStaffDash({ navigate }) {
         <div className="flex flex-col gap-2 min-h-0">
           <CatLabel color={D.cyan} text="แนวโน้มรับเข้า" />
 
+          {/* รายการสินค้าที่รอรับเข้าวันนี้ — flex-none */}
+          <div className="flex-none rounded-xl p-3 flex flex-col"
+            style={{ background: D.card, border: `1px solid ${D.border}` }}>
+            <div className="flex-none flex justify-between items-center mb-2">
+              <p className="text-[11px] font-semibold" style={{ color: D.text }}>รอรับเข้าวันนี้</p>
+              <button onClick={() => navigate('/delivery')} className="text-[9px] hover:underline" style={{ color: D.cyan }}>ดูทั้งหมด</button>
+            </div>
+            {todayAwaiting.length === 0 ? (
+              <p className="text-[10px] py-1" style={{ color: D.muted }}>ไม่มีรายการวันนี้</p>
+            ) : (
+              <div className="space-y-1.5 max-h-[110px] overflow-y-auto"
+                style={{ scrollbarWidth: 'thin', scrollbarColor: `${D.border} transparent` }}>
+                {todayAwaiting.map(s => (
+                  <button key={s.id} onClick={() => openDetail(s)}
+                    className="w-full text-left rounded-lg px-2 py-1.5 flex items-center justify-between gap-2 transition-colors"
+                    style={{ background: D.bg }}>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-semibold truncate" style={{ color: D.text }}>{s.supplier_name}</p>
+                      <p className="text-[9px]" style={{ color: D.muted }}>{s.scheduled_date.slice(5)}{s.time_slot ? ` ${s.time_slot}` : ''}</p>
+                    </div>
+                    <span className="text-[8px] px-1.5 py-0.5 rounded-full flex-shrink-0" style={{
+                      background: s.status === 'pending' ? '#EF444418' : '#38BDF818',
+                      color: s.status === 'pending' ? '#F87171' : D.cyan,
+                    }}>
+                      {s.status === 'pending' ? 'รอรับทราบ' : 'รับทราบแล้ว'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Area chart — flex-[2] (2 ส่วน) */}
           <div className="flex-[2] min-h-0 rounded-xl p-3 flex flex-col"
             style={{ background: D.card, border: `1px solid ${D.border}` }}>
@@ -471,38 +503,6 @@ export default function QCStaffDash({ navigate }) {
         {/* ──── RIGHT: NCR Monitor ──── */}
         <div className="flex flex-col gap-2 min-h-0">
           <CatLabel color={D.orange} text="NCR Monitor" />
-
-          {/* รายการสินค้าที่รอรับเข้าวันนี้ — flex-none */}
-          <div className="flex-none rounded-xl p-3 flex flex-col"
-            style={{ background: D.card, border: `1px solid ${D.border}` }}>
-            <div className="flex-none flex justify-between items-center mb-2">
-              <p className="text-[11px] font-semibold" style={{ color: D.text }}>รอรับเข้าวันนี้</p>
-              <button onClick={() => navigate('/delivery')} className="text-[9px] hover:underline" style={{ color: D.cyan }}>ดูทั้งหมด</button>
-            </div>
-            {todayAwaiting.length === 0 ? (
-              <p className="text-[10px] py-1" style={{ color: D.muted }}>ไม่มีรายการวันนี้</p>
-            ) : (
-              <div className="space-y-1.5 max-h-[110px] overflow-y-auto"
-                style={{ scrollbarWidth: 'thin', scrollbarColor: `${D.border} transparent` }}>
-                {todayAwaiting.map(s => (
-                  <button key={s.id} onClick={() => openDetail(s)}
-                    className="w-full text-left rounded-lg px-2 py-1.5 flex items-center justify-between gap-2 transition-colors"
-                    style={{ background: D.bg }}>
-                    <div className="min-w-0">
-                      <p className="text-[10px] font-semibold truncate" style={{ color: D.text }}>{s.supplier_name}</p>
-                      <p className="text-[9px]" style={{ color: D.muted }}>{s.scheduled_date.slice(5)}{s.time_slot ? ` ${s.time_slot}` : ''}</p>
-                    </div>
-                    <span className="text-[8px] px-1.5 py-0.5 rounded-full flex-shrink-0" style={{
-                      background: s.status === 'pending' ? '#EF444418' : '#38BDF818',
-                      color: s.status === 'pending' ? '#F87171' : D.cyan,
-                    }}>
-                      {s.status === 'pending' ? 'รอรับทราบ' : 'รับทราบแล้ว'}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
 
           {/* NCR vs NCP split card — flex-none */}
           <div className="flex-none rounded-xl p-3"
