@@ -87,11 +87,12 @@ test('DEL-07 QC status on_time after acknowledged → on_time', async () => {
   assert.equal(r.body.status, 'on_time');
 });
 
-test('DEL-08 QC status late without reason → 400', async () => {
+test('DEL-08 QC status late without reason → 200 (ไม่บังคับเหตุผลแล้วตาม user request)', async () => {
   const id = await mkPending();
   await api('POST', `/api/delivery/${id}/acknowledge`, { cookie: C.staff });
   const r = await api('PATCH', `/api/delivery/${id}/status`, { cookie: C.staff, body: { status: 'late' } });
-  assert.equal(r.status, 400);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.status, 'late');
 });
 
 test('DEL-09 QC cannot set cancelled (only on_time/late) → 400', async () => {

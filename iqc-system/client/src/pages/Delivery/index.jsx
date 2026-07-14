@@ -154,6 +154,20 @@ export function DetailModal({ schedule, onClose, suppliers, role, holidays = [] 
     patch.mutate();
   }
   function handleStatusSave() {
+    // popup แจ้งเตือนฟิลด์ที่ยังไม่ได้กรอกก่อนบันทึก — ก่อนหน้านี้ปุ่ม disabled เช็คแค่ statusForm.status
+    // ทำให้กดบันทึกทั้งที่ยังไม่กรอกวันที่/เวลาที่มาส่งได้เงียบๆ (บั๊กที่ user รายงาน)
+    const missing = [];
+    if (['on_time', 'late'].includes(statusForm.status)) {
+      if (!statusForm.actual_date) missing.push('วันที่ส่งจริง');
+      if (!statusForm.actual_time) missing.push('เวลาที่มาส่ง');
+    }
+    if (statusForm.status === 'rescheduled' && !statusForm.rescheduled_date) missing.push('วันที่ใหม่');
+    // เหตุผลบังคับเฉพาะ cancelled/rescheduled — ส่งนอกแผน (late) ไม่บังคับตอบแล้วตามที่ user ขอ
+    if (['cancelled', 'rescheduled'].includes(statusForm.status) && !statusForm.late_reason) missing.push('เหตุผล');
+    if (missing.length) {
+      alert(`กรุณากรอกข้อมูลให้ครบก่อนบันทึก:\n- ${missing.join('\n- ')}`);
+      return;
+    }
     if (statusHoliday && !statusHolidayConfirm) { setStatusHolidayConfirm(true); return; }
     updateStatus.mutate();
   }
@@ -339,20 +353,21 @@ export function DetailModal({ schedule, onClose, suppliers, role, holidays = [] 
               )}
               {['on_time','late'].includes(statusForm.status) && (
                 <div>
-                  <label className="label">วันที่ส่งจริง</label>
+                  <label className="label">วันที่ส่งจริง *</label>
                   <input type="date" className="input" value={statusForm.actual_date} onChange={e => setStatusForm(p => ({ ...p, actual_date: e.target.value }))} />
                 </div>
               )}
               {['on_time','late'].includes(statusForm.status) && (
                 <div>
-                  <label className="label">เวลาที่มาส่ง</label>
-                  <input type="time" className="input" value={statusForm.actual_time} onChange={e => setStatusForm(p => ({ ...p, actual_time: e.target.value }))} />
+                  <label className="label">เวลาที่มาส่ง *</label>
+                  {/* lang="en-GB" บังคับ 24 ชม. เสมอ — ไม่งั้น input type=time จะโชว์ AM/PM ตาม locale ของเครื่อง/browser */}
+                  <input type="time" lang="en-GB" className="input" value={statusForm.actual_time} onChange={e => setStatusForm(p => ({ ...p, actual_time: e.target.value }))} />
                 </div>
               )}
             </div>
             {['late','cancelled','rescheduled'].includes(statusForm.status) && (
               <div>
-                <label className="label">เหตุผล *</label>
+                <label className="label">เหตุผล{['cancelled','rescheduled'].includes(statusForm.status) ? ' *' : ' (ไม่บังคับ)'}</label>
                 <input className="input" value={statusForm.late_reason} placeholder="ระบุเหตุผล..." onChange={e => setStatusForm(p => ({ ...p, late_reason: e.target.value }))} />
               </div>
             )}

@@ -244,7 +244,9 @@ router.patch('/:id/status', auth, requireRole(['purchasing', 'purchasing_manager
   const isQC = ['qc_staff', 'qc_supervisor'].includes(req.user.role);
   const allowed = isQC ? ['on_time', 'late'] : ['on_time', 'late', 'cancelled', 'rescheduled'];
   if (!allowed.includes(status)) return res.status(400).json({ error: isQC ? 'QC บันทึกได้เฉพาะ on_time / late' : 'สถานะไม่ถูกต้อง' });
-  if ((status === 'late' || status === 'cancelled' || status === 'rescheduled') && !late_reason) {
+  // ส่งนอกแผน (late) ไม่บังคับกรอกเหตุผลแล้วตามที่ user ขอ (จะตอบหรือไม่ก็ได้) — คงบังคับเฉพาะ
+  // cancelled/rescheduled เพราะเป็น action ที่กระทบแผนเดิมมากกว่า ควรมี audit trail เหตุผลเสมอ
+  if ((status === 'cancelled' || status === 'rescheduled') && !late_reason) {
     return res.status(400).json({ error: 'กรุณากรอกเหตุผล' });
   }
   if (status === 'rescheduled' && !rescheduled_date) {
