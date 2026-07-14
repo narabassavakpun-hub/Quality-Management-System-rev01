@@ -739,6 +739,40 @@ push-driven
 
 ---
 
+**คำขอ (รอบที่ 22):** user ถามต่อเนื่องจากบทสนทนาเรื่อง R2 backup (นอก session round ที่เป็นโค้ด) ว่า "ลดขนาดของ
+วีดีโอที่อัพโหลดได้ไหม" (Issue Talk เป็นจุดเดียวในระบบที่รับไฟล์วีดีโอ) — **ถาม `AskUserQuestion`** ก่อนเพราะการ
+บีบอัดวีดีโอจริงต้องมี `ffmpeg` binary ซึ่งระบบยังไม่มี ต้องเพิ่มเข้า Docker image (กระทบขนาด image + เวลา
+build/deploy) — user ยืนยัน **"โอเค เพิ่ม ffmpeg เข้า Docker image"**
+
+**การแก้:**
+- เพิ่ม `ffmpeg` เข้า `Dockerfile`'s runtime stage `apt-get install` (อยู่แถวเดียวกับ `chromium` ที่มีอยู่แล้วสำหรับ
+  PDF export)
+- เพิ่ม `fluent-ffmpeg@2.1.3` เป็น server dependency ใหม่ (มี npm deprecation notice แต่ยังเป็น wrapper มาตรฐานที่
+  ใช้กันแพร่หลายที่สุดสำหรับเรียก ffmpeg CLI จาก Node — `npm audit` ยืนยัน 0 vulnerability ที่มาจาก dependency
+  tree ของตัวมันเอง)
+- สร้าง `compressVideo` middleware ใหม่ใน `middleware/upload.js` (pattern เดียวกับ `compressImages` เป๊ะ): รันหลัง
+  `verifyMagic`, บีบอัดเฉพาะ mp4 (libx264/aac) และ webm (libvpx-vp9/opus) — ข้าม avi (container เก่า/หายาก ไม่คุ้ม
+  ต้อง maintain encode profile เพิ่มอันที่ 3) — ย่อความละเอียดสูงสุด 1280px ด้านยาว (ไม่ขยายถ้าเล็กกว่าอยู่แล้ว) ใช้
+  ไฟล์บีบอัดก็ต่อเมื่อเล็กกว่าต้นฉบับจริง (เก็บต้นฉบับถ้าบีบแล้วใหญ่ขึ้น) — ต่างจาก `compressImages` ตรงที่ประมวลผล
+  ทีละไฟล์ (ไม่ `Promise.all`) เพราะ ffmpeg transcode กิน CPU/RAM หนักกว่า sharp resize มาก และ Issue Talk
+  อนุญาตแนบได้ถึง 10 ไฟล์/ข้อความ
+- เช็คว่ามี `ffmpeg` binary จริงบนเครื่องแค่ครั้งเดียวตอน module load (`execFileSync('ffmpeg',['-version'])`) —
+  ถ้าไม่มี (เช่นเครื่อง dev ที่ไม่ได้ลง) จะ skip เงียบๆ ไม่ crash upload เลย เหมือน `compressImages`'s
+  `if (!sharp) return next()`
+- ผูกเข้า route ทั้ง 2 จุดที่ใช้ `uploads.issueTalk` (`POST /` สร้างกระทู้ + `POST /:id/messages` ตอบกลับ) ต่อจาก
+  `compressImages` เดิม
+
+**Test:** `node --test` → 272/272 เขียว (ไม่มี test เดิมที่ต้องแก้ — เป็น middleware ใหม่ ไม่กระทบพฤติกรรมที่มี
+test คลุมอยู่)
+
+**Verify:** ทดสอบ 2 ทาง — (1) เครื่อง dev นี้ไม่มี ffmpeg ลงจริง ยืนยัน `compressVideo` detect แล้ว skip เงียบๆ
+เรียก `next()` ทันทีไม่แตะไฟล์เลย (พิสูจน์ path ปลอดภัยเวลาไม่มี binary) (2) รัน `transcodeVideo` logic จริงใน
+container `node:22-bookworm-slim` ชั่วคราว (image ฐานเดียวกับ Dockerfile production) ที่ลง ffmpeg แล้ว สร้างวีดีโอ
+ทดสอบสังเคราะห์ 1920x1080 5 วินาที แล้วบีบอัดจริง: 302,963 bytes → 113,974 bytes (เล็กลง 62%) ยืนยัน command
+ที่เขียนไว้ใช้งานได้จริง ไม่ใช่แค่ผ่าน syntax check — commit `9f9937c`
+
+---
+
 ## 2026-07-13 | Session 125 — Purchasing/Supplier Management + Dashboards (Supplier Assignment, Purchasing Dashboard, Manager Dashboard, Notification fixes)
 
 **คำขอ:** ปรับปรุงระบบ Purchasing/Supplier Management/Dashboard ให้ครบวงจร — (1) Purchasing/Purchasing Manager
