@@ -37,9 +37,11 @@ ENV NODE_ENV=production \
     PUPPETEER_SKIP_DOWNLOAD=true \
     IQC_DB_PATH=/data/iqc.db
 
-# Chromium + ฟอนต์ไทย/ลาติน + tzdata + dumb-init (reaper สำหรับ zombie ของ Chromium)
+# Chromium + ฟอนต์ไทย/ลาติน + tzdata + dumb-init (reaper สำหรับ zombie ของ Chromium) + ffmpeg (บีบอัดวิดีโอ
+# Issue Talk ผ่าน fluent-ffmpeg — เฉพาะ runtime stage เท่านั้น ไม่ต้องมีตอน build)
 RUN apt-get update && apt-get install -y --no-install-recommends \
       chromium \
+      ffmpeg \
       fonts-thai-tlwg fonts-liberation fonts-dejavu-core \
       ca-certificates tzdata dumb-init \
     && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo "$TZ" > /etc/timezone \

@@ -192,9 +192,76 @@ async function compressImages(req, res, next) {
   next();
 }
 
+// ===== Video Compression Middleware (Issue Talk) =====
+// ลดขนาดวิดีโอหลัง verifyMagic — เฉพาะ mp4/webm (avi ข้าม เพราะเป็น container เก่า/หายาก ไม่คุ้มความซับซ้อนที่
+// ต้อง maintain encode profile เพิ่ม) — ย่อความละเอียดสูงสุด 1280px ด้านยาว (ไม่ขยายถ้าเล็กกว่าอยู่แล้ว) + re-encode
+// bitrate ต่ำลง ใช้ compressed ก็ต่อเมื่อไฟล์เล็กกว่าต้นฉบับจริง (pattern เดียวกับ compressImages ทุกอย่าง)
+// รันทีละไฟล์ (ไม่ Promise.all แบบรูปภาพ) เพราะ ffmpeg transcode กิน CPU/RAM มากกว่า sharp resize เยอะ — ถ้ามีคน
+// แนบวิดีโอหลายไฟล์ในข้อความเดียว (Issue Talk อนุญาตสูงสุด 10 ไฟล์) การรันขนาน 10 ffmpeg process พร้อมกันเสี่ยง
+// CPU พุ่งเกินจำเป็น — ต้องมี ffmpeg binary ในระบบ (ดู Dockerfile runtime stage) ถ้าไม่มีจะ skip เงียบๆ ไม่ crash
+const COMPRESS_VIDEO_EXTS = new Set(['mp4', 'webm']);
+const MAX_VIDEO_PX = 1280;
+
+let ffmpeg;
+let ffmpegAvailable = false;
+try {
+  ffmpeg = require('fluent-ffmpeg');
+  // เช็คว่ามี ffmpeg binary จริงบนเครื่อง/container นี้ไหม (fluent-ffmpeg เป็นแค่ wrapper เรียก CLI ข้างนอก
+  // ไม่ได้ bundle binary มาด้วย) — เช็คครั้งเดียวตอน module load กันเรียก spawn ซ้ำทุก request โดยไม่จำเป็น
+  const { execFileSync } = require('child_process');
+  execFileSync('ffmpeg', ['-version'], { stdio: 'ignore' });
+  ffmpegAvailable = true;
+} catch {
+  ffmpegAvailable = false;
+}
+
+function transcodeVideo(inputPath, outputPath, ext) {
+  return new Promise((resolve, reject) => {
+    let cmd = ffmpeg(inputPath)
+      .videoFilters(`scale='min(${MAX_VIDEO_PX},iw)':-2`)
+      .outputOptions(['-movflags +faststart']);
+
+    if (ext === 'webm') {
+      cmd = cmd.videoCodec('libvpx-vp9').outputOptions(['-crf 32', '-b:v 0']).audioCodec('libopus').audioBitrate('96k');
+    } else {
+      cmd = cmd.videoCodec('libx264').outputOptions(['-crf 28', '-preset medium']).audioCodec('aac').audioBitrate('128k');
+    }
+
+    cmd.on('end', resolve).on('error', reject).save(outputPath);
+  });
+}
+
+async function compressVideo(req, res, next) {
+  if (!ffmpegAvailable) return next();
+  const files = collectFiles(req);
+  const vids = files.filter(f => COMPRESS_VIDEO_EXTS.has(path.extname(f.filename).slice(1).toLowerCase()));
+  if (!vids.length) return next();
+
+  for (const f of vids) {
+    const ext = path.extname(f.filename).slice(1).toLowerCase();
+    const tmp = f.path + '.comp';
+    try {
+      await transcodeVideo(f.path, tmp, ext);
+      const newSize = fs.statSync(tmp).size;
+      if (newSize < f.size) {
+        fs.renameSync(tmp, f.path);
+        f.size = newSize;
+      } else {
+        fs.unlinkSync(tmp); // compressed ใหญ่กว่า — คงต้นฉบับ
+      }
+    } catch (err) {
+      console.error('[compressVideo]', f.filename, err.message);
+      try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch {}
+      // ไม่ crash — ใช้ไฟล์ต้นฉบับต่อไป
+    }
+  }
+  next();
+}
+
 module.exports = uploads;
 module.exports.verifyMagic = verifyMagic;
 module.exports.compressImages = compressImages;
+module.exports.compressVideo = compressVideo;
 module.exports.detectExt = detectExt; // สำหรับ unit test
 module.exports.xlsxUpload = xlsxUpload;
 module.exports.fixOriginalName = fixOriginalName; // ใช้ซ้ำใน multer instance อื่นนอกไฟล์นี้ (เช่น routes/kpi.js, routes/master.js)
