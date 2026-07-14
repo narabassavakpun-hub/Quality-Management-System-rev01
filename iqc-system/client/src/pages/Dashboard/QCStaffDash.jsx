@@ -46,6 +46,13 @@ export default function QCStaffDash({ navigate }) {
   const closedNCP = data?.ncr_minor_closed ?? 0;
   const ncpOnlyLength = data?.ncr_minor_total ?? 0;
 
+  // สรุปภาพรวม UAI — เพิ่มตามคำขอ user (การ์ดใหม่ในคอลัมน์ NCR/NCP Monitor) ไม่มีปุ่ม "ดูทั้งหมด" เหมือนการ์ด
+  // "NCR / NCP" split ข้างบน เพราะ qc_staff ไม่มีสิทธิ์เข้า /uai (ดู rolePermissions.js's NAV_ITEMS) — โชว์แค่ตัวเลข
+  const uaiOpen = data?.uai_not_final_count ?? 0;
+  const uaiCompleted = data?.uai_completed_count ?? 0;
+  const uaiTotal = data?.uai_total ?? 0;
+  const uaiCompletedPct = uaiTotal > 0 ? Math.round((uaiCompleted / uaiTotal) * 100) : 0;
+
   const billsLast7 = data?.bills_last7 ?? [];
 
   const passFail = [
@@ -488,6 +495,34 @@ export default function QCStaffDash({ navigate }) {
                   {ncpOnlyLength > 0 ? Math.round((closedNCP / ncpOnlyLength) * 100) : 0}% ปิด
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* UAI summary — flex-none */}
+          <div className="flex-none rounded-xl p-3"
+            style={{ background: D.card, border: `1px solid ${D.border}` }}>
+            <p className="text-[11px] font-semibold mb-2" style={{ color: D.text }}>UAI</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-lg p-2" style={{ background: D.bg }}>
+                <div className="flex items-center gap-1 mb-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: D.purple }} />
+                  <span className="text-[9px] font-semibold uppercase tracking-wide" style={{ color: D.text }}>เปิดอยู่</span>
+                </div>
+                <div className="text-xl font-bold tabular-nums" style={{ color: D.purple }}>{uaiOpen}</div>
+              </div>
+              <div className="rounded-lg p-2" style={{ background: D.bg }}>
+                <div className="flex items-center gap-1 mb-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: D.green }} />
+                  <span className="text-[9px] font-semibold uppercase tracking-wide" style={{ color: D.text }}>เสร็จแล้ว</span>
+                </div>
+                <div className="text-xl font-bold tabular-nums" style={{ color: D.green }}>{uaiCompleted}</div>
+              </div>
+            </div>
+            <div className="mt-1.5 h-1 rounded-full overflow-hidden" style={{ background: D.border }}>
+              <div className="h-full rounded-full" style={{ width: `${uaiCompletedPct}%`, background: D.green, transition: 'width 1s ease-out' }} />
+            </div>
+            <div className="text-[8px] mt-0.5 text-right" style={{ color: D.muted }}>
+              {uaiCompletedPct}% เสร็จแล้ว จาก {uaiTotal} ใบ
             </div>
           </div>
 
