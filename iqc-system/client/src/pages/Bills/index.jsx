@@ -438,11 +438,6 @@ export default function BillList() {
                   )}
                 </tr>
               ))}
-              {!isLoading && Array.from({ length: PAGE_SIZE - pageRows.length }, (_, i) => (
-                <tr key={`pad-${i}`} aria-hidden="true" className="pointer-events-none">
-                  <td colSpan={user?.role === 'qc_staff' ? 13 : 12} className="h-[41px] p-0 border-b border-border" />
-                </tr>
-              ))}
             </tbody>
           </table>
         </div>
