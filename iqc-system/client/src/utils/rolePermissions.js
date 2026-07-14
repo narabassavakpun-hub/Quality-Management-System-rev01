@@ -32,7 +32,7 @@ export const CREATABLE_ROLES = Object.entries(ROLE_LABELS)
 export const NAV_ITEMS = [
   { path: '/', label: 'หน้าหลัก', icon: 'home', roles: ALL_QC_ROLES },
   {
-    path: '/iqc', label: 'ส่วนงานรับเข้า (IQC)', mobileLabel: 'IQC', icon: 'inbox',
+    path: '/iqc', label: 'กลุ่มงานรับเข้าสินค้า', mobileLabel: 'IQC', icon: 'inbox',
     roles: ALL_QC_ROLES,
     condition: onlyReceivingQC,
     children: [
