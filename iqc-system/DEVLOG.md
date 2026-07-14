@@ -353,6 +353,25 @@ commit `a8aa9c3`
 
 ---
 
+**คำขอ (รอบที่ 6):** user ส่ง screenshot ยืนยันว่า "เวลาที่มาส่ง" ยังมี AM/PM ให้เลือกอยู่ ทั้งที่เพิ่ง `lang="en-GB"`
+ไปในรอบก่อน
+
+**Root cause:** `lang="en-GB"` ไม่ได้ผลจริงกับทุกเครื่อง — native time picker widget ของ `<input type="time">`
+ยึดตาม regional format ของ Windows/browser ที่เครื่อง user เอง ไม่ใช่ HTML `lang` attribute (screenshot จริง
+ยืนยันชัดเจนว่ายังมีคอลัมน์ AM/PM อยู่) เป็นข้อจำกัดของ native widget ที่แก้ด้วย attribute ไม่ได้จริง
+
+**การแก้:** เปลี่ยนจาก `<input type="time">` เป็น `TimePicker` component เดิมที่ใช้กับ `time_slot` (นัดหมาย) อยู่แล้ว
+ในไฟล์เดียวกัน — เป็น `<select>` ธรรมดา 2 ตัว (ชั่วโมง 07-18, นาที 00/15/30/45) ไม่พึ่ง native widget เลย จึงไม่มี
+ทางโผล่ AM/PM ได้อีก
+
+**Test:** `node --test` → 258/258 เขียว, 0 skip
+
+**Verify:** Playwright ยืนยันไม่มี `input[type=time]` เหลืออยู่เลย, ตัวเลือกชั่วโมงเป็นเลข 24 ชม.ล้วน (07-18 ไม่มี
+AM/PM), และตรวจ DB ตรงๆ หลังบันทึกยืนยัน `actual_time='15:45'` ถูกต้องตรงกับที่เลือก (15 ชม. + 45 นาที) พร้อม
+`late_reason=null` (ยืนยันว่า fix รอบก่อนยังทำงานถูกต้องคู่กัน) — commit `e29d62d`
+
+---
+
 ## 2026-07-13 | Session 125 — Purchasing/Supplier Management + Dashboards (Supplier Assignment, Purchasing Dashboard, Manager Dashboard, Notification fixes)
 
 **คำขอ:** ปรับปรุงระบบ Purchasing/Supplier Management/Dashboard ให้ครบวงจร — (1) Purchasing/Purchasing Manager
