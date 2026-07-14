@@ -688,6 +688,33 @@ screenshot ยืนยันภาพจริงตรงกับผลตร
 
 ---
 
+**คำขอ (รอบที่ 20):** user ขอ "update PDF export ในหน้าจัดซื้อใหม่ทั้งหมด" — คำสั่งกว้างมาก **ถาม
+`AskUserQuestion`** ก่อนเพราะพบว่าหน้าจัดซื้อมี PDF ที่เกี่ยวข้องอยู่ 3 จุด (Purchasing Dashboard summary / NCR /
+UAI) เดาผิดจะแก้ผิดจุดทั้งไฟล์ — user เลือก **"PDF สรุป Purchasing Dashboard"** (`GET
+/purchasing-dashboard/pdf`, `exports.js`) ซึ่งเป็น PDF เดียวที่สร้างเฉพาะสำหรับ role จัดซื้อจริงๆ (อีก 2 จุดใช้ร่วม
+กับ QC หลาย role)
+
+**สิ่งที่พบ:** PDF เดิมเขียนไว้ก่อนที่ `PurchasingDash.jsx` จะถูก redesign ใหม่ (Session 125-127 รอบก่อนๆ ในไฟล์นี้
+— Hero KPI + bucket bar chart + closing-rate donut) แล้วไม่เคยอัปเดต PDF ให้ตรงกันเลย — PDF เดิมมีแค่กล่อง
+stat-box แบนราบ 11 ช่องไม่มีลำดับความสำคัญ + ตาราง supplier เดียว ไม่มีข้อมูล "รายการเกินกำหนด" เลยทั้งที่หน้าจอเน้น
+วง "เกินกำหนด" ด้วย `emphasize`/ขอบแดงอยู่แล้ว
+
+**การแก้:** เขียนใหม่ทั้ง route (`exports.js`'s `/purchasing-dashboard/pdf`) ให้ตรงกับหน้าจอ: (1) Hero KPI 4 ช่อง
+สีตรงกับ primary/warning/success/danger ของหน้าจอเป๊ะ (2) แถบ bucket breakdown แบบ CSS bar (6 หมวดสีเดียวกับ
+`BucketBarChart`) (3) วงกลม % ปิดงานด้วย CSS `conic-gradient` ล้วน (ไม่ต้องพึ่ง chart library ฝั่ง server — Chromium
+ที่ Puppeteer ใช้เรนเดอร์ได้เต็มที่) (4) เพิ่มตาราง **"รายการเกินกำหนด" ใหม่ทั้งหมด** (ข้อมูลที่ actionable ที่สุดแต่
+PDF เดิมไม่เคยมีเลย) ดึงจาก `purchasingDashboardService.getNcrList(user, {overdue:'1'})` โชว์จำนวนวันที่เกินมาสีแดง
+ต่อรายการ (5) คงตาราง supplier summary เดิมไว้ (scope ตาม role เดิมทุกอย่าง) จัดสไตล์ใหม่ให้เข้าชุด
+
+**Test:** `node --test` → 272/272 เขียว (ไม่แตะ schema/service เลย แก้แค่ route)
+
+**Verify:** ตั้ง server แยก + seed supplier/NCR หลายสถานะ (รวม 3 เกินกำหนด, 3 ปิดแล้ว) + login เป็น `purchasing1`
+จริงผ่าน Playwright แล้วกดปุ่ม "Export PDF" ดาวน์โหลดไฟล์จริง — อ่านเนื้อหา PDF ที่ได้ตรงๆ ยืนยันทุก section
+เรนเดอร์ถูกต้อง ตัวเลขตรงกับข้อมูลที่ seed ไว้ทั้งหมด (งานที่ต้องดำเนินการ=7, ปิดแล้ว=3, เกินกำหนด=3, อัตราปิดงาน
+30%, breakdown ต่อ supplier ถูกต้อง) — commit `76f3488`
+
+---
+
 ## 2026-07-13 | Session 125 — Purchasing/Supplier Management + Dashboards (Supplier Assignment, Purchasing Dashboard, Manager Dashboard, Notification fixes)
 
 **คำขอ:** ปรับปรุงระบบ Purchasing/Supplier Management/Dashboard ให้ครบวงจร — (1) Purchasing/Purchasing Manager
