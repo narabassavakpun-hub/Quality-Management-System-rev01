@@ -346,7 +346,13 @@ router.post('/:id/messages', auth, uploads.issueTalk.array('files', 10), uploads
 
   const msgId = postMsg();
 
-  // ไม่ส่ง notification ไปที่กระดิ่ง — ใช้ badge บน menu แทน
+  // ไม่ส่ง notification ไปที่กระดิ่ง — ใช้ badge บน menu แทน (ตั้งใจ ไม่ใช่บั๊ก) แต่เดิมไม่ได้ยิง SSE เลยด้วย
+  // (เพราะ SSE push ผูกอยู่กับ createNotification() เท่านั้นในโค้ดนี้) ทำให้ badge "ยังไม่ได้อ่าน" ต้องรอ
+  // refetchInterval 30 วิของ react-query เท่านั้น ไม่ real-time จริงตามที่ user รายงาน — แก้โดยยิง broadcastSSE
+  // ตรงๆ แบบ 'status_change' (ไม่ใช่ 'notification') ให้ตรงกับ intent เดิม: ไม่แตะกระดิ่ง/ไม่ insert แถว
+  // notifications แต่ยัง invalidate ['issue-talk-unread'] ของทุก client ที่ออนไลน์ได้ทันที (keysFromLink ใน
+  // useSSE.js มี case 'issue-talk' รองรับอยู่แล้ว ไม่ต้องแก้ฝั่ง client เลย)
+  if (db.broadcastSSE) db.broadcastSSE('status_change', { link: `/issue-talk/${issue.id}` });
 
   const msg = db.prepare(`
     SELECT m.*, u.full_name as user_name, u.role as user_role
