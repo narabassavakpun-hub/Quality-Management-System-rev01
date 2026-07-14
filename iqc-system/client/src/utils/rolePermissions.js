@@ -53,7 +53,7 @@ export const NAV_ITEMS = [
       { path: '/fg-production/fuai',    label: 'FUAI',                         icon: 'shield', roles: PROD_QC_ROLES },
     ],
   },
-  { path: '/issue-talk', label: 'Issue Talk', mobileLabel: 'Issues', icon: 'chat', roles: ['admin','qc_staff','qc_supervisor','qc_manager','qmr','purchasing','cco','cmo','cpo','production_manager'], condition: onlyReceivingQC },
+  { path: '/issue-talk', label: 'Issue Talk', mobileLabel: 'Issues', icon: 'chat', roles: ['admin','qc_staff','qc_supervisor','qc_manager','qmr','purchasing','purchasing_manager','cco','cmo','cpo','production_manager'], condition: onlyReceivingQC },
   { path: '/qc-attendance', label: 'เช็คชื่อ QC', mobileLabel: 'เช็คชื่อ', icon: 'checkin', roles: ['admin','qc_staff','qc_supervisor','qc_manager'] },
   { path: '/reports', label: 'รายงาน', icon: 'chart', roles: ['qc_manager','cco','cmo','cpo'] },
   {
