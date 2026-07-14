@@ -189,16 +189,17 @@ export default function QCDeliveryCalendar() {
             ))}
           </div>
         ) : (
-          // year view — 12 เดือนย่อ พร้อมจำนวนแผนส่งของ กดแล้วสลับไปมุมมองรายเดือนของเดือนนั้น
-          <div className="grid grid-cols-3 gap-2">
+          // year view — 12 เดือนย่อ พร้อมจำนวนแผนส่งของ กดแล้วสลับไปมุมมองรายเดือนของเดือนนั้น — ตัวเลขจำนวน
+          // ลดขนาดจาก text-h3 เป็น text-small ตามคำขอ user (เดิมใหญ่เกินไปเมื่อเทียบกับกล่องเล็กๆ 12 ช่อง)
+          <div className="grid grid-cols-3 gap-1.5">
             {MONTHS_TH_SHORT.map((m, i) => (
               <button
                 key={m}
                 onClick={() => { setCurrentDate(new Date(year, i, 1)); setViewMode('month'); }}
-                className="rounded-md p-2 text-center hover:bg-bg transition-colors border border-border"
+                className="rounded-md p-1.5 text-center hover:bg-bg transition-colors border border-border"
               >
                 <p className="text-small font-medium text-text">{m}</p>
-                <p className={`text-h3 font-bold ${monthCounts[i] > 0 ? 'text-primary' : 'text-muted'}`}>{monthCounts[i]}</p>
+                <p className={`text-small font-bold ${monthCounts[i] > 0 ? 'text-primary' : 'text-muted'}`}>{monthCounts[i]}</p>
               </button>
             ))}
           </div>
