@@ -59,7 +59,7 @@ export default function BillsTrendPanel({ navigate }) {
         <select
           value={granularity}
           onChange={e => handleGranularityChange(e.target.value)}
-          className="text-[10px] rounded px-2 py-1 min-h-[26px]"
+          className="text-small rounded-md px-2.5 py-1.5 min-h-[32px]"
           style={{ background: T.surface, border: `1px solid ${T.border}`, color: T.text }}
         >
           {Object.entries(GRANULARITY_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
@@ -68,7 +68,7 @@ export default function BillsTrendPanel({ navigate }) {
           value={compare}
           onChange={e => setCompare(e.target.value)}
           disabled={granularity === 'year'}
-          className="text-[10px] rounded px-2 py-1 min-h-[26px] disabled:opacity-40"
+          className="text-small rounded-md px-2.5 py-1.5 min-h-[32px] disabled:opacity-40"
           style={{ background: T.surface, border: `1px solid ${T.border}`, color: T.text }}
         >
           <option value="none">ไม่เปรียบเทียบ</option>
@@ -78,32 +78,32 @@ export default function BillsTrendPanel({ navigate }) {
       </div>
 
       {/* ครึ่งบน: กราฟแนวโน้ม — flex-1 */}
-      <div className="flex-1 min-h-0 rounded-xl p-3 flex flex-col"
+      <div className="flex-1 min-h-[280px] rounded-xl p-4 flex flex-col"
         style={{ background: T.surface, border: `1px solid ${T.border}` }}>
-        <div className="flex-none flex items-center justify-between mb-1.5">
-          <p className="text-[11px] font-semibold" style={{ color: T.text }}>บิลรับเข้า ({GRANULARITY_LABEL[granularity]})</p>
+        <div className="flex-none flex items-center justify-between mb-2">
+          <p className="text-h3 font-semibold" style={{ color: T.text }}>บิลรับเข้า ({GRANULARITY_LABEL[granularity]})</p>
           {hasCompare && (
-            <div className="flex gap-2.5">
-              <div className="flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-sm" style={{ background: T.accent }} />
-                <span className="text-[9px]" style={{ color: T.muted }}>{labels.current}</span>
+            <div className="flex gap-3">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-sm" style={{ background: T.accent }} />
+                <span className="text-small" style={{ color: T.muted }}>{labels.current}</span>
               </div>
-              <div className="flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-sm" style={{ background: T.orange }} />
-                <span className="text-[9px]" style={{ color: T.muted }}>{labels.comparison}</span>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-sm" style={{ background: T.orange }} />
+                <span className="text-small" style={{ color: T.muted }}>{labels.comparison}</span>
               </div>
             </div>
           )}
         </div>
         <div className="flex-1 min-h-0">
           {trendLoading ? (
-            <p className="text-[10px] text-center py-4" style={{ color: T.muted }}>กำลังโหลด...</p>
+            <p className="text-small text-center py-4" style={{ color: T.muted }}>กำลังโหลด...</p>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} margin={{ top: 2, right: 4, left: -28, bottom: 0 }} barGap={2}>
+              <BarChart data={chartData} margin={{ top: 2, right: 4, left: -20, bottom: 0 }} barGap={2}>
                 <CartesianGrid strokeDasharray="3 3" stroke={T.border} vertical={false} />
-                <XAxis dataKey="label" tick={{ fontSize: 9, fill: T.muted }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-                <YAxis tick={{ fontSize: 9, fill: T.muted }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 11, fill: T.muted }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+                <YAxis tick={{ fontSize: 11, fill: T.muted }} axisLine={false} tickLine={false} allowDecimals={false} />
                 <Tooltip content={<DarkTip />} />
                 <Bar dataKey="current" name={labels.current} fill={T.accent} radius={[2, 2, 0, 0]} isAnimationActive />
                 {hasCompare && <Bar dataKey="comparison" name={labels.comparison} fill={T.orange} radius={[2, 2, 0, 0]} isAnimationActive />}
@@ -114,31 +114,31 @@ export default function BillsTrendPanel({ navigate }) {
       </div>
 
       {/* ครึ่งล่าง: จัดอันดับผู้ผลิตที่รับเข้ามากสุด — flex-1 */}
-      <div className="flex-1 min-h-0 rounded-xl p-3 flex flex-col overflow-hidden"
+      <div className="flex-1 min-h-[280px] rounded-xl p-4 flex flex-col overflow-hidden"
         style={{ background: T.surface, border: `1px solid ${T.border}` }}>
-        <div className="flex-none flex items-center justify-between mb-2">
-          <p className="text-[11px] font-semibold" style={{ color: T.text }}>ผู้ผลิตที่รับเข้ามากสุด</p>
-          <button onClick={() => navigate?.('/bills')} className="text-[9px] hover:underline" style={{ color: T.accent }}>ดูทั้งหมด</button>
+        <div className="flex-none flex items-center justify-between mb-3">
+          <p className="text-h3 font-semibold" style={{ color: T.text }}>ผู้ผลิตที่รับเข้ามากสุด</p>
+          <button onClick={() => navigate?.('/bills')} className="text-small hover:underline" style={{ color: T.accent }}>ดูทั้งหมด</button>
         </div>
-        <div className="flex-1 min-h-0 overflow-y-auto space-y-2"
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-3"
           style={{ scrollbarWidth: 'thin', scrollbarColor: `${T.border} transparent` }}>
           {rankLoading ? (
-            <p className="text-[10px] text-center py-4" style={{ color: T.muted }}>กำลังโหลด...</p>
+            <p className="text-small text-center py-4" style={{ color: T.muted }}>กำลังโหลด...</p>
           ) : ranking.length === 0 ? (
-            <p className="text-[10px] text-center py-4" style={{ color: T.muted }}>ยังไม่มีข้อมูล</p>
+            <p className="text-small text-center py-4" style={{ color: T.muted }}>ยังไม่มีข้อมูล</p>
           ) : ranking.map(r => (
             <div key={r.supplier_name}>
-              <div className="flex justify-between mb-0.5">
-                <span className="text-[10px] truncate mr-2" style={{ color: T.text }}>{r.supplier_name}</span>
-                <span className="text-[10px] font-mono font-bold flex-shrink-0" style={{ color: T.accent }}>
+              <div className="flex justify-between mb-1">
+                <span className="text-body truncate mr-2" style={{ color: T.text }}>{r.supplier_name}</span>
+                <span className="text-body font-mono font-bold flex-shrink-0" style={{ color: T.accent }}>
                   {r.current}{rankHasCompare ? ` / ${r.comparison}` : ''}
                 </span>
               </div>
-              <div className="h-1.5 rounded-full" style={{ background: T.border }}>
+              <div className="h-2 rounded-full" style={{ background: T.border }}>
                 <div className="h-full rounded-full" style={{ width: `${(r.current / maxRank) * 100}%`, background: T.accent, transition: 'width 1s ease-out' }} />
               </div>
               {rankHasCompare && (
-                <div className="h-1.5 rounded-full mt-0.5" style={{ background: T.border }}>
+                <div className="h-2 rounded-full mt-1" style={{ background: T.border }}>
                   <div className="h-full rounded-full" style={{ width: `${(r.comparison / maxRank) * 100}%`, background: T.orange, transition: 'width 1s ease-out' }} />
                 </div>
               )}

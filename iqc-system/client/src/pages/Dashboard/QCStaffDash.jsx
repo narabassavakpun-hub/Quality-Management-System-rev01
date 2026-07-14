@@ -298,21 +298,25 @@ export default function QCStaffDash({ navigate }) {
       </div>
     </div>
 
-    {/* ══ DESKTOP layout (>=md) — fixed viewport, 3-column ══ */}
-    <div className="hidden md:flex md:flex-col -m-4 overflow-hidden"
-      style={{ height: 'calc(100vh - 64px)', background: T.bg }}>
+    {/* ══ DESKTOP layout (>=md) — หน้าปกติ scroll ได้ตามธรรมชาติ (เดิมล็อก 100vh หนาแน่นตามสไตล์ operational
+        dashboard เก่า พอเพิ่มโหมดสว่าง+ตัวอักษรอ่านง่ายขึ้นแล้วยัดทุกอย่างในกล่องสูงคงที่ไม่พอ — เอา fixed-height/
+        overflow-hidden ออก ให้หน้ายาวได้ตามเนื้อหาแล้ว scroll ทั้งหน้าแทน เหมือนแนวทางที่ทำกับ
+        ManagerPurchasingDash.jsx ไปแล้วก่อนหน้านี้) — คอลัมน์ยังคงสูงเท่ากันในแต่ละแถวเพราะ CSS Grid stretch
+        เป็นค่า default (align-items: stretch) อยู่แล้ว ไม่ต้องพึ่ง fixed viewport เพื่อให้ flex-1:flex-1 ตรงกัน
+        ระหว่างคอลัมน์เหมือนเดิม ══ */}
+    <div className="hidden md:block -m-4" style={{ background: T.bg }}>
 
       {/* ══ HEADER ══ */}
-      <div className="flex-none flex items-center justify-between px-4 py-2"
+      <div className="flex items-center justify-between px-4 py-3"
         style={{ borderBottom: `1px solid ${T.border}` }}>
         <div className="flex items-center gap-2.5">
-          <span className="text-[15px] font-bold" style={{ color: T.text }}>IQC Dashboard</span>
-          <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: T.border, color: T.muted }}>QC Staff</span>
+          <span className="text-h2 font-bold" style={{ color: T.text }}>IQC Dashboard</span>
+          <span className="text-small px-2 py-0.5 rounded-full" style={{ background: T.border, color: T.muted }}>QC Staff</span>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-[10px]" style={{ color: T.muted }}>{todayStr}</span>
+          <span className="text-small" style={{ color: T.muted }}>{todayStr}</span>
           <button onClick={() => navigate('/bills/new')}
-            className="px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-opacity hover:opacity-80"
+            className="px-3.5 py-2 rounded-lg text-small font-semibold transition-opacity hover:opacity-80"
             style={{ background: T.accent, color: '#fff' }}>
             + สร้างบิลใหม่
           </button>
@@ -320,7 +324,7 @@ export default function QCStaffDash({ navigate }) {
       </div>
 
       {/* ══ KPI ROW ══ */}
-      <div className="flex-none grid grid-cols-4 gap-2.5 px-4 pt-2.5">
+      <div className="grid grid-cols-4 gap-3 px-4 pt-3">
         {[
           { label: 'บิลวันนี้',    n: kpiN0, color: T.accent,   sub: 'รับเข้า',       path: '/bills' },
           { label: 'สัปดาห์นี้',   n: kpiN1, color: T.success,  sub: '7 วันล่าสุด',  path: '/bills' },
@@ -328,55 +332,55 @@ export default function QCStaffDash({ navigate }) {
           { label: 'NCP เปิดอยู่', n: kpiN3, color: T.yellow, sub: 'Minor / ยังไม่ปิด', path: '/ncr' },
         ].map(k => (
           <button key={k.label} onClick={() => navigate(k.path)}
-            className="rounded-xl px-3 py-2 text-left transition-opacity hover:opacity-80"
+            className="rounded-xl px-4 py-3 text-left transition-opacity hover:opacity-80"
             style={{ background: T.surface, border: `1px solid ${T.border}` }}>
-            <div className="text-2xl font-bold tabular-nums leading-none" style={{ color: k.color }}>
+            <div className="text-h1 font-bold tabular-nums leading-none" style={{ color: k.color }}>
               {isLoading ? '—' : k.n}
             </div>
-            <div className="flex items-center justify-between mt-1.5">
-              <span className="text-[11px] font-semibold" style={{ color: T.text }}>{k.label}</span>
-              <span className="text-[9px]" style={{ color: T.muted }}>{k.sub}</span>
+            <div className="flex items-center justify-between mt-2">
+              <span className="text-small font-semibold" style={{ color: T.text }}>{k.label}</span>
+              <span className="text-small" style={{ color: T.muted }}>{k.sub}</span>
             </div>
           </button>
         ))}
       </div>
 
-      {/* ══ MAIN 3-COLUMN AREA (flex-1 fills remaining height) ══ */}
-      <div className="flex-1 min-h-0 grid grid-cols-3 gap-2.5 px-4 py-2.5">
+      {/* ══ MAIN 3-COLUMN AREA ══ */}
+      <div className="grid grid-cols-3 gap-4 px-4 py-4 items-stretch">
 
         {/* ──── LEFT: คุณภาพการรับเข้า ──── */}
-        <div className="flex flex-col gap-2 min-h-0">
+        <div className="flex flex-col gap-3">
           <CatLabel color={T.success} text="คุณภาพการรับเข้า" />
 
           {/* ปฏิทินส่งของ — flex-1 (แทนที่ "อัตราผ่านการตรวจ" เดิม, สูงเท่ากล่อง "บิลรับเข้า" ของคอลัมน์กลาง
               เพราะทั้งคู่เป็น flex-1 ตัวแรกจาก 2 ตัวของคอลัมน์ตัวเองเหมือนกัน) */}
-          <div className="flex-1 min-h-0">
+          <div className="flex-1 min-h-[320px]">
             <QCDeliveryCalendar />
           </div>
 
           {/* กล่องล่าง — flex-1 (สูงเท่ากล่อง "ผู้ผลิตที่รับเข้ามากสุด" ของคอลัมน์กลาง) แบ่งครึ่งเป็น
               "รอรับเข้าวันนี้"/"บิลล่าสุด" คนละ flex-1 ข้างในตามคำขอ user */}
-          <div className="flex-1 min-h-0 flex flex-col gap-2">
+          <div className="flex-1 min-h-[320px] flex flex-col gap-3">
             {/* รอรับเข้าวันนี้ — flex-1 (ครึ่งบนของกล่องล่าง) */}
-            <div className="flex-1 min-h-0 rounded-xl p-3 flex flex-col overflow-hidden"
+            <div className="flex-1 min-h-0 rounded-xl p-4 flex flex-col overflow-hidden"
               style={{ background: T.surface, border: `1px solid ${T.border}` }}>
-              <div className="flex-none flex justify-between items-center mb-2">
-                <p className="text-[11px] font-semibold" style={{ color: T.text }}>รอรับเข้าวันนี้</p>
-                <button onClick={() => navigate('/delivery')} className="text-[9px] hover:underline" style={{ color: T.accent }}>ดูทั้งหมด</button>
+              <div className="flex-none flex justify-between items-center mb-3">
+                <p className="text-h3 font-semibold" style={{ color: T.text }}>รอรับเข้าวันนี้</p>
+                <button onClick={() => navigate('/delivery')} className="text-small hover:underline" style={{ color: T.accent }}>ดูทั้งหมด</button>
               </div>
-              <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5"
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-2"
                 style={{ scrollbarWidth: 'thin', scrollbarColor: `${T.border} transparent` }}>
                 {todayAwaiting.length === 0 ? (
-                  <p className="text-[10px] py-1" style={{ color: T.muted }}>ไม่มีรายการวันนี้</p>
+                  <p className="text-small py-1" style={{ color: T.muted }}>ไม่มีรายการวันนี้</p>
                 ) : todayAwaiting.map(s => (
                   <button key={s.id} onClick={() => openDetail(s)}
-                    className="w-full text-left rounded-lg px-2 py-1.5 flex items-center justify-between gap-2 transition-colors"
+                    className="w-full text-left rounded-lg px-3 py-2 flex items-center justify-between gap-2 transition-colors"
                     style={{ background: T.bg }}>
                     <div className="min-w-0">
-                      <p className="text-[10px] font-semibold truncate" style={{ color: T.text }}>{s.supplier_name}</p>
-                      <p className="text-[9px]" style={{ color: T.muted }}>{s.scheduled_date.slice(5)}{s.time_slot ? ` ${s.time_slot}` : ''}</p>
+                      <p className="text-body font-semibold truncate" style={{ color: T.text }}>{s.supplier_name}</p>
+                      <p className="text-small" style={{ color: T.muted }}>{s.scheduled_date.slice(5)}{s.time_slot ? ` ${s.time_slot}` : ''}</p>
                     </div>
-                    <span className="text-[8px] px-1.5 py-0.5 rounded-full flex-shrink-0" style={{
+                    <span className="text-small px-2 py-0.5 rounded-full flex-shrink-0" style={{
                       background: s.status === 'pending' ? '#EF444418' : '#38BDF818',
                       color: s.status === 'pending' ? '#F87171' : T.accent,
                     }}>
@@ -388,37 +392,37 @@ export default function QCStaffDash({ navigate }) {
             </div>
 
             {/* บิลล่าสุด — flex-1 (ครึ่งล่างของกล่องล่าง) */}
-            <div className="flex-1 min-h-0 rounded-xl p-3 flex flex-col overflow-hidden"
+            <div className="flex-1 min-h-0 rounded-xl p-4 flex flex-col overflow-hidden"
               style={{ background: T.surface, border: `1px solid ${T.border}` }}>
-              <div className="flex-none flex justify-between items-center mb-2">
-                <p className="text-[11px] font-semibold" style={{ color: T.text }}>บิลล่าสุด</p>
-                <button onClick={() => navigate('/bills')} className="text-[9px] hover:underline" style={{ color: T.accent }}>ดูทั้งหมด</button>
+              <div className="flex-none flex justify-between items-center mb-3">
+                <p className="text-h3 font-semibold" style={{ color: T.text }}>บิลล่าสุด</p>
+                <button onClick={() => navigate('/bills')} className="text-small hover:underline" style={{ color: T.accent }}>ดูทั้งหมด</button>
               </div>
-              <div className="flex-1 min-h-0 overflow-y-auto space-y-1"
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5"
                 style={{ scrollbarWidth: 'thin', scrollbarColor: `${T.border} transparent` }}>
                 {recentBills.length === 0 ? (
-                  <p className="text-[10px] text-center py-4" style={{ color: T.muted }}>ยังไม่มีบิล</p>
+                  <p className="text-small text-center py-4" style={{ color: T.muted }}>ยังไม่มีบิล</p>
                 ) : recentBills.map(b => {
                   const hasFail = (b.failed_item_count ?? 0) > 0;
                   return (
                     <button key={b.id} onClick={() => navigate(`/bills/${b.id}`)}
-                      className="w-full text-left rounded-lg px-2.5 py-1.5 transition-colors"
+                      className="w-full text-left rounded-lg px-3 py-2 transition-colors"
                       style={{ background: T.bg }}
                       onMouseEnter={e => e.currentTarget.style.background = T.border}
                       onMouseLeave={e => e.currentTarget.style.background = T.bg}
                     >
                       <div className="flex items-center justify-between">
-                        <span className="font-mono text-[10px] font-semibold" style={{ color: T.accent }}>{b.invoice_no}</span>
-                        <span className="text-[8px] px-1.5 py-0.5 rounded-full" style={{
+                        <span className="font-mono text-body font-semibold" style={{ color: T.accent }}>{b.invoice_no}</span>
+                        <span className="text-small px-2 py-0.5 rounded-full" style={{
                           background: hasFail ? '#F9731618' : '#22C55E18',
                           color: hasFail ? T.orange : T.success,
                         }}>
                           {hasFail ? `ไม่ผ่าน ${b.failed_item_count}` : 'ผ่าน'}
                         </span>
                       </div>
-                      <div className="flex justify-between mt-0.5">
-                        <span className="text-[9px] truncate mr-2" style={{ color: T.muted }}>{b.supplier_name}</span>
-                        <span className="text-[9px] flex-shrink-0" style={{ color: T.muted }}>{b.received_date}</span>
+                      <div className="flex justify-between mt-1">
+                        <span className="text-small truncate mr-2" style={{ color: T.muted }}>{b.supplier_name}</span>
+                        <span className="text-small flex-shrink-0" style={{ color: T.muted }}>{b.received_date}</span>
                       </div>
                     </button>
                   );
@@ -430,69 +434,69 @@ export default function QCStaffDash({ navigate }) {
         </div>
 
         {/* ──── CENTER: แนวโน้มรับเข้า ──── */}
-        <div className="flex flex-col gap-2 min-h-0">
+        <div className="flex flex-col gap-3">
           <CatLabel color={T.accent} text="แนวโน้มรับเข้า" />
           <BillsTrendPanel navigate={navigate} />
         </div>
 
         {/* ──── RIGHT: NCR/NCP Monitor ──── */}
-        <div className="flex flex-col gap-2 min-h-0">
+        <div className="flex flex-col gap-3">
           <CatLabel color={T.orange} text="NCR/NCP Monitor" />
 
           {/* NCR vs NCP split card — flex-none */}
-          <div className="flex-none rounded-xl p-3"
+          <div className="flex-none rounded-xl p-4"
             style={{ background: T.surface, border: `1px solid ${T.border}` }}>
-            <p className="text-[11px] font-semibold mb-2" style={{ color: T.text }}>NCR / NCP</p>
-            <div className="grid grid-cols-2 gap-2">
+            <p className="text-h3 font-semibold mb-3" style={{ color: T.text }}>NCR / NCP</p>
+            <div className="grid grid-cols-2 gap-3">
               {/* NCR (Major) */}
-              <div className="rounded-lg p-2" style={{ background: T.bg }}>
-                <div className="flex items-center gap-1 mb-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: '#EF4444' }} />
-                  <span className="text-[9px] font-semibold uppercase tracking-wide" style={{ color: T.text }}>NCR Major</span>
+              <div className="rounded-lg p-3" style={{ background: T.bg }}>
+                <div className="flex items-center gap-1.5 mb-2">
+                  <span className="w-2 h-2 rounded-full" style={{ background: '#EF4444' }} />
+                  <span className="text-small font-semibold uppercase tracking-wide" style={{ color: T.text }}>NCR Major</span>
                 </div>
                 <div className="flex justify-between items-end">
                   <div>
-                    <div className="text-[8px] mb-0.5" style={{ color: T.muted }}>เปิดอยู่</div>
-                    <div className="text-xl font-bold tabular-nums" style={{ color: T.orange }}>{openNCR}</div>
+                    <div className="text-small mb-0.5" style={{ color: T.muted }}>เปิดอยู่</div>
+                    <div className="text-h1 font-bold tabular-nums" style={{ color: T.orange }}>{openNCR}</div>
                   </div>
                   <div className="text-right">
-                    <div className="text-[8px] mb-0.5" style={{ color: T.muted }}>ปิดแล้ว</div>
-                    <div className="text-xl font-bold tabular-nums" style={{ color: T.success }}>{closedNCR}</div>
+                    <div className="text-small mb-0.5" style={{ color: T.muted }}>ปิดแล้ว</div>
+                    <div className="text-h2 font-bold tabular-nums" style={{ color: T.success }}>{closedNCR}</div>
                   </div>
                 </div>
-                <div className="mt-1.5 h-1 rounded-full overflow-hidden" style={{ background: T.border }}>
+                <div className="mt-2 h-1.5 rounded-full overflow-hidden" style={{ background: T.border }}>
                   <div className="h-full rounded-full" style={{
                     width: `${ncrOnlyLength > 0 ? (closedNCR / ncrOnlyLength) * 100 : 0}%`,
                     background: T.success, transition: 'width 1s ease-out',
                   }} />
                 </div>
-                <div className="text-[8px] mt-0.5 text-right" style={{ color: T.muted }}>
+                <div className="text-small mt-1 text-right" style={{ color: T.muted }}>
                   {ncrOnlyLength > 0 ? Math.round((closedNCR / ncrOnlyLength) * 100) : 0}% ปิด
                 </div>
               </div>
               {/* NCP (Minor) */}
-              <div className="rounded-lg p-2" style={{ background: T.bg }}>
-                <div className="flex items-center gap-1 mb-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: T.accent }} />
-                  <span className="text-[9px] font-semibold uppercase tracking-wide" style={{ color: T.text }}>NCP Minor</span>
+              <div className="rounded-lg p-3" style={{ background: T.bg }}>
+                <div className="flex items-center gap-1.5 mb-2">
+                  <span className="w-2 h-2 rounded-full" style={{ background: T.accent }} />
+                  <span className="text-small font-semibold uppercase tracking-wide" style={{ color: T.text }}>NCP Minor</span>
                 </div>
                 <div className="flex justify-between items-end">
                   <div>
-                    <div className="text-[8px] mb-0.5" style={{ color: T.muted }}>เปิดอยู่</div>
-                    <div className="text-xl font-bold tabular-nums" style={{ color: T.yellow }}>{openNCP}</div>
+                    <div className="text-small mb-0.5" style={{ color: T.muted }}>เปิดอยู่</div>
+                    <div className="text-h1 font-bold tabular-nums" style={{ color: T.yellow }}>{openNCP}</div>
                   </div>
                   <div className="text-right">
-                    <div className="text-[8px] mb-0.5" style={{ color: T.muted }}>ปิดแล้ว</div>
-                    <div className="text-xl font-bold tabular-nums" style={{ color: T.success }}>{closedNCP}</div>
+                    <div className="text-small mb-0.5" style={{ color: T.muted }}>ปิดแล้ว</div>
+                    <div className="text-h2 font-bold tabular-nums" style={{ color: T.success }}>{closedNCP}</div>
                   </div>
                 </div>
-                <div className="mt-1.5 h-1 rounded-full overflow-hidden" style={{ background: T.border }}>
+                <div className="mt-2 h-1.5 rounded-full overflow-hidden" style={{ background: T.border }}>
                   <div className="h-full rounded-full" style={{
                     width: `${ncpOnlyLength > 0 ? (closedNCP / ncpOnlyLength) * 100 : 0}%`,
                     background: T.success, transition: 'width 1s ease-out',
                   }} />
                 </div>
-                <div className="text-[8px] mt-0.5 text-right" style={{ color: T.muted }}>
+                <div className="text-small mt-1 text-right" style={{ color: T.muted }}>
                   {ncpOnlyLength > 0 ? Math.round((closedNCP / ncpOnlyLength) * 100) : 0}% ปิด
                 </div>
               </div>
@@ -500,51 +504,51 @@ export default function QCStaffDash({ navigate }) {
           </div>
 
           {/* UAI summary — flex-none */}
-          <div className="flex-none rounded-xl p-3"
+          <div className="flex-none rounded-xl p-4"
             style={{ background: T.surface, border: `1px solid ${T.border}` }}>
-            <p className="text-[11px] font-semibold mb-2" style={{ color: T.text }}>UAI</p>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="rounded-lg p-2" style={{ background: T.bg }}>
-                <div className="flex items-center gap-1 mb-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: T.purple }} />
-                  <span className="text-[9px] font-semibold uppercase tracking-wide" style={{ color: T.text }}>เปิดอยู่</span>
+            <p className="text-h3 font-semibold mb-3" style={{ color: T.text }}>UAI</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-lg p-3" style={{ background: T.bg }}>
+                <div className="flex items-center gap-1.5 mb-2">
+                  <span className="w-2 h-2 rounded-full" style={{ background: T.purple }} />
+                  <span className="text-small font-semibold uppercase tracking-wide" style={{ color: T.text }}>เปิดอยู่</span>
                 </div>
-                <div className="text-xl font-bold tabular-nums" style={{ color: T.purple }}>{uaiOpen}</div>
+                <div className="text-h1 font-bold tabular-nums" style={{ color: T.purple }}>{uaiOpen}</div>
               </div>
-              <div className="rounded-lg p-2" style={{ background: T.bg }}>
-                <div className="flex items-center gap-1 mb-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: T.success }} />
-                  <span className="text-[9px] font-semibold uppercase tracking-wide" style={{ color: T.text }}>เสร็จแล้ว</span>
+              <div className="rounded-lg p-3" style={{ background: T.bg }}>
+                <div className="flex items-center gap-1.5 mb-2">
+                  <span className="w-2 h-2 rounded-full" style={{ background: T.success }} />
+                  <span className="text-small font-semibold uppercase tracking-wide" style={{ color: T.text }}>เสร็จแล้ว</span>
                 </div>
-                <div className="text-xl font-bold tabular-nums" style={{ color: T.success }}>{uaiCompleted}</div>
+                <div className="text-h1 font-bold tabular-nums" style={{ color: T.success }}>{uaiCompleted}</div>
               </div>
             </div>
-            <div className="mt-1.5 h-1 rounded-full overflow-hidden" style={{ background: T.border }}>
+            <div className="mt-2 h-1.5 rounded-full overflow-hidden" style={{ background: T.border }}>
               <div className="h-full rounded-full" style={{ width: `${uaiCompletedPct}%`, background: T.success, transition: 'width 1s ease-out' }} />
             </div>
-            <div className="text-[8px] mt-0.5 text-right" style={{ color: T.muted }}>
+            <div className="text-small mt-1 text-right" style={{ color: T.muted }}>
               {uaiCompletedPct}% เสร็จแล้ว จาก {uaiTotal} ใบ
             </div>
           </div>
 
           {/* NCR stages ranking — flex-none */}
-          <div className="flex-none rounded-xl p-3"
+          <div className="flex-none rounded-xl p-4"
             style={{ background: T.surface, border: `1px solid ${T.border}` }}>
-            <div className="flex justify-between items-center mb-2">
-              <p className="text-[11px] font-semibold" style={{ color: T.text }}>NCR ตามขั้นตอน</p>
-              <button onClick={() => navigate('/ncr')} className="text-[9px] hover:underline" style={{ color: T.accent }}>ดูทั้งหมด</button>
+            <div className="flex justify-between items-center mb-3">
+              <p className="text-h3 font-semibold" style={{ color: T.text }}>NCR ตามขั้นตอน</p>
+              <button onClick={() => navigate('/ncr')} className="text-small hover:underline" style={{ color: T.accent }}>ดูทั้งหมด</button>
             </div>
             {ncrStages.length === 0 ? (
-              <p className="text-[10px] py-1" style={{ color: T.muted }}>ยังไม่มี NCR</p>
+              <p className="text-small py-1" style={{ color: T.muted }}>ยังไม่มี NCR</p>
             ) : (
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 {ncrStages.map(g => (
                   <div key={g.key}>
-                    <div className="flex justify-between mb-0.5">
-                      <span className="text-[10px]" style={{ color: T.muted }}>{g.label}</span>
-                      <span className="text-[10px] font-mono font-bold" style={{ color: g.color }}>{g.count}</span>
+                    <div className="flex justify-between mb-1">
+                      <span className="text-small" style={{ color: T.muted }}>{g.label}</span>
+                      <span className="text-small font-mono font-bold" style={{ color: g.color }}>{g.count}</span>
                     </div>
-                    <div className="h-1 rounded-full" style={{ background: T.border }}>
+                    <div className="h-1.5 rounded-full" style={{ background: T.border }}>
                       <div className="h-full rounded-full"
                         style={{ width: `${(g.count / maxStage) * 100}%`, background: g.color, transition: 'width 1s ease-out' }} />
                     </div>
@@ -555,9 +559,9 @@ export default function QCStaffDash({ navigate }) {
           </div>
 
           {/* 3 Radial gauges — flex-1 (1 ส่วน) จัดกึ่งกลางแนวตั้ง */}
-          <div className="flex-1 min-h-0 rounded-xl p-3 flex flex-col"
+          <div className="flex-1 min-h-[180px] rounded-xl p-4 flex flex-col"
             style={{ background: T.surface, border: `1px solid ${T.border}` }}>
-            <p className="flex-none text-[11px] font-semibold mb-1" style={{ color: T.text }}>สรุปภาพรวม NCR/NCP</p>
+            <p className="flex-none text-h3 font-semibold mb-1" style={{ color: T.text }}>สรุปภาพรวม NCR/NCP</p>
             <div className="flex-1 flex items-center justify-around">
               <RadialGauge value={passedCount} total={approvedCount || 1}
                 label="อัตราผ่าน" color={T.success} />
