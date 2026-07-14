@@ -484,25 +484,50 @@ export default function QCStaffDash({ navigate }) {
             </div>
           </div>
 
-          {/* 3 Radial gauges — flex-1 (1 ส่วน) จัดกึ่งกลางแนวตั้ง */}
-          <div className="flex-1 min-h-0 rounded-xl p-3 flex flex-col"
+          {/* Recent bills — flex-1 พร้อม scroll ภายใน */}
+          <div className="flex-1 min-h-0 rounded-xl p-3 flex flex-col overflow-hidden"
             style={{ background: D.card, border: `1px solid ${D.border}` }}>
-            <p className="flex-none text-[11px] font-semibold mb-1" style={{ color: D.text }}>ภาพรวมคุณภาพ</p>
-            <div className="flex-1 flex items-center justify-around">
-              <RadialGauge value={passedCount} total={approvedCount || 1}
-                label="อัตราผ่าน" color={D.green} />
-              <RadialGauge value={closedNCR} total={ncrOnlyLength || 1}
-                label="NCR ปิดแล้ว" color={D.orange} />
-              <RadialGauge value={closedNCP} total={ncpOnlyLength || 1}
-                label="NCP ปิดแล้ว" color={D.yellow} />
+            <div className="flex-none flex justify-between items-center mb-2">
+              <p className="text-[11px] font-semibold" style={{ color: D.text }}>บิลล่าสุด</p>
+              <button onClick={() => navigate('/bills')} className="text-[9px] hover:underline" style={{ color: D.cyan }}>ดูทั้งหมด</button>
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto space-y-1"
+              style={{ scrollbarWidth: 'thin', scrollbarColor: `${D.border} transparent` }}>
+              {recentBills.length === 0 ? (
+                <p className="text-[10px] text-center py-4" style={{ color: D.muted }}>ยังไม่มีบิล</p>
+              ) : recentBills.map(b => {
+                const hasFail = (b.failed_item_count ?? 0) > 0;
+                return (
+                  <button key={b.id} onClick={() => navigate(`/bills/${b.id}`)}
+                    className="w-full text-left rounded-lg px-2.5 py-1.5 transition-colors"
+                    style={{ background: D.bg }}
+                    onMouseEnter={e => e.currentTarget.style.background = D.border}
+                    onMouseLeave={e => e.currentTarget.style.background = D.bg}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-[10px] font-semibold" style={{ color: D.cyan }}>{b.invoice_no}</span>
+                      <span className="text-[8px] px-1.5 py-0.5 rounded-full" style={{
+                        background: hasFail ? '#F9731618' : '#22C55E18',
+                        color: hasFail ? D.orange : D.green,
+                      }}>
+                        {hasFail ? `ไม่ผ่าน ${b.failed_item_count}` : 'ผ่าน'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between mt-0.5">
+                      <span className="text-[9px] truncate mr-2" style={{ color: D.muted }}>{b.supplier_name}</span>
+                      <span className="text-[9px] flex-shrink-0" style={{ color: D.muted }}>{b.received_date}</span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
         </div>
 
-        {/* ──── RIGHT: NCR Monitor ──── */}
+        {/* ──── RIGHT: NCR/NCP Monitor ──── */}
         <div className="flex flex-col gap-2 min-h-0">
-          <CatLabel color={D.orange} text="NCR Monitor" />
+          <CatLabel color={D.orange} text="NCR/NCP Monitor" />
 
           {/* NCR vs NCP split card — flex-none */}
           <div className="flex-none rounded-xl p-3"
@@ -591,42 +616,17 @@ export default function QCStaffDash({ navigate }) {
             )}
           </div>
 
-          {/* Recent bills — flex-1 พร้อม scroll ภายใน */}
-          <div className="flex-1 min-h-0 rounded-xl p-3 flex flex-col overflow-hidden"
+          {/* 3 Radial gauges — flex-1 (1 ส่วน) จัดกึ่งกลางแนวตั้ง */}
+          <div className="flex-1 min-h-0 rounded-xl p-3 flex flex-col"
             style={{ background: D.card, border: `1px solid ${D.border}` }}>
-            <div className="flex-none flex justify-between items-center mb-2">
-              <p className="text-[11px] font-semibold" style={{ color: D.text }}>บิลล่าสุด</p>
-              <button onClick={() => navigate('/bills')} className="text-[9px] hover:underline" style={{ color: D.cyan }}>ดูทั้งหมด</button>
-            </div>
-            <div className="flex-1 min-h-0 overflow-y-auto space-y-1"
-              style={{ scrollbarWidth: 'thin', scrollbarColor: `${D.border} transparent` }}>
-              {recentBills.length === 0 ? (
-                <p className="text-[10px] text-center py-4" style={{ color: D.muted }}>ยังไม่มีบิล</p>
-              ) : recentBills.map(b => {
-                const hasFail = (b.failed_item_count ?? 0) > 0;
-                return (
-                  <button key={b.id} onClick={() => navigate(`/bills/${b.id}`)}
-                    className="w-full text-left rounded-lg px-2.5 py-1.5 transition-colors"
-                    style={{ background: D.bg }}
-                    onMouseEnter={e => e.currentTarget.style.background = D.border}
-                    onMouseLeave={e => e.currentTarget.style.background = D.bg}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono text-[10px] font-semibold" style={{ color: D.cyan }}>{b.invoice_no}</span>
-                      <span className="text-[8px] px-1.5 py-0.5 rounded-full" style={{
-                        background: hasFail ? '#F9731618' : '#22C55E18',
-                        color: hasFail ? D.orange : D.green,
-                      }}>
-                        {hasFail ? `ไม่ผ่าน ${b.failed_item_count}` : 'ผ่าน'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between mt-0.5">
-                      <span className="text-[9px] truncate mr-2" style={{ color: D.muted }}>{b.supplier_name}</span>
-                      <span className="text-[9px] flex-shrink-0" style={{ color: D.muted }}>{b.received_date}</span>
-                    </div>
-                  </button>
-                );
-              })}
+            <p className="flex-none text-[11px] font-semibold mb-1" style={{ color: D.text }}>สรุปภาพรวม NCR/NCP</p>
+            <div className="flex-1 flex items-center justify-around">
+              <RadialGauge value={passedCount} total={approvedCount || 1}
+                label="อัตราผ่าน" color={D.green} />
+              <RadialGauge value={closedNCR} total={ncrOnlyLength || 1}
+                label="NCR ปิดแล้ว" color={D.orange} />
+              <RadialGauge value={closedNCP} total={ncpOnlyLength || 1}
+                label="NCP ปิดแล้ว" color={D.yellow} />
             </div>
           </div>
 
