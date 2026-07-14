@@ -715,6 +715,30 @@ PDF เดิมไม่เคยมีเลย) ดึงจาก `purchasin
 
 ---
 
+**คำขอ (รอบที่ 21):** user รายงาน "Issue Talk การแจ้งเตือนว่ายังไม่ได้อ่านข้อความ (กลมแดง 1) ไม่ real-time" — ต้อง
+รอ 30 วิ (refetchInterval ของ react-query) หรือ navigate/reload ถึงจะเห็นตัวเลขอัปเดต
+
+**Root cause:** `POST /:id/messages` (`routes/issue-talk.js`) ไม่เคยยิง SSE event เลยตอน insert ข้อความใหม่ —
+คอมเมนต์เดิมบรรทัดนั้น ("ไม่ส่ง notification ไปที่กระดิ่ง — ใช้ badge บน menu แทน") ตั้งใจแค่ข้าม
+`createNotification()` สำหรับข้อความตอบกลับ แต่ในโค้ดนี้ SSE push ผูกอยู่กับ `createNotification()` เท่านั้น (ไม่มี
+broadcast แยกที่อื่น) — พอข้าม `createNotification()` เลยข้าม SSE ไปด้วยโดยไม่ตั้งใจ ทั้งที่ `useSSE.js`'s
+`keysFromLink()` มี case `'issue-talk'` (invalidate `issue-talks`/`issue-talk-unread`/`issue-talk,id`) ครบอยู่แล้ว
+ฝั่ง client ไม่ต้องแก้เลย
+
+**การแก้:** เพิ่ม `db.broadcastSSE('status_change', { link: \`/issue-talk/\${id}\` })` ตรงๆ หลัง insert ข้อความ
+แทนที่จะเรียก `createNotification()` — event type `'status_change'` (ต่างจาก `'notification'`) เป็น pattern
+ที่มีอยู่แล้วในระบบสำหรับ "อัปเดต cache โดยไม่แตะกระดิ่ง" ตรงตาม intent เดิมเป๊ะ แค่เปลี่ยนจาก poll-only เป็น
+push-driven
+
+**Test:** `node --test` → 272/272 เขียว (ไม่แตะ schema/behavior เดิมของ notifications table — การสร้างกระทู้ +
+เพิ่ม participant ยังแจ้งกระดิ่งเหมือนเดิมทุกอย่าง)
+
+**Verify:** ตั้ง server แยก + เปิด Playwright 2 session พร้อมกัน (ผู้สร้างกระทู้ + ผู้ร่วมสนทนา) — ผู้สร้างตอบกลับ
+ข้อความจาก session หนึ่ง แล้วยืนยันว่า badge ใน sidebar ของอีก session อัปเดตภายใน 2 วินาทีโดยไม่ reload หน้าเลย
+(จากเดิมต้องรอนานสุด 30 วิ) — commit `4579120`
+
+---
+
 ## 2026-07-13 | Session 125 — Purchasing/Supplier Management + Dashboards (Supplier Assignment, Purchasing Dashboard, Manager Dashboard, Notification fixes)
 
 **คำขอ:** ปรับปรุงระบบ Purchasing/Supplier Management/Dashboard ให้ครบวงจร — (1) Purchasing/Purchasing Manager
