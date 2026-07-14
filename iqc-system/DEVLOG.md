@@ -2,9 +2,9 @@
 
 ---
 
-## 📌 Current State (2026-07-13)
+## 📌 Current State (2026-07-14)
 
-**Version:** rev01 · Production · **Latest code:** Session 126 (2026-07-13)
+**Version:** rev01 · Production · **Latest code:** Session 127 (2026-07-14)
 
 **Architecture Summary**
 - Backend: Express 4.18 + better-sqlite3 (WAL, FK ON), **102 ตาราง** (+`environment_presets`, S118; +`supplier_purchasing_assignees`, S125), ~33 route files, SSE + Telegram, port 3001
@@ -36,6 +36,11 @@
   remount ตอน query param เปลี่ยน), missing deep-link ในเกือบทุก notification call site, บั๊กจริงใน
   `useSSE.js`'s `keysFromLink()` (ไม่ตัด query string ก่อน match), เพิ่มคอลัมน์ `received_by`/`actual_time`,
   tag สรุปสถานะคลิกดูรายการ+export Excel ได้, มุมมองปฏิทินรายปี — รายละเอียดเต็มดู session log ด้านล่าง
+- 🏁 **Deploy-safety Q&A + Purchasing Manager nav fix (S127)** — (1) user ถามว่า schema migration ที่เพิ่ม
+  รอบ S126 จะทำให้ deploy ใหม่บน Render (restore-on-boot จาก R2) พังไหม — ตอบด้วยหลักฐานโค้ดจริง (ไม่ใช่แค่เดา):
+  ปลอดภัย เพราะ restore เกิดเฉพาะตอน local DB ว่าง + migration รันต่อทุกครั้งแบบ idempotent เสมอไม่ว่าจะ restore
+  มาหรือไม่ (ไม่มีการแก้โค้ด เป็นคำถามล้วนๆ) (2) เพิ่ม `purchasing_manager` เข้า roles ของเมนู Issue Talk ใน
+  `rolePermissions.js` (เดิมตกหล่นตั้งแต่เพิ่ม role นี้ใน S125 — backend ไม่ได้ล็อก role อยู่แล้ว ตกแค่ sidebar)
 
 **Technical Debt / Roadmap:** ดู [`../AUDIT.md`](../AUDIT.md) §12 (Refactor Roadmap) — **P0 ปิดครบแล้ว (S105)**; P1 ปิดครบ; P2 ปิดครบ (S103); เหลือ P3 (horizontal scale, TypeScript) + gap ใหม่ (ipqc_records removal decision, ipqc_inspections test coverage, fgqc reset-all FK gap) + restore-drill ยังไม่ automate ใน CI (ดู AUDIT.md D5) + CLAUDE.md §11 Role Matrix ต้องเพิ่ม purchasing_manager (S125)
 
@@ -240,6 +245,43 @@ QMRDash/ExecutiveDash/ProductionDash) ใช้ dark `D` token จาก `shared
 **Verify:** seed purchasing_manager + ลูกทีม 2 คน + supplier/NCR 8 รายการคละสถานะ/เกินกำหนด ผ่าน Playwright ทั้ง
 desktop (1600px) และ mobile (390px) — screenshot ยืนยันตัวเลข/gauge/ranking ตรงกับข้อมูลที่ seed ไว้ทุกจุด, ไม่มี
 console error เลย — commit `4692c10`
+
+---
+
+## 2026-07-14 | Session 127 — Deploy-safety Q&A (Render/R2 restore-on-boot) + Purchasing Manager Issue Talk nav fix
+
+**คำขอ (รอบที่ 1):** user ถาม (ไม่ใช่คำสั่งแก้โค้ด) — ตอนนี้ deploy บน Render + backup ไป Cloudflare R2 การที่
+พัฒนาเพิ่มแล้วกระทบ `.db` (เช่น migration ใหม่ที่เพิ่มใน S126) จะทำให้ deploy รอบใหม่ที่ restore backup มาแทน
+เว็บพังไหม ถ้าพังมีวิธีป้องกันอย่างไร
+
+**วิธีตอบ:** ส่ง Explore agent ไปตรวจโค้ดจริงแทนการเดา — อ่าน `bootstrap.js`/`restoreService.js`/`database.js`'s
+`runMigrations()`/`backupService.js`/`DEPLOYMENT.md` ครบ พบว่า **ปลอดภัย**: (1) restore-on-boot
+(`restoreService.js`) ทำงานเฉพาะตอน local DB ว่าง/ไม่มีเท่านั้น — ไม่เคยทับ DB ที่มีอยู่แล้ว (2) ไม่ว่าจะ restore
+มาหรือไม่ ลำดับ boot รัน `initSchema→runMigrations→seedData` เสมอแบบไม่มีเงื่อนไข — DB เก่าที่ restore มาจะถูก
+migrate ให้ทันสมัยทันทีก่อนเปิดใช้งานจริง (3) `safeAddColumn()` ที่ column ใหม่ของ S126 ใช้ เป็น pattern
+idempotent ที่ปลอดภัยที่สุดในไฟล์อยู่แล้ว เหมือนกับอีก ~90 จุดเดิม (4) migration แบบ rebuild ตาราง (เช่น
+`migrateNcrStatusConstraint`) ก็เขียนป้องกัน DB เก่าข้ามหลาย generation ไว้แล้ว (เช็ค `sqlite_master.sql` ก่อน +
+shared-column intersection + rollback ใน catch) (5) backup รันทุก 10 นาทีจาก DB ที่ migrate แล้วจริงของ process
+ที่รันอยู่ — ช่วง "backup เก่ากว่า schema ใหม่" มีแค่ ≤10 นาทีและหายไปเองรอบ backup ถัดไป — **สรุป: deploy ต่อไป
+ไม่พัง ไม่ต้องทำอะไรเพิ่ม** พบ gap เดียว (ไม่ใช่เรื่องใหม่จาก S126): ไม่เคยมี automated test พิสูจน์ flow
+"restore DB เก่า → migrate forward" ตรงๆ เลย — ถาม user ว่าจะปิด gap นี้ไหม (เพิ่ม test / ทำ dry-run) user เลือก
+**"แค่คำอธิบาย พอแล้ว"** — ไม่มีการแก้โค้ดในรอบนี้เลย
+
+---
+
+**คำขอ (รอบที่ 2):** user ขอเพิ่มเมนู Issue Talk ที่ sidebar ของ ID ผู้จัดการจัดซื้อ (`purchasing_manager`)
+
+**Root cause:** `rolePermissions.js`'s Issue Talk `NAV_ITEMS` entry มี roles array เก่าตั้งแต่ก่อน role
+`purchasing_manager` จะถูกเพิ่มใน S125 — ไม่เคยอัปเดตตามให้ครบ (เหมือน gap แบบ `CREATABLE_ROLES`/disposition
+dropdown ที่เจอมาก่อนหน้านี้ในซีรีส์นี้) ตรวจ backend (`routes/issue-talk.js`) แล้วพบว่า**ไม่มี `requireRole`
+เลย** — purchasing_manager เข้าถึง `/issue-talk` ผ่าน URL ตรงได้อยู่แล้ว แค่ไม่มีลิงก์ใน sidebar ให้กด
+
+**การแก้:** เพิ่ม `'purchasing_manager'` เข้า roles array ของ Issue Talk nav item บรรทัดเดียว
+
+**Test:** `node --test` → 258/258 เขียว, 0 skip
+
+**Verify:** seed user role `purchasing_manager` ผ่าน Playwright ยืนยัน sidebar โชว์ "Issue Talk" และคลิกเข้าไป
+หน้าโหลดได้ปกติไม่มี error — commit `56f32aa`
 
 ---
 
