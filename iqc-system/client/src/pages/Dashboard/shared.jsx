@@ -23,6 +23,27 @@ export const D = {
   purple: '#A78BFA',
 };
 
+// ─── Theme-reactive token strings สำหรับ dashboard ที่รองรับ light/dark (ต่างจาก D ข้างบนที่ตั้งใจ dark ตายตัว
+// ตาม CLAUDE.md §25.2) — ใช้ค่า rgb(var(--color-x)) ตรงๆ ในค่า inline style/recharts prop (fill/stroke ของ SVG
+// รับ CSS custom property ผ่าน inheritance ได้ปกติ) จุดที่ className ปกติ (bg-surface ฯลฯ) ใช้ไม่ได้ (dynamic
+// style object, ไม่ใช่ literal className string) — ค่า dark-mode ของ token เหล่านี้ (ดู index.css)ตั้งใจให้ตรงกับ
+// D ข้างบนเป๊ะอยู่แล้ว (เช่น --color-bg dark = #0B1929 = D.bg) ดังนั้นสลับจาก D → T ในหน้าที่รองรับ light mode
+// จะไม่เปลี่ยนหน้าตาตอน dark mode เลย เปลี่ยนแค่ตอน light mode เท่านั้น — orange/yellow/purple ไม่มี token ตรงตัว
+// ในชุด 10 token หลัก (accent/success/warning/danger มีแค่ 4 สี) จึงเก็บเป็น hex คงที่ไม่ผูก theme (แสดงผลเหมือนเดิม
+// ทั้ง 2 โหมด ใช้แยกหมวดหมู่ NCR-major/NCP-minor/UAI ไม่ให้ชนสีกัน ไม่ใช่สีโครงสร้างหน้าที่ต้องสลับตาม theme)
+export const T = {
+  bg: 'rgb(var(--color-bg))',
+  surface: 'rgb(var(--color-surface))',
+  border: 'rgb(var(--color-border))',
+  text: 'rgb(var(--color-text))',
+  muted: 'rgb(var(--color-muted))',
+  accent: 'rgb(var(--color-accent))',
+  success: 'rgb(var(--color-success))',
+  orange: '#F97316',
+  yellow: '#EAB308',
+  purple: '#A78BFA',
+};
+
 export const DarkTip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   return (
