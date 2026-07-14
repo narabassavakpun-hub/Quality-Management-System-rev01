@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area, CartesianGrid } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid } from 'recharts';
 import api from '../../utils/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { DetailModal } from '../Delivery/index';
 import { D, useStats, DarkTip, RadialGauge, CatLabel, useCountUp } from './shared';
+import BillsTrendPanel from './BillsTrendPanel';
+import MiniDeliveryCalendarDark from './MiniDeliveryCalendarDark';
 
 function toDateStr(d) { return d.toISOString().slice(0, 10); }
 
@@ -341,88 +343,12 @@ export default function QCStaffDash({ navigate }) {
         <div className="flex flex-col gap-2 min-h-0">
           <CatLabel color={D.green} text="คุณภาพการรับเข้า" />
 
-          {/* Pass/Fail donut — flex-1 */}
-          <div className="flex-1 min-h-0 rounded-xl p-3 flex flex-col"
-            style={{ background: D.card, border: `1px solid ${D.border}` }}>
-            <p className="flex-none text-[11px] font-semibold mb-2" style={{ color: D.text }}>อัตราผ่านการตรวจ</p>
-            <div className="flex-1 min-h-0 flex items-center gap-3">
-              <div className="relative flex-shrink-0" style={{ width: 96, height: 96 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={passFail.length ? passFail : [{ name: '-', value: 1 }]}
-                      dataKey="value" cx="50%" cy="50%"
-                      innerRadius={28} outerRadius={44}
-                      paddingAngle={passFail.length > 1 ? 3 : 0} stroke="none"
-                      isAnimationActive animationDuration={1400}>
-                      {passFail.length
-                        ? passFail.map((_, i) => <Cell key={i} fill={PASS_COLORS[i]} />)
-                        : <Cell fill={D.border} />}
-                    </Pie>
-                    <Tooltip content={<DarkTip />} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <div className="text-center">
-                    <div className="text-lg font-bold tabular-nums" style={{ color: passColor }}>{passRate}%</div>
-                    <div className="text-[8px]" style={{ color: D.muted }}>ผ่าน</div>
-                  </div>
-                </div>
-              </div>
-              <div className="flex-1 space-y-2">
-                {passFail.map((d, i) => (
-                  <div key={d.name}>
-                    <div className="flex justify-between mb-0.5">
-                      <span className="text-[10px]" style={{ color: D.muted }}>{d.name}</span>
-                      <span className="text-[10px] font-mono font-bold" style={{ color: PASS_COLORS[i] }}>{d.value}</span>
-                    </div>
-                    <div className="h-1 rounded-full" style={{ background: D.border }}>
-                      <div className="h-full rounded-full" style={{
-                        width: `${approvedCount > 0 ? (d.value / approvedCount * 100) : 0}%`,
-                        background: PASS_COLORS[i], transition: 'width 1s ease-out',
-                      }} />
-                    </div>
-                  </div>
-                ))}
-                <p className="text-[9px] pt-0.5" style={{ color: D.muted }}>จาก {approvedCount} บิล</p>
-              </div>
-            </div>
+          {/* ปฏิทินส่งของ — flex-1 (แทนที่ "อัตราผ่านการตรวจ" เดิม) */}
+          <div className="flex-1 min-h-0">
+            <MiniDeliveryCalendarDark />
           </div>
 
-          {/* Bar chart — flex-1 */}
-          <div className="flex-1 min-h-0 rounded-xl p-3 flex flex-col"
-            style={{ background: D.card, border: `1px solid ${D.border}` }}>
-            <div className="flex-none flex items-center justify-between mb-1.5">
-              <p className="text-[11px] font-semibold" style={{ color: D.text }}>บิลรายวัน 7 วัน</p>
-              <div className="flex gap-2.5">
-                {[['รับเข้า', D.cyan], ['ไม่ผ่าน', D.orange]].map(([l, c]) => (
-                  <div key={l} className="flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-sm" style={{ background: c }} />
-                    <span className="text-[9px]" style={{ color: D.muted }}>{l}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="flex-1 min-h-0">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={billsLast7} margin={{ top: 2, right: 4, left: -28, bottom: 0 }} barSize={8} barGap={2}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={D.border} vertical={false} />
-                  <XAxis dataKey="date" tick={{ fontSize: 9, fill: D.muted }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 9, fill: D.muted }} axisLine={false} tickLine={false} allowDecimals={false} />
-                  <Tooltip content={<DarkTip />} />
-                  <Bar dataKey="รับเข้า" fill={D.cyan}   radius={[2,2,0,0]} isAnimationActive />
-                  <Bar dataKey="ไม่ผ่าน" fill={D.orange} radius={[2,2,0,0]} isAnimationActive />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-        </div>
-
-        {/* ──── CENTER: แนวโน้ม 7 วัน ──── */}
-        <div className="flex flex-col gap-2 min-h-0">
-          <CatLabel color={D.cyan} text="แนวโน้มรับเข้า" />
-
-          {/* รายการสินค้าที่รอรับเข้าวันนี้ — flex-none */}
+          {/* รายการสินค้าที่รอรับเข้าวันนี้ — flex-none (ย้ายมาจากคอลัมน์แนวโน้มรับเข้า) */}
           <div className="flex-none rounded-xl p-3 flex flex-col"
             style={{ background: D.card, border: `1px solid ${D.border}` }}>
             <div className="flex-none flex justify-between items-center mb-2">
@@ -454,37 +380,7 @@ export default function QCStaffDash({ navigate }) {
             )}
           </div>
 
-          {/* Area chart — flex-[2] (2 ส่วน) */}
-          <div className="flex-[2] min-h-0 rounded-xl p-3 flex flex-col"
-            style={{ background: D.card, border: `1px solid ${D.border}` }}>
-            <p className="flex-none text-[11px] font-semibold mb-2" style={{ color: D.text }}>รับเข้า / ไม่ผ่าน 7 วัน</p>
-            <div className="flex-1 min-h-0">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={billsLast7} margin={{ top: 4, right: 4, left: -28, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="gCyan" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor={D.cyan}   stopOpacity={0.35} />
-                      <stop offset="95%" stopColor={D.cyan}   stopOpacity={0.02} />
-                    </linearGradient>
-                    <linearGradient id="gOrange" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor={D.orange} stopOpacity={0.35} />
-                      <stop offset="95%" stopColor={D.orange} stopOpacity={0.02} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke={D.border} vertical={false} />
-                  <XAxis dataKey="date" tick={{ fontSize: 9, fill: D.muted }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 9, fill: D.muted }} axisLine={false} tickLine={false} allowDecimals={false} />
-                  <Tooltip content={<DarkTip />} />
-                  <Area type="monotone" dataKey="รับเข้า"  stroke={D.cyan}   strokeWidth={2}
-                    fill="url(#gCyan)"   dot={{ r: 2.5, fill: D.cyan,   stroke: D.card, strokeWidth: 1.5 }} isAnimationActive />
-                  <Area type="monotone" dataKey="ไม่ผ่าน"  stroke={D.orange} strokeWidth={2}
-                    fill="url(#gOrange)" dot={{ r: 2.5, fill: D.orange, stroke: D.card, strokeWidth: 1.5 }} isAnimationActive />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {/* Recent bills — flex-1 พร้อม scroll ภายใน */}
+          {/* Recent bills — flex-1 พร้อม scroll ภายใน (ย้ายมาจากคอลัมน์แนวโน้มรับเข้า อยู่ใต้ "รอรับเข้าวันนี้") */}
           <div className="flex-1 min-h-0 rounded-xl p-3 flex flex-col overflow-hidden"
             style={{ background: D.card, border: `1px solid ${D.border}` }}>
             <div className="flex-none flex justify-between items-center mb-2">
@@ -523,6 +419,12 @@ export default function QCStaffDash({ navigate }) {
             </div>
           </div>
 
+        </div>
+
+        {/* ──── CENTER: แนวโน้มรับเข้า ──── */}
+        <div className="flex flex-col gap-2 min-h-0">
+          <CatLabel color={D.cyan} text="แนวโน้มรับเข้า" />
+          <BillsTrendPanel navigate={navigate} />
         </div>
 
         {/* ──── RIGHT: NCR/NCP Monitor ──── */}
