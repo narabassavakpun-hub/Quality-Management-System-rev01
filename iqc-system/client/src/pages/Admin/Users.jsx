@@ -46,6 +46,7 @@ function UserForm({ initial = {}, onSave, loading, error }) {
     qc_station: '',
     ...initial,
     telegram_chat_id: initial.telegram_chat_id || '',
+    email: initial.email || '',
     password: '',
   });
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
@@ -138,6 +139,20 @@ function UserForm({ initial = {}, onSave, loading, error }) {
         <p className="text-[12px] text-muted mt-0.5">
           แจ้งเตือนกระดิ่งของผู้ใช้คนนี้จะถูกส่งเข้า Telegram ส่วนตัวตาม Chat ID นี้ทันที —
           วิธีหา Chat ID: ให้ผู้ใช้ทักแชทบอทก่อน แล้วเปิด <span className="font-mono">@userinfobot</span> เพื่อดูเลข ID (เว้นว่าง = ไม่ส่งเข้า Telegram ส่วนตัว)
+        </p>
+      </div>
+
+      <div>
+        <label className="label">อีเมล</label>
+        <input
+          type="email"
+          className="input"
+          value={form.email || ''}
+          onChange={e => set('email', e.target.value)}
+          placeholder="เช่น user@company.com"
+        />
+        <p className="text-[12px] text-muted mt-0.5">
+          ใช้ส่งแจ้งเตือนอีเมล (เช่น COO รับทราบเอกสาร NCR) — ต้องตั้งค่า SMTP ที่ จัดการระบบ &gt; ตั้งค่าระบบ &gt; Email ก่อน
         </p>
       </div>
 
@@ -268,13 +283,14 @@ export default function AdminUsers() {
                 )}
               </div>
 
-              {/* Telegram + วันที่ */}
-              <div className="flex items-center justify-between text-[12px] text-muted mb-3">
+              {/* Telegram + Email + วันที่ */}
+              <div className={`flex items-center justify-between text-[12px] text-muted ${r.email ? 'mb-0.5' : 'mb-3'}`}>
                 {r.telegram_chat_id
                   ? <span className="font-mono">TG: {r.telegram_chat_id}</span>
                   : <span>ไม่มี Telegram</span>}
                 <span>{r.created_at ? new Date(r.created_at).toLocaleDateString('th-TH') : '—'}</span>
               </div>
+              {r.email && <div className="text-[12px] text-muted mb-3 truncate">{r.email}</div>}
 
               {/* Actions */}
               <div className="flex gap-2 pt-2 border-t border-border">
@@ -329,6 +345,7 @@ export default function AdminUsers() {
               <SortTh col="role"       sortKey={sortKey} sortDir={sortDir} onSort={onSort}>บทบาท</SortTh>
               <th>สถานี QC</th>
               <th>Telegram</th>
+              <th>อีเมล</th>
               <SortTh col="is_active"  sortKey={sortKey} sortDir={sortDir} onSort={onSort}>สถานะ</SortTh>
               <SortTh col="created_at" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>วันที่สร้าง</SortTh>
               <th className="text-left">Action</th>
@@ -371,6 +388,9 @@ export default function AdminUsers() {
                       </div>
                     ) : <span className="text-muted">—</span>}
                   </td>
+                  <td className="text-small">
+                    {r.email || <span className="text-muted">—</span>}
+                  </td>
                   <td>
                     <span className={`badge ${r.is_active ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-200' : 'bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-200'}`}>
                       {r.is_active ? 'ใช้งาน' : 'ปิดใช้งาน'}
@@ -407,7 +427,7 @@ export default function AdminUsers() {
               );
             })}
             {sorted.length === 0 && (
-              <tr><td colSpan={8} className="text-center text-muted py-8">ไม่พบผู้ใช้งาน</td></tr>
+              <tr><td colSpan={9} className="text-center text-muted py-8">ไม่พบผู้ใช้งาน</td></tr>
             )}
           </tbody>
         </table>

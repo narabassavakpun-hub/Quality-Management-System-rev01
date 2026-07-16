@@ -26,9 +26,16 @@ router.get('/ncr/:token', (req, res) => {
     return res.status(400).json({ error: 'NCR นี้ไม่ได้อยู่ในสถานะรอ Supplier ตอบกลับ' });
   }
 
+  // ระบุคอลัมน์ชัดเจน (ไม่ใช้ ni.*) — กัน claim_value_thb/usd (มูลค่าเคลมภายใน) หลุดไปให้ Supplier เห็น
   ncr.items = db.prepare(`
-    SELECT ni.*, dc.name as defect_category_name
-    FROM ncr_items ni LEFT JOIN defect_categories dc ON dc.id = ni.defect_category_id
+    SELECT ni.id, ni.ncr_id, ni.bill_item_id, ni.item_name, ni.item_name_en,
+      ni.qty_received, ni.qty_sampled, ni.qty_failed,
+      ni.defect_category_id, ni.defect_detail, ni.defect_detail_en,
+      dc.name as defect_category_name, p.code as product_code
+    FROM ncr_items ni
+    LEFT JOIN defect_categories dc ON dc.id = ni.defect_category_id
+    LEFT JOIN bill_items bi ON bi.id = ni.bill_item_id
+    LEFT JOIN products p ON p.id = bi.product_id
     WHERE ni.ncr_id = ?
   `).all(ncr.id);
 

@@ -139,6 +139,164 @@ function TelegramTab() {
   );
 }
 
+// ─── Email (SMTP) Tab ───────────────────────────────────────────────────────────
+function EmailTab() {
+  const qc = useQueryClient();
+  const [showPassword, setShowPassword] = useState(false);
+  const [testTo, setTestTo]       = useState('');
+  const [testMsg, setTestMsg]     = useState('');
+  const [testErr, setTestErr]     = useState('');
+
+  const { data = {}, isLoading } = useQuery({
+    queryKey: ['settings-email'],
+    queryFn: () => api.get('/admin/settings/email').then(r => r.data),
+  });
+
+  const [form, setForm] = useState(null);
+  const current = form ?? {
+    smtp_host: data.smtp_host || '',
+    smtp_port: data.smtp_port || '587',
+    smtp_secure: !!data.smtp_secure,
+    smtp_user: data.smtp_user || '',
+    smtp_password: '',
+    smtp_from: data.smtp_from || '',
+  };
+  const set = (k, v) => setForm(p => ({ ...(p ?? current), [k]: v }));
+
+  const save = useMutation({
+    mutationFn: (body) => api.post('/admin/settings/email', body),
+    onSuccess: () => { qc.invalidateQueries(['settings-email']); setForm(null); },
+  });
+
+  const [testing, setTesting] = useState(false);
+  async function handleTest() {
+    setTestMsg(''); setTestErr('');
+    setTesting(true);
+    try {
+      const r = await api.post('/admin/settings/email/test', { to: testTo || undefined });
+      setTestMsg(r.data.message || 'ส่งอีเมลทดสอบสำเร็จ');
+    } catch (e) {
+      setTestErr(e?.response?.data?.error || 'ส่งไม่สำเร็จ');
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  if (isLoading) return <p className="text-muted text-small py-6 text-center">กำลังโหลด...</p>;
+
+  return (
+    <div className="max-w-lg space-y-5">
+      <p className="text-small text-muted">
+        ตั้งค่า SMTP สำหรับส่งแจ้งเตือนอีเมล (เช่น COO รับทราบเอกสาร NCR) — config เก็บใน Database ไม่ต้อง restart server
+      </p>
+
+      <div>
+        <label className="label">SMTP Host</label>
+        <input
+          className="input"
+          value={current.smtp_host}
+          onChange={e => set('smtp_host', e.target.value)}
+          placeholder="smtp.gmail.com"
+        />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="label">Port</label>
+          <input
+            className="input font-mono"
+            value={current.smtp_port}
+            onChange={e => set('smtp_port', e.target.value)}
+            placeholder="587"
+            inputMode="numeric"
+          />
+        </div>
+        <div className="flex items-center justify-between rounded-lg border border-border px-3 mt-6">
+          <label className="text-small text-muted">TLS/SSL</label>
+          <ToggleSwitch active={current.smtp_secure} onClick={() => set('smtp_secure', !current.smtp_secure)} />
+        </div>
+      </div>
+
+      <div>
+        <label className="label">SMTP Username</label>
+        <input
+          className="input"
+          value={current.smtp_user}
+          onChange={e => set('smtp_user', e.target.value)}
+          placeholder="notify@company.com"
+        />
+      </div>
+
+      <div>
+        <label className="label">SMTP Password</label>
+        <div className="flex gap-2">
+          <input
+            type={showPassword ? 'text' : 'password'}
+            className="input flex-1 font-mono text-small"
+            value={current.smtp_password}
+            onChange={e => set('smtp_password', e.target.value)}
+            placeholder={data.smtp_password_set ? 'ตั้งค่าไว้แล้ว — กรอกใหม่เพื่อเปลี่ยน' : 'App password / SMTP password'}
+            autoComplete="off"
+          />
+          <button
+            type="button"
+            onClick={() => setShowPassword(p => !p)}
+            className="px-3 py-2 border border-border rounded-md text-small text-muted hover:text-text hover:bg-bg transition-colors min-h-[44px]"
+          >
+            {showPassword ? 'ซ่อน' : 'แสดง'}
+          </button>
+        </div>
+        <p className="text-[12px] text-muted mt-1">
+          {data.smtp_password_set ? 'เว้นว่างไว้เพื่อใช้รหัสผ่านเดิม' : 'ยังไม่ได้ตั้งค่า'}
+        </p>
+      </div>
+
+      <div>
+        <label className="label">From Address</label>
+        <input
+          className="input"
+          value={current.smtp_from}
+          onChange={e => set('smtp_from', e.target.value)}
+          placeholder="เว้นว่าง = ใช้ SMTP Username"
+        />
+      </div>
+
+      {save.error && (
+        <div className="text-danger text-small bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded px-3 py-2">
+          {save.error?.response?.data?.error || 'บันทึกไม่สำเร็จ'}
+        </div>
+      )}
+
+      <div className="flex gap-2 pt-2 flex-wrap">
+        <Button onClick={() => save.mutate(current)} loading={save.isPending}>บันทึก</Button>
+      </div>
+
+      <div className="border-t border-border pt-4">
+        <label className="label">ทดสอบส่งอีเมล</label>
+        <div className="flex gap-2">
+          <input
+            className="input flex-1"
+            value={testTo}
+            onChange={e => setTestTo(e.target.value)}
+            placeholder="อีเมลผู้รับทดสอบ"
+          />
+          <button
+            type="button"
+            onClick={handleTest}
+            disabled={testing}
+            className="btn-secondary min-h-[44px] px-4 disabled:opacity-50"
+          >
+            {testing ? 'กำลังทดสอบ...' : 'ทดสอบส่งอีเมล'}
+          </button>
+        </div>
+      </div>
+
+      {testMsg && <div className="text-success text-small bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-700 rounded px-3 py-2">{testMsg}</div>}
+      {testErr && <div className="text-danger text-small bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded px-3 py-2">{testErr}</div>}
+    </div>
+  );
+}
+
 // ─── PDF Template Tab ───────────────────────────────────────────────────────────
 function PdfTemplateTab() {
   const qc = useQueryClient();
@@ -1103,6 +1261,7 @@ const TABS = [
   { key: 'security',     label: 'Security' },
   { key: 'advanced',     label: 'Advanced' },
   { key: 'telegram',     label: 'Telegram' },
+  { key: 'email',        label: 'Email' },
   { key: 'pdf-template', label: 'PDF Template' },
   { key: 'attendance',   label: 'เวลางาน' },
   { key: 'geofence',     label: 'Geofence' },
@@ -1139,6 +1298,7 @@ export default function AdminSettings() {
       {activeTab === 'security'       && <SecurityTab />}
       {activeTab === 'advanced'       && <AdvancedTab />}
       {activeTab === 'telegram'     && <TelegramTab />}
+      {activeTab === 'email'       && <EmailTab />}
       {activeTab === 'pdf-template' && <PdfTemplateTab />}
       {activeTab === 'attendance'   && <AttendanceTab />}
       {activeTab === 'geofence'     && <GeofenceTab />}

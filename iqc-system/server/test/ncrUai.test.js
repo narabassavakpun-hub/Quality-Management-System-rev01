@@ -21,9 +21,13 @@ const setSess = (un, s) => db.prepare('UPDATE users SET session_token=? WHERE us
 // qc_staff1 ต้องเป็นสถานี incoming จึงเปิด NCR ได้ (router.use guard ใน ncr.js)
 db.prepare("UPDATE users SET qc_station='incoming' WHERE username='qc_staff1'").run();
 
+// purchasing_manager ไม่ได้ seed มาเป็นค่าเริ่มต้น — สร้างเพิ่มเพื่อทดสอบ S128 gate (เหมือน purchasingScope.test.js)
+db.prepare("INSERT INTO users (username, password_hash, full_name, role, is_active) VALUES ('purmgr1','x','ผู้จัดการจัดซื้อทดสอบ','purchasing_manager',1)").run();
+
 const ACTORS = {
   staff: 'qc_staff1', sup: 'supervisor1', mgr: 'manager1', qmr: 'qmr1',
-  pur: 'purchasing1', cco: 'cco1', cmo: 'cmo1', cpo: 'cpo1', pm: 'production1',
+  pur: 'purchasing1', cco: 'cco1', cmo: 'cmo1', cpo: 'cpo1', prod: 'production1',
+  purMgr: 'purmgr1',
 };
 const C = {};
 for (const [k, un] of Object.entries(ACTORS)) { setSess(un, k); C[k] = 'token=' + jwt.sign({ id: uid(un), sessionToken: k }, process.env.JWT_SECRET); }
@@ -123,11 +127,28 @@ test('NCR-08 qmr approve → pending_purchasing_review', async () => {
   assert.equal(r.body.status, 'pending_purchasing_review');
 });
 
-test('NCR-09 purchasing review → pending_supplier', async () => {
+test('NCR-09 purchasing review → pending_purchasing_manager_review', async () => {
   const r = await api('PATCH', `/api/ncr/${ncrId}/purchasing-review`, { cookie: C.pur, body: { items: [] } });
   assert.equal(r.status, 200);
   const ncr = await api('GET', `/api/ncr/${ncrId}`, { cookie: C.mgr });
-  assert.equal(ncr.body.status, 'pending_supplier');
+  assert.equal(ncr.body.status, 'pending_purchasing_manager_review');
+});
+
+test('NCR-09b qc_manager/purchasing cannot approve pending_purchasing_manager_review → 403', async () => {
+  assert.equal((await api('POST', `/api/ncr/${ncrId}/approve`, { cookie: C.mgr, body: {} })).status, 403);
+  assert.equal((await api('POST', `/api/ncr/${ncrId}/approve`, { cookie: C.pur, body: {} })).status, 403);
+});
+
+test('NCR-09c purchasing_manager approve → pending_supplier (link becomes copyable)', async () => {
+  const before = await api('POST', `/api/ncr/${ncrId}/record-link-copy`, { cookie: C.pur, body: {} });
+  assert.equal(before.status, 400); // ยังไม่ถึง pending_supplier — copy link ไม่ได้
+
+  const r = await api('POST', `/api/ncr/${ncrId}/approve`, { cookie: C.purMgr, body: {} });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.status, 'pending_supplier');
+
+  const after = await api('POST', `/api/ncr/${ncrId}/record-link-copy`, { cookie: C.pur, body: {} });
+  assert.equal(after.status, 200);
 });
 
 test('NCR-10 supplier GET by token → 200 pending_supplier', async () => {
@@ -178,6 +199,7 @@ test('UAI-01 setup NCR to pending_supplier with disposition=uai', async () => {
   assert.equal((await api('POST', `/api/ncr/${ncrB}/approve`, { cookie: C.mgr, body: { disposition: 'uai', disposition_note: 'ใช้ต่อได้' } })).body.status, 'pending_qmr_open');
   assert.equal((await api('POST', `/api/ncr/${ncrB}/approve`, { cookie: C.qmr, body: {} })).body.status, 'pending_purchasing_review');
   assert.equal((await api('PATCH', `/api/ncr/${ncrB}/purchasing-review`, { cookie: C.pur, body: { items: [] } })).status, 200);
+  assert.equal((await api('POST', `/api/ncr/${ncrB}/approve`, { cookie: C.purMgr, body: {} })).body.status, 'pending_supplier');
 });
 
 test('UAI-02 purchasing request-uai → uai_pending_qc_manager', async () => {
@@ -218,7 +240,7 @@ test('UAI-06 full sign chain purchasing→cco→cmo→cpo→qc→prod→qmr → 
     [C.cmo, 'uai_pending_cpo'],
     [C.cpo, 'uai_pending_qc_ack'],
     [C.mgr, 'uai_pending_production_ack'],
-    [C.pm, 'uai_pending_qmr_ack'],
+    [C.prod, 'uai_pending_qmr_ack'],
     [C.qmr, 'uai_completed'],
   ];
   for (const [cookie, expected] of steps) {
@@ -247,6 +269,7 @@ async function walkToManagerReview(item) {
   await api('POST', `/api/ncr/${id}/approve`, { cookie: C.mgr, body: { disposition: 'return', disposition_note: 'x' } });
   await api('POST', `/api/ncr/${id}/approve`, { cookie: C.qmr, body: {} });
   await api('PATCH', `/api/ncr/${id}/purchasing-review`, { cookie: C.pur, body: { items: [] } });
+  await api('POST', `/api/ncr/${id}/approve`, { cookie: C.purMgr, body: {} });
   await api('POST', `/api/supplier/ncr/${tk}/respond`, { body: { respondent_name: 'A', root_cause: 'a', corrective_action: 'b', preventive_action: 'c' } });
   return { id, tk };
 }
@@ -285,6 +308,7 @@ test('RX-01 setup UAI → uai_pending_cco', async () => {
   await api('POST', `/api/ncr/${id}/approve`, { cookie: C.mgr, body: { disposition: 'uai', disposition_note: 'x' } });
   await api('POST', `/api/ncr/${id}/approve`, { cookie: C.qmr, body: {} });
   await api('PATCH', `/api/ncr/${id}/purchasing-review`, { cookie: C.pur, body: { items: [] } });
+  await api('POST', `/api/ncr/${id}/approve`, { cookie: C.purMgr, body: {} });
   const req = await api('POST', `/api/ncr/${id}/request-uai`, { cookie: C.pur, body: { reason: 'r', product_type: 'p', work_type: 'w', defect_description: 'd', root_cause_purchasing: 'a', corrective_action_purchasing: 'b', preventive_action_purchasing: 'c' } });
   rxUai = req.body.uai_id;
   await api('POST', `/api/uai/${rxUai}/qc-manager-review`, { cookie: C.mgr, body: { decision: 'approve' } });
@@ -300,4 +324,83 @@ test('RX-03 cco reject-exec (reason) → uai_rejected_by_exec + NCR pending_supp
   assert.equal(r.status, 200);
   assert.equal(r.body.status, 'uai_rejected_by_exec');
   assert.equal((await api('GET', `/api/uai/${rxUai}`, { cookie: C.mgr })).body.status, 'uai_rejected_by_exec');
+});
+
+// ================= GROUP E: S128 — claim value validation + product_code join =================
+const prodWithCode = db.prepare("INSERT INTO products (name,code,supplier_id,product_group_id,unit_id) VALUES ('สินค้ามีรหัส','HW-0166-00000',?,?,?)").run(supId, grp, unit).lastInsertRowid;
+const itemE = db.prepare("INSERT INTO bill_items (bill_id,product_id,item_name,qty_received,qty_sampled,qty_passed,qty_failed,defect_category_id) VALUES (?,?,'สินค้ามีรหัส',100,10,7,3,?)").run(bill, prodWithCode, dcat).lastInsertRowid;
+
+let ncrE, ncrEItemId, ncrEToken;
+test('CV-01 setup NCR → pending_purchasing_review', async () => {
+  const c = await api('POST', '/api/ncr', { cookie: C.staff, body: { bill_id: bill, severity: 'major', items: ncrItems(itemE) } });
+  ncrE = c.body.id; ncrEItemId = c.body.items[0].id; ncrEToken = c.body.supplier_token;
+  await api('POST', `/api/ncr/${ncrE}/approve`, { cookie: C.sup, body: {} });
+  await api('POST', `/api/ncr/${ncrE}/approve`, { cookie: C.mgr, body: { disposition: 'return', disposition_note: 'x' } });
+  const r = await api('POST', `/api/ncr/${ncrE}/approve`, { cookie: C.qmr, body: {} });
+  assert.equal(r.body.status, 'pending_purchasing_review');
+});
+
+test('CV-02 GET /api/ncr/:id คืน product_code ต่อ item', async () => {
+  const r = await api('GET', `/api/ncr/${ncrE}`, { cookie: C.pur });
+  assert.equal(r.body.items[0].product_code, 'HW-0166-00000');
+});
+
+test('CV-03 purchasing-review ขาด claim_value_thb/usd → 400', async () => {
+  const r = await api('PATCH', `/api/ncr/${ncrE}/purchasing-review`, { cookie: C.pur, body: { items: [{ id: ncrEItemId, item_name_en: 'x', claim_value_thb: '100' }] } });
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /มูลค่าสินค้าเคลม/);
+});
+
+test('CV-04 purchasing-review กรอกครบ (รวม "-") → 200 + บันทึกค่าไว้', async () => {
+  const r = await api('PATCH', `/api/ncr/${ncrE}/purchasing-review`, { cookie: C.pur, body: { items: [{ id: ncrEItemId, item_name_en: 'silicone', claim_value_thb: '500', claim_value_usd: '-' }] } });
+  assert.equal(r.status, 200);
+  const ncr = await api('GET', `/api/ncr/${ncrE}`, { cookie: C.pur });
+  assert.equal(ncr.body.status, 'pending_purchasing_manager_review');
+  assert.equal(ncr.body.items[0].claim_value_thb, '500');
+  assert.equal(ncr.body.items[0].claim_value_usd, '-');
+});
+
+test('CV-05 record-link-copy ที่ pending_purchasing_manager_review → 400 (ยังไม่ผ่าน manager)', async () => {
+  const r = await api('POST', `/api/ncr/${ncrE}/record-link-copy`, { cookie: C.pur, body: {} });
+  assert.equal(r.status, 400);
+});
+
+test('CV-06 reject-purchasing-review: qc_manager/purchasing ทำไม่ได้ → 403', async () => {
+  assert.equal((await api('POST', `/api/ncr/${ncrE}/reject-purchasing-review`, { cookie: C.mgr, body: { comment: 'x' } })).status, 403);
+  assert.equal((await api('POST', `/api/ncr/${ncrE}/reject-purchasing-review`, { cookie: C.pur, body: { comment: 'x' } })).status, 403);
+});
+
+test('CV-07 reject-purchasing-review: purchasing_manager ไม่ใส่เหตุผล → 400', async () => {
+  const r = await api('POST', `/api/ncr/${ncrE}/reject-purchasing-review`, { cookie: C.purMgr, body: {} });
+  assert.equal(r.status, 400);
+});
+
+test('CV-08 reject-purchasing-review: purchasing_manager ไม่อนุมัติ → กลับไป pending_purchasing_review, ค่าที่กรอกไว้ยังอยู่', async () => {
+  const r = await api('POST', `/api/ncr/${ncrE}/reject-purchasing-review`, { cookie: C.purMgr, body: { comment: 'มูลค่าเคลมดูไม่สมเหตุสมผล กรุณาตรวจสอบใหม่' } });
+  assert.equal(r.status, 200);
+  const ncr = await api('GET', `/api/ncr/${ncrE}`, { cookie: C.pur });
+  assert.equal(ncr.body.status, 'pending_purchasing_review');
+  assert.equal(ncr.body.items[0].claim_value_thb, '500'); // ไม่ถูกล้าง — จัดซื้อแก้ไขต่อได้
+  assert.equal(ncr.body.items[0].claim_value_usd, '-');
+});
+
+test('CV-09 purchasing-review ใหม่อีกครั้งหลังถูกไม่อนุมัติ → pending_purchasing_manager_review อีกครั้ง → manager อนุมัติ → pending_supplier', async () => {
+  const review = await api('PATCH', `/api/ncr/${ncrE}/purchasing-review`, { cookie: C.pur, body: { items: [{ id: ncrEItemId, item_name_en: 'silicone (revised)', claim_value_thb: '450', claim_value_usd: '-' }] } });
+  assert.equal(review.status, 200);
+  const afterReview = await api('GET', `/api/ncr/${ncrE}`, { cookie: C.pur });
+  assert.equal(afterReview.body.status, 'pending_purchasing_manager_review');
+  assert.equal(afterReview.body.items[0].claim_value_thb, '450');
+
+  const approve = await api('POST', `/api/ncr/${ncrE}/approve`, { cookie: C.purMgr, body: {} });
+  assert.equal(approve.status, 200);
+  assert.equal(approve.body.status, 'pending_supplier');
+});
+
+test('CV-10 GET /api/supplier/ncr/:token — เห็น product_code + disposition แต่ไม่เห็น claim_value_thb/usd (ข้อมูลภายใน)', async () => {
+  const r = await api('GET', `/api/supplier/ncr/${ncrEToken}`);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.disposition, 'return');
+  assert.equal(r.body.items[0].product_code, 'HW-0166-00000');
+  assert.equal(r.body.items[0].claim_value_thb, undefined);
+  assert.equal(r.body.items[0].claim_value_usd, undefined);
 });

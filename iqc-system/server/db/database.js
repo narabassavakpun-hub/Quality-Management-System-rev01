@@ -16,7 +16,7 @@ fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 // เพิ่มสถานะใหม่ = แก้ที่นี่ที่เดียว ไม่ต้อง rebuild ตารางอีกต่อไป
 const VALID_NCR_STATUSES = new Set([
   'pending_supervisor', 'pending_manager', 'pending_qmr_open',
-  'pending_purchasing_review', 'pending_supplier', 'pending_manager_review',
+  'pending_purchasing_review', 'pending_purchasing_manager_review', 'pending_supplier', 'pending_manager_review',
   'pending_qmr_close', 'pending_supplier_resubmit', 'pending_uai',
   'closed', 'uai_pending_qc_manager', 'cancelled', 'ncp_closed',
 ]);
@@ -196,6 +196,9 @@ function runMigrations() {
   // ncr_items: bilingual fields for supplier communication
   safeAddColumn('ncr_items', 'item_name_en', 'TEXT');
   safeAddColumn('ncr_items', 'defect_detail_en', 'TEXT');
+  // ncr_items: มูลค่าสินค้าเคลม (S128) — TEXT เพราะอนุญาตให้กรอก "-" แทนกรณีไม่มีมูลค่า
+  safeAddColumn('ncr_items', 'claim_value_thb', 'TEXT');
+  safeAddColumn('ncr_items', 'claim_value_usd', 'TEXT');
 
   // ncrs: purchasing acknowledgment + link copy tracking
   safeAddColumn('ncrs', 'purchasing_received_at', 'DATETIME');
@@ -283,6 +286,8 @@ function runMigrations() {
 
   // users: personal Telegram chat id — ส่งแจ้งเตือนกระดิ่งเข้า Telegram ส่วนตัวของแต่ละคน
   safeAddColumn('users', 'telegram_chat_id', 'TEXT');
+  // users: อีเมลส่วนตัว (S128) — ใช้ส่งแจ้งเตือนอีเมล (เช่น COO รับทราบ NCR) เหมือน telegram_chat_id
+  safeAddColumn('users', 'email', 'TEXT');
 
   // users: Authentication Provider Framework — local (default) หรือ ad (ผูก Active Directory)
   // validate ที่ application layer เท่านั้น (ไม่ทำ CHECK rebuild) เหมือน qc_station/factory_assignment
@@ -1056,7 +1061,7 @@ function seedData() {
       ['manager1', 'qc_manager', 'ประยุทธ ผู้จัดการ QC'],
       ['qmr1', 'qmr', 'สุรชัย QMR'],
       ['purchasing1', 'purchasing', 'นภา จัดซื้อ'],
-      ['cco1', 'cco', 'วิชัย CCO'],
+      ['cco1', 'cco', 'วิชัย COO'],
       ['cmo1', 'cmo', 'สมหญิง CMO'],
       ['cpo1', 'cpo', 'ประเสริฐ CPO'],
       ['production1', 'production_manager', 'สมศักดิ์ ผจก.ผลิต'],

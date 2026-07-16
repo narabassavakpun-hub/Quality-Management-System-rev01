@@ -32,6 +32,12 @@ function getPurchasingManagerIds() {
   return getUsersByRole('purchasing_manager').map(u => u.id);
 }
 
+// COO (role='cco' — โชว์เป็น "COO" ในหน้าจอ, ดู CLAUDE.md §11) ที่ต้องแจ้ง email/telegram ส่วนตัวเมื่อ NCR ผ่าน
+// purchasing_manager — ต้องการ contact info เต็ม (ไม่ใช่แค่ id) จึง query ตรงแทนใช้ getUsersByRole
+function getCooUsers() {
+  return db.prepare(`SELECT id, full_name, email, telegram_chat_id FROM users WHERE role = 'cco' AND is_active = 1`).all();
+}
+
 // SQL fragment ต่อท้าย WHERE เพื่อกรอง list ให้ purchasing เห็นเฉพาะ supplier ที่ไม่มีผู้ดูแล หรือตัวเองเป็นผู้ดูแล
 // — ใช้ `supplierIdExpr` เป็น column/expression ของ supplier_id ในคิวรีนั้น (เช่น 'b.supplier_id')
 // ต้อง push userId เข้า params ต่อจาก param อื่นๆ ตามตำแหน่ง `?` ที่ปรากฏ (มี 1 ตัวใน fragment นี้)
@@ -56,5 +62,5 @@ function purchasingStrictAssignedSQL(supplierIdExpr) {
 
 module.exports = {
   getSupplierAssigneeIds, resolveNotifyTargetIds, canPurchasingActOnSupplier,
-  purchasingVisibilitySQL, purchasingStrictAssignedSQL, getPurchasingManagerIds,
+  purchasingVisibilitySQL, purchasingStrictAssignedSQL, getPurchasingManagerIds, getCooUsers,
 };

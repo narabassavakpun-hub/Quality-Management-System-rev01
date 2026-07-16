@@ -19,6 +19,7 @@ const DISPOSITION_LABELS = {
 
 function getProcessLabel(a, approvals, i, ncr) {
   if (a.action === 'rejected_response') return 'QC Manager ไม่อนุมัติคำตอบ Supplier';
+  if (a.action === 'rejected_purchasing_review') return 'ผู้จัดการจัดซื้อไม่อนุมัติ Review';
   if (a.action === 'resubmit') return 'จัดซื้อส่ง Supplier ตอบใหม่';
   if (a.role === 'qc_supervisor') {
     return ncr?.severity === 'minor' ? 'หัวหน้า QC อนุมัติปิด NCP' : 'หัวหน้า QC ตรวจสอบ NCR';
@@ -29,6 +30,7 @@ function getProcessLabel(a, approvals, i, ncr) {
     return qmrsBefore === 0 ? 'QMR อนุมัติเปิด NCR' : 'QMR อนุมัติปิด NCR';
   }
   if (a.role === 'purchasing') return 'จัดซื้อ ส่ง Link Supplier';
+  if (a.role === 'purchasing_manager') return 'ผู้จัดการจัดซื้ออนุมัติ Review';
   return a.role;
 }
 
@@ -116,7 +118,7 @@ function ApprovalTimeline({ approvals, ncr }) {
         const approvalIdx = approvalEvents.findIndex(ae => ae.data.id === a.id);
         const processLabel = getProcessLabel(a, approvalEvents.map(ae => ae.data), approvalIdx, ncr);
         const showDisposition = approvalIdx === firstQcManagerIdx && ncr?.disposition;
-        const isRejection = a.action === 'rejected_response';
+        const isRejection = a.action === 'rejected_response' || a.action === 'rejected_purchasing_review';
         const isResubmit = a.action === 'resubmit';
 
         return (
@@ -173,6 +175,9 @@ export default function NCRDetail() {
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectComment, setRejectComment] = useState('');
   const [rejectError, setRejectError] = useState('');
+  const [rejectReviewOpen, setRejectReviewOpen] = useState(false);
+  const [rejectReviewComment, setRejectReviewComment] = useState('');
+  const [rejectReviewError, setRejectReviewError] = useState('');
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewItems, setReviewItems] = useState([]);
   const [reviewError, setReviewError] = useState('');
@@ -274,6 +279,12 @@ export default function NCRDetail() {
     onError: (err) => setRejectError(err.response?.data?.error || err.message || 'เกิดข้อผิดพลาด'),
   });
 
+  const rejectPurchasingReview = useMutation({
+    mutationFn: () => api.post(`/ncr/${id}/reject-purchasing-review`, { comment: rejectReviewComment }),
+    onSuccess: () => { qc.invalidateQueries(['ncr', id]); setRejectReviewOpen(false); setRejectReviewComment(''); setRejectReviewError(''); },
+    onError: (err) => setRejectReviewError(err.response?.data?.error || err.message || 'เกิดข้อผิดพลาด'),
+  });
+
   const resubmitToSupplier = useMutation({
     mutationFn: () => api.post(`/ncr/${id}/resubmit-to-supplier`),
     onSuccess: () => qc.invalidateQueries(['ncr', id]),
@@ -296,6 +307,8 @@ export default function NCRDetail() {
       defect_detail: item.defect_detail || '',
       item_name_en: item.item_name_en || '',
       defect_detail_en: item.defect_detail_en || '',
+      claim_value_thb: item.claim_value_thb || '',
+      claim_value_usd: item.claim_value_usd || '',
     })));
     setReviewError('');
     setReviewOpen(true);
@@ -303,6 +316,17 @@ export default function NCRDetail() {
 
   const updateReviewItem = (idx, field, value) =>
     setReviewItems(prev => prev.map((it, i) => i === idx ? { ...it, [field]: value } : it));
+
+  const submitReview = () => {
+    const missing = reviewItems
+      .map((it, i) => (!it.claim_value_thb?.trim() || !it.claim_value_usd?.trim()) ? i + 1 : null)
+      .filter(Boolean);
+    if (missing.length) {
+      alert(`กรุณากรอกมูลค่าสินค้าเคลม (THB/USD) ให้ครบทุกรายการ — ถ้าไม่มีมูลค่าให้ใส่ "-" (รายการที่ ${missing.join(', ')} ยังไม่ได้กรอก)`);
+      return;
+    }
+    purchasingReview.mutate();
+  };
 
   const handleCopyLink = () => {
     const isExpired = ncr?.token_expires_at && new Date(ncr.token_expires_at) < new Date();
@@ -324,12 +348,14 @@ export default function NCRDetail() {
         qc_supervisor: ncr.status === 'pending_supervisor',
         qc_manager: ncr.status === 'pending_manager' || ncr.status === 'pending_manager_review',
         qmr: ncr.status === 'pending_qmr_open' || ncr.status === 'pending_qmr_close',
+        purchasing_manager: ncr.status === 'pending_purchasing_manager_review',
       }[user?.role];
 
   const canRejectResponse = !isNCP && user?.role === 'qc_manager' && ncr.status === 'pending_manager_review';
+  const canRejectPurchasingReview = !isNCP && user?.role === 'purchasing_manager' && ncr.status === 'pending_purchasing_manager_review';
   const canResubmit = !isNCP && user?.role === 'purchasing' && ncr.status === 'pending_supplier_resubmit';
   const canRequestUAI = !isNCP && user?.role === 'purchasing' && ncr.status === 'pending_supplier';
-  const canCopyLink = !isNCP && user?.role === 'purchasing' && ['pending_purchasing_review', 'pending_supplier', 'uai_pending_qc_manager'].includes(ncr.status);
+  const canCopyLink = !isNCP && user?.role === 'purchasing' && ['pending_supplier', 'uai_pending_qc_manager'].includes(ncr.status);
   const canAcknowledge = !isNCP && user?.role === 'purchasing' && ncr.status === 'pending_supplier' && !ncr.purchasing_received_at;
   const canReview = !isNCP && user?.role === 'purchasing' && ncr.status === 'pending_purchasing_review';
   const tokenExpired = ncr.token_expires_at && new Date(ncr.token_expires_at) < new Date();
@@ -342,6 +368,7 @@ export default function NCRDetail() {
         pending_qmr_open: 'อนุมัติเปิดเอกสาร NCR',
         pending_manager_review: 'ลงชื่อ (ส่ง QMR ปิด)',
         pending_qmr_close: 'ปิดเอกสาร NCR',
+        pending_purchasing_manager_review: 'อนุมัติ (ส่งลิงก์ให้ Supplier ได้)',
       }[ncr.status];
 
   return (
@@ -395,6 +422,11 @@ export default function NCRDetail() {
               ไม่อนุมัติ
             </Button>
           )}
+          {canRejectPurchasingReview && (
+            <Button variant="danger" onClick={() => { setRejectReviewComment(''); setRejectReviewError(''); setRejectReviewOpen(true); }}>
+              ไม่อนุมัติ
+            </Button>
+          )}
           {canApprove && <Button variant="success" onClick={() => setConfirmApprove(true)}>{approveLabel}</Button>}
           <button onClick={() => downloadFile(`/ncr/${id}/excel`, {}, `${ncr.ncr_code || id}.xlsx`)} className="btn-secondary btn text-small">Export Excel</button>
           <button onClick={() => downloadFile(`/ncr/${id}/pdf`, {}, `${ncr.ncr_code || id}.pdf`)} className="btn-primary btn text-small">Export PDF</button>
@@ -435,6 +467,7 @@ export default function NCRDetail() {
                 <div className="bg-red-50 dark:bg-red-900 px-3 py-2 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1">
                   <div className="col-span-2 sm:col-span-3">
                     <span className="font-medium text-body">{item.item_name}</span>
+                    {item.product_code && <span className="text-muted font-mono text-small ml-1">({item.product_code})</span>}
                   </div>
                   <div className="text-small">
                     <span className="text-muted">รับเข้า: </span>
@@ -460,6 +493,20 @@ export default function NCRDetail() {
                       {item.defect_detail}
                     </div>
                   )}
+                  {(item.claim_value_thb || item.claim_value_usd) && (
+                    <div className="text-small col-span-2 sm:col-span-3">
+                      <span className="text-muted">มูลค่าสินค้าเคลม (THB): </span>
+                      <span className="font-mono font-medium">{item.claim_value_thb || '-'}</span>
+                      <span className="text-muted ml-3">(USD): </span>
+                      <span className="font-mono font-medium">{item.claim_value_usd || '-'}</span>
+                    </div>
+                  )}
+                  {ncr.disposition === 'return' && (
+                    <div className="col-span-2 sm:col-span-3 mt-1 border border-danger bg-red-50 dark:bg-red-950 rounded px-2 py-1.5">
+                      <div className="text-small font-semibold text-danger">ตีกลับสินค้า 100% เนื่องจากไม่ผ่านมาตรฐานการสุ่มตรวจ</div>
+                      <div className="text-small font-semibold text-danger">100% product return — failed the sampling inspection standard</div>
+                    </div>
+                  )}
                 </div>
                 {/* รูปภาพปัญหาจากบิล */}
                 {item.bill_item_images?.length > 0 && (
@@ -480,6 +527,16 @@ export default function NCRDetail() {
                 )}
               </div>
             ))}
+          </div>
+        )}
+
+        {ncr.disposition && (
+          <div className="mt-3 bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded px-3 py-2 space-y-0.5">
+            <div className="text-small font-medium text-primary mb-1">ข้อมูลการจัดการของ QC Manager</div>
+            <div className="text-small"><span className="text-muted">การจัดการ: </span><span className="font-medium">{DISPOSITION_LABELS[ncr.disposition] || ncr.disposition}</span></div>
+            {ncr.disposition_note && <div className="text-small"><span className="text-muted">หมายเหตุ: </span>{ncr.disposition_note}</div>}
+            {ncr.disposition_due_date && <div className="text-small"><span className="text-muted">วันกำหนดดำเนินการ: </span>{ncr.disposition_due_date}</div>}
+            {ncr.effectiveness_check_date && <div className="text-small"><span className="text-muted">วันตรวจสอบการแก้ไข: </span>{ncr.effectiveness_check_date}</div>}
           </div>
         )}
       </div>
@@ -630,7 +687,7 @@ export default function NCRDetail() {
       <Modal open={reviewOpen} onClose={() => setReviewOpen(false)} title="Review NCR + เพิ่มคำแปลภาษาอังกฤษสำหรับ Supplier" size="lg">
         <div className="space-y-4">
           <div className="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded px-3 py-2 text-small text-blue-800 dark:text-blue-200">
-            กรุณาตรวจสอบข้อมูลและเพิ่มคำแปลภาษาอังกฤษให้ครบถ้วน ก่อนส่ง Link ให้ Supplier ตอบกลับ
+            กรุณากรอกมูลค่าสินค้าเคลมและเพิ่มคำแปลภาษาอังกฤษให้ครบถ้วน ก่อนส่งให้ผู้จัดการจัดซื้อตรวจสอบ
           </div>
 
           {reviewItems.map((item, idx) => (
@@ -639,6 +696,26 @@ export default function NCRDetail() {
                 รายการ {idx + 1}: {item.item_name}
               </div>
               <div className="px-4 py-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-small text-muted mb-1 block">มูลค่าสินค้าเคลม (THB) *</label>
+                  <input
+                    type="text"
+                    className="input text-small"
+                    value={item.claim_value_thb}
+                    onChange={e => updateReviewItem(idx, 'claim_value_thb', e.target.value)}
+                    placeholder='กรอกมูลค่า หรือ "-" ถ้าไม่มี'
+                  />
+                </div>
+                <div>
+                  <label className="text-small text-muted mb-1 block">มูลค่าสินค้าเคลม (USD) *</label>
+                  <input
+                    type="text"
+                    className="input text-small"
+                    value={item.claim_value_usd}
+                    onChange={e => updateReviewItem(idx, 'claim_value_usd', e.target.value)}
+                    placeholder='กรอกมูลค่า หรือ "-" ถ้าไม่มี'
+                  />
+                </div>
                 <div>
                   <div className="text-small text-muted mb-1">ชื่อสินค้า (ไทย)</div>
                   <div className="bg-bg px-3 py-2 rounded text-small">{item.item_name}</div>
@@ -675,8 +752,8 @@ export default function NCRDetail() {
 
           <div className="flex gap-2 justify-end pt-1">
             <Button variant="secondary" onClick={() => setReviewOpen(false)}>ยกเลิก</Button>
-            <Button variant="primary" onClick={() => purchasingReview.mutate()} loading={purchasingReview.isPending}>
-              ยืนยัน — ส่งให้ Supplier ตอบกลับได้แล้ว
+            <Button variant="primary" onClick={submitReview} loading={purchasingReview.isPending}>
+              ยืนยัน — ส่งให้ผู้จัดการจัดซื้อตรวจสอบ
             </Button>
           </div>
         </div>
@@ -814,6 +891,30 @@ export default function NCRDetail() {
           <div className="flex gap-2 justify-end">
             <Button variant="secondary" onClick={() => setRejectOpen(false)}>ยกเลิก</Button>
             <Button variant="danger" onClick={() => rejectResponse.mutate()} loading={rejectResponse.isPending}>ยืนยัน — ไม่อนุมัติ</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Modal: ผู้จัดการจัดซื้อไม่อนุมัติ Review */}
+      <Modal open={rejectReviewOpen} onClose={() => setRejectReviewOpen(false)} title="ไม่อนุมัติ Review NCR" size="sm">
+        <div className="space-y-3">
+          <div className="bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded px-3 py-2 text-small text-danger">
+            เมื่อไม่อนุมัติ เอกสารจะถูกส่งกลับไปยังจัดซื้อ เพื่อให้ Review ใหม่อีกครั้ง (ข้อมูลที่กรอกไว้แล้วยังคงอยู่ แก้ไขต่อได้)
+          </div>
+          <div>
+            <label className="label">เหตุผลที่ไม่อนุมัติ *</label>
+            <textarea
+              className="input"
+              rows={3}
+              value={rejectReviewComment}
+              onChange={e => setRejectReviewComment(e.target.value)}
+              placeholder="ระบุเหตุผลหรือสิ่งที่ต้องแก้ไข"
+            />
+          </div>
+          {rejectReviewError && <div className="text-danger text-small bg-red-50 dark:bg-red-900 px-2 py-1 rounded">{rejectReviewError}</div>}
+          <div className="flex gap-2 justify-end">
+            <Button variant="secondary" onClick={() => setRejectReviewOpen(false)}>ยกเลิก</Button>
+            <Button variant="danger" onClick={() => rejectPurchasingReview.mutate()} loading={rejectPurchasingReview.isPending}>ยืนยัน — ไม่อนุมัติ</Button>
           </div>
         </div>
       </Modal>

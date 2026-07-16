@@ -3,9 +3,23 @@
 // throw error พร้อม .status เพื่อให้ controller map เป็น HTTP status ที่ถูกต้อง
 const db = require('../db/database');
 const { getUsersByRole, getReceivingQCStaff, createNotification, sendTelegram } = require('../lib/notify');
-const { resolveNotifyTargetIds, getPurchasingManagerIds } = require('../lib/purchasingScope');
+const { resolveNotifyTargetIds, getPurchasingManagerIds, getCooUsers } = require('../lib/purchasingScope');
+const { sendEmail } = require('../lib/mailer');
+const { buildNcrInfoHtml, buildNcrInfoText } = require('../lib/ncrEmailTemplate');
 
 function httpError(message, status) { const e = new Error(message); e.status = status; return e; }
+
+// NCR items พร้อมรหัสสินค้า (join ผ่าน bill_item_id → products เหมือน exports.js PDF) — ใช้ทั้ง GET /ncr/:id และอีเมลแจ้ง COO
+function getFullNcrItems(ncrId) {
+  return db.prepare(`
+    SELECT ni.*, dc.name as defect_category_name, p.code as product_code
+    FROM ncr_items ni
+    LEFT JOIN defect_categories dc ON dc.id = ni.defect_category_id
+    LEFT JOIN bill_items bi ON bi.id = ni.bill_item_id
+    LEFT JOIN products p ON p.id = bi.product_id
+    WHERE ni.ncr_id = ?
+  `).all(ncrId);
+}
 
 // user id ที่ควรแจ้งเตือนแทน "จัดซื้อทุกคน" — เฉพาะผู้ดูแลจัดซื้อของ Supplier นี้ (fallback จัดซื้อทุกคนถ้าไม่มีใครถูกตั้ง)
 function purchasingTargetsForBill(billId) {
@@ -116,6 +130,8 @@ function approveNcr({ ncr, actorId, actorRole, actorIp, comment, action, disposi
         pending_supervisor: { role: 'qc_supervisor', next: 'pending_manager' },
         pending_manager: { role: 'qc_manager', next: 'pending_qmr_open' },
         pending_qmr_open: { role: 'qmr', next: 'pending_purchasing_review' },
+        // S128 — purchasing_manager ต้องตรวจสอบก่อนพนักงานจัดซื้อจะ copy link ส่ง Supplier ได้ (maker-checker gate)
+        pending_purchasing_manager_review: { role: 'purchasing_manager', next: 'pending_supplier' },
         pending_manager_review: { role: 'qc_manager', next: 'pending_qmr_close' },
         pending_qmr_close: { role: 'qmr', next: 'closed' },
       };
@@ -168,6 +184,26 @@ function approveNcr({ ncr, actorId, actorRole, actorIp, comment, action, disposi
     } else if (t.next === 'pending_qmr_close') {
       for (const u of getUsersByRole('qmr')) createNotification(u.id, 'NCR รอ QMR ปิด', `${ncr.ncr_code} QC Manager ลงชื่อแล้ว`, `/ncr/${ncr.id}`);
       sendTelegram(db.getSetting('telegram_group_qc'), `[IQC] ${ncr.ncr_code} QC Manager ตรวจสอบคำตอบแล้ว — รอ QMR ปิด NCR`);
+    } else if (t.next === 'pending_supplier') {
+      // S128 — purchasing_manager อนุมัติแล้ว: ลิงก์พร้อมส่ง Supplier จริง (ย้ายมาจาก purchasingReview() เดิม)
+      const appUrl = db.getSetting('app_url') || '';
+      const supplierLink = `${appUrl}/supplier/ncr/${ncr.supplier_token}`;
+      for (const uid of purchasingTargetsForBill(ncr.bill_id)) {
+        createNotification(uid, 'NCR พร้อมส่ง Supplier', `${ncr.ncr_code} — คัดลอก Link แล้วส่งให้ Supplier`, `/ncr/${ncr.id}`);
+      }
+      sendTelegram(db.getSetting('telegram_group_purchasing'),
+        `[IQC] ${ncr.ncr_code}\nผู้จัดการจัดซื้ออนุมัติแล้ว — พร้อมส่ง Supplier\n\nLink:\n${supplierLink}`
+      );
+
+      // COO รับทราบ NCR (email + Telegram ส่วนตัว) — แจ้งเตือนเฉยๆ ไม่มีปุ่ม/สถานะ acknowledge ในระบบ (ยืนยันกับ user แล้ว)
+      const fullItems = getFullNcrItems(ncr.id);
+      const subject = `มีเอกสาร NCR สร้างใหม่ เลขที่ ${ncr.ncr_code} (${ncr.supplier_name}) จำนวน ${fullItems.length} รายการ`;
+      const html = buildNcrInfoHtml(ncr, fullItems);
+      const text = buildNcrInfoText(ncr, fullItems);
+      for (const coo of getCooUsers()) {
+        if (coo.email) sendEmail(coo.email, subject, html);
+        if (coo.telegram_chat_id) sendTelegram(coo.telegram_chat_id, `[IQC] ${subject}\n\n${text}`);
+      }
     } else if (t.next === 'closed') {
       createNotification(ncr.created_by, 'NCR ปิดแล้ว', `${ncr.ncr_code} QMR ปิดเอกสารแล้ว`, `/ncr/${ncr.id}`);
       for (const u of getUsersByRole('qc_supervisor')) createNotification(u.id, 'NCR ปิดแล้ว', `${ncr.ncr_code} QMR ปิดเอกสารแล้ว`, `/ncr/${ncr.id}`);
@@ -223,35 +259,61 @@ function requestUai({ ncr, reason, conditions, department, product_type, work_ty
   return createUai();
 }
 
-// Purchasing Review — บันทึกคำแปล EN + ต่ออายุ token + pending_purchasing_review → pending_supplier
+// Purchasing Review — บันทึกคำแปล EN + มูลค่าเคลม + ต่ออายุ token + pending_purchasing_review → pending_purchasing_manager_review
+// (S128 — ไม่ไป pending_supplier ตรงๆ อีกต่อไป ต้องรอ purchasing_manager อนุมัติก่อน ดู approveNcr's pending_supplier branch)
 function purchasingReview({ ncr, items, actorId, actorIp }) {
+  // มูลค่าสินค้าเคลม (THB/USD) บังคับกรอกทุกรายการ — "-" ถือว่ากรอกแล้ว (ไม่มีมูลค่า)
+  for (const item of items) {
+    if (!String(item.claim_value_thb ?? '').trim() || !String(item.claim_value_usd ?? '').trim()) {
+      throw httpError('กรุณากรอกมูลค่าสินค้าเคลม (THB/USD) ให้ครบทุกรายการ — ถ้าไม่มีมูลค่าให้ใส่ "-"', 400);
+    }
+  }
+
   const review = db.transaction(() => {
-    const updateItem = db.prepare('UPDATE ncr_items SET item_name_en=?, defect_detail_en=? WHERE id=? AND ncr_id=?');
+    const updateItem = db.prepare('UPDATE ncr_items SET item_name_en=?, defect_detail_en=?, claim_value_thb=?, claim_value_usd=? WHERE id=? AND ncr_id=?');
     for (const item of items) {
-      updateItem.run(item.item_name_en || null, item.defect_detail_en || null, item.id, ncr.id);
+      updateItem.run(item.item_name_en || null, item.defect_detail_en || null, item.claim_value_thb.trim(), item.claim_value_usd.trim(), item.id, ncr.id);
     }
 
     const expiry = new Date();
     expiry.setDate(expiry.getDate() + Number(db.getSetting('token_expiry_days') || 90));
 
-    const changed = db.prepare(`UPDATE ncrs SET status='pending_supplier', token_expires_at=?,
+    const changed = db.prepare(`UPDATE ncrs SET status='pending_purchasing_manager_review', token_expires_at=?,
       purchasing_received_at=datetime('now'), purchasing_received_by=?
       WHERE id=? AND status='pending_purchasing_review'`)
       .run(expiry.toISOString(), actorId, ncr.id);
     if (changed.changes === 0) throw new Error('เอกสารถูกดำเนินการแล้ว กรุณารีเฟรชหน้า');
 
-    const appUrl = db.getSetting('app_url') || '';
-    const supplierLink = `${appUrl}/supplier/ncr/${ncr.supplier_token}`;
-    for (const uid of purchasingTargetsForBill(ncr.bill_id)) {
-      createNotification(uid, 'NCR พร้อมส่ง Supplier', `${ncr.ncr_code} — คัดลอก Link แล้วส่งให้ Supplier`, `/ncr/${ncr.id}`);
+    for (const u of getPurchasingManagerIds()) {
+      createNotification(u, 'NCR รอผู้จัดการจัดซื้อตรวจสอบ', `${ncr.ncr_code} — จัดซื้อ Review เสร็จแล้ว รอผู้จัดการจัดซื้อตรวจสอบก่อนส่งลิงก์ให้ Supplier`, `/ncr/${ncr.id}`);
     }
     sendTelegram(db.getSetting('telegram_group_purchasing'),
-      `[IQC] ${ncr.ncr_code}\nReview เสร็จแล้ว — พร้อมส่ง Supplier\n\nLink:\n${supplierLink}`
+      `[IQC] ${ncr.ncr_code}\nจัดซื้อ Review เสร็จแล้ว — รอผู้จัดการจัดซื้อตรวจสอบก่อนส่งลิงก์ให้ Supplier`
     );
 
-    db.auditLog('ncrs', ncr.id, 'PURCHASING_REVIEW', { status: 'pending_purchasing_review' }, { status: 'pending_supplier' }, actorId, actorIp);
+    db.auditLog('ncrs', ncr.id, 'PURCHASING_REVIEW', { status: 'pending_purchasing_review' }, { status: 'pending_purchasing_manager_review' }, actorId, actorIp);
   });
   review();
+}
+
+// Purchasing Manager ไม่อนุมัติ Review (pending_purchasing_manager_review → pending_purchasing_review, ให้จัดซื้อ
+// Review ใหม่อีกครั้ง — S128c) ไม่ล้างค่า claim_value/EN ที่กรอกไว้แล้ว (จัดซื้อแก้ไขต่อได้ ไม่ต้องกรอกใหม่ทั้งหมด)
+function rejectPurchasingManagerReview({ ncr, comment, actorId, actorIp }) {
+  const reject = db.transaction(() => {
+    const changed = db.prepare("UPDATE ncrs SET status='pending_purchasing_review' WHERE id=? AND status='pending_purchasing_manager_review'").run(ncr.id);
+    if (changed.changes === 0) throw new Error('เอกสารถูกดำเนินการแล้ว กรุณารีเฟรชหน้า');
+
+    db.prepare('INSERT INTO ncr_approvals (ncr_id, action, role, user_id, comment) VALUES (?, ?, ?, ?, ?)').run(ncr.id, 'rejected_purchasing_review', 'purchasing_manager', actorId, comment);
+
+    for (const uid of purchasingTargetsForBill(ncr.bill_id)) {
+      createNotification(uid, 'NCR ถูกส่งกลับให้ Review ใหม่', `${ncr.ncr_code} ผู้จัดการจัดซื้อไม่อนุมัติ — กรุณา Review ใหม่อีกครั้ง`, `/ncr/${ncr.id}`);
+    }
+    sendTelegram(db.getSetting('telegram_group_purchasing'),
+      `[IQC] ${ncr.ncr_code}\nผู้จัดการจัดซื้อไม่อนุมัติ Review\nเหตุผล: ${comment}\nกรุณา Review ใหม่อีกครั้ง`
+    );
+    db.auditLog('ncrs', ncr.id, 'REJECT_PURCHASING_REVIEW', { status: 'pending_purchasing_manager_review' }, { status: 'pending_purchasing_review', comment }, actorId, actorIp);
+  });
+  reject();
 }
 
 // QC Manager ไม่อนุมัติคำตอบ Supplier (pending_manager_review → pending_supplier_resubmit)
@@ -307,4 +369,4 @@ function resubmitToSupplier({ ncr, actorId, actorIp }) {
   resubmit();
 }
 
-module.exports = { createNcr, approveNcr, requestUai, purchasingReview, rejectSupplierResponse, resubmitToSupplier };
+module.exports = { createNcr, approveNcr, requestUai, purchasingReview, rejectPurchasingManagerReview, rejectSupplierResponse, resubmitToSupplier, getFullNcrItems };

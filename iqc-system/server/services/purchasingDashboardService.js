@@ -2,7 +2,7 @@
 // purchasingScope.js) ไม่แตะ GET /api/dashboard/stats เดิม (ใช้ร่วมกันทุก role อื่นอยู่แล้ว)
 // อ่านอย่างเดียวทั้งไฟล์ — ไม่มี write operation จึงไม่ต้องมี transaction
 const db = require('../db/database');
-const { purchasingStrictAssignedSQL } = require('../lib/purchasingScope');
+const { purchasingStrictAssignedSQL, purchasingVisibilitySQL } = require('../lib/purchasingScope');
 
 // bucket mapping อ้างอิง NCR status flow เดิม (CLAUDE.md §4) — ไม่มี status ใหม่ ไม่มี column ใหม่
 // severity='minor' (NCP) ปิดผ่าน ncp_closed โดยไม่ผ่าน purchasing เลย จึงไม่ปรากฏใน bucket
@@ -26,17 +26,27 @@ const OVERDUE_EXPR = "(n.disposition_due_date IS NOT NULL AND n.disposition_due_
 // purchasing → เห็นเฉพาะ supplier ที่ตัวเอง assign ไว้จริงเท่านั้น (เข้มงวด ไม่มี fallback รวม supplier ที่ยังไม่มี
 // ผู้ดูแล — ต่างจาก purchasingVisibilitySQL ที่ใช้กับ NCR/UAI/Delivery action-permission โดยเจตนา) ตรงกับที่ตั้งค่า
 // ไว้ใน Master List > ผู้ผลิตเป๊ะๆ; purchasing_manager/admin → เห็นทั้งหมด ไม่ถูกกรอง
-function scopeClause(user, supplierIdExpr) {
-  if (user.role === 'purchasing') return { sql: purchasingStrictAssignedSQL(supplierIdExpr), params: [user.id] };
+// S128b — `getSummary`/`getNcrList` ต้องการ fallback รวม supplier ที่ยังไม่มีผู้ดูแลด้วย (ไม่งั้น NCR ของ supplier
+// เหล่านั้นไม่มีใครเห็นใน "NCR/NCP ของฉัน" เลย) ผ่าน `includeUnassigned: true` — "ผู้ผลิตของฉัน" (getSuppliers)
+// ยังคงเข้มงวดเหมือนเดิมตามมติ user (ต้องตรงกับ Master List assignment เป๊ะๆ ไม่ปนกับ NCR visibility)
+function scopeClause(user, supplierIdExpr, { includeUnassigned = false } = {}) {
+  if (user.role === 'purchasing') {
+    return includeUnassigned
+      ? { sql: purchasingVisibilitySQL(supplierIdExpr), params: [user.id] }
+      : { sql: purchasingStrictAssignedSQL(supplierIdExpr), params: [user.id] };
+  }
   return { sql: '1=1', params: [] };
 }
 
 function getSummary(user) {
-  const scope = scopeClause(user, 's.id');
+  // NCR counts รวม supplier ที่ยังไม่มีผู้ดูแลด้วย (S128b) ให้ตรงกับ "NCR/NCP ของฉัน" ด้านล่าง — แต่ supplier_count
+  // ยังคงเข้มงวดเหมือนเดิม (จับคู่กับ "ผู้ผลิตของฉัน" ที่ยังคงพฤติกรรมเดิมตามมติ user) จึงต้องแยก scope กัน
+  const scope = scopeClause(user, 's.id', { includeUnassigned: true });
+  const supplierScope = scopeClause(user, 's.id');
   const p = scope.params;
   const base = `FROM ncrs n JOIN bills b ON b.id = n.bill_id JOIN suppliers s ON s.id = b.supplier_id WHERE ${scope.sql}`;
 
-  const supplier_count = db.prepare(`SELECT COUNT(*) c FROM suppliers s WHERE ${scope.sql} AND s.is_active = 1`).get(...p).c;
+  const supplier_count = db.prepare(`SELECT COUNT(*) c FROM suppliers s WHERE ${supplierScope.sql} AND s.is_active = 1`).get(...supplierScope.params).c;
   const ncr_total                       = db.prepare(`SELECT COUNT(*) c ${base} AND n.severity = 'major'`).get(...p).c;
   const ncp_total                       = db.prepare(`SELECT COUNT(*) c ${base} AND n.severity = 'minor'`).get(...p).c;
   const ncr_waiting_review              = db.prepare(`SELECT COUNT(*) c ${base} AND n.status = 'pending_purchasing_review'`).get(...p).c;
@@ -106,7 +116,8 @@ function getSuppliers(user, { page = 1, limit = 20, q = '', sort = 'name', dir =
 
 // "My NCR/NCP" (Req 2) — filter: supplier_id, bucket (status bucket), severity (Priority), date_from/date_to, overdue, q
 function getNcrList(user, { page = 1, limit = 20, supplier_id, bucket, severity, date_from, date_to, overdue, q = '' } = {}) {
-  const scope = scopeClause(user, 's.id');
+  // S128b — รวม NCR ของ supplier ที่ยังไม่มีผู้ดูแลด้วย ให้จัดซื้อทุกคนเห็นและช่วยดำเนินการได้ (ไม่ตกหล่น)
+  const scope = scopeClause(user, 's.id', { includeUnassigned: true });
   const perPage = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
   const pg = Math.max(parseInt(page, 10) || 1, 1);
   const offset = (pg - 1) * perPage;

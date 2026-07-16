@@ -155,11 +155,7 @@ router.get('/:id', auth, (req, res) => {
   if (!ncr) return res.status(404).json({ error: 'ไม่พบ NCR' });
   if (blockIfNotAssignedPurchasing(req, res, ncr.bill_id)) return;
 
-  ncr.items = db.prepare(`
-    SELECT ni.*, dc.name as defect_category_name
-    FROM ncr_items ni LEFT JOIN defect_categories dc ON dc.id = ni.defect_category_id
-    WHERE ni.ncr_id = ?
-  `).all(ncr.id);
+  ncr.items = ncrService.getFullNcrItems(ncr.id);
 
   // ดึงรูปภาพปัญหาจาก bill_item_images ของแต่ละรายการ
   for (const item of ncr.items) {
@@ -244,7 +240,9 @@ router.delete('/:id', auth, requireRole(['qc_staff', 'qc_supervisor']), (req, re
 });
 
 // ===== POST /api/ncr/:id/approve  (state machine) =====
-router.post('/:id/approve', auth, requireRole(['qc_supervisor', 'qc_manager', 'qmr']), (req, res) => {
+// S128 — เพิ่ม purchasing_manager สำหรับขั้น pending_purchasing_manager_review (ไม่ scope ตาม supplier เหมือน
+// purchasing ธรรมดา — purchasing_manager เห็น/ทำได้ทุก supplier เป็นการออกแบบเดิมของระบบ ดู purchasingScope.js)
+router.post('/:id/approve', auth, requireRole(['qc_supervisor', 'qc_manager', 'qmr', 'purchasing_manager']), (req, res) => {
   const ncr = db.prepare('SELECT * FROM ncrs WHERE id = ?').get(req.params.id);
   if (!ncr) return res.status(404).json({ error: 'ไม่พบ NCR' });
 
@@ -404,6 +402,25 @@ router.patch('/:id/purchasing-review', auth, requireRole(['purchasing', 'purchas
   }
 });
 
+// ===== POST /api/ncr/:id/reject-purchasing-review — Purchasing Manager ไม่อนุมัติ Review (ส่งกลับให้จัดซื้อ Review ใหม่) =====
+router.post('/:id/reject-purchasing-review', auth, requireRole(['purchasing_manager']), (req, res) => {
+  const ncr = db.prepare('SELECT * FROM ncrs WHERE id = ?').get(req.params.id);
+  if (!ncr) return res.status(404).json({ error: 'ไม่พบ NCR' });
+  if (ncr.status !== 'pending_purchasing_manager_review') {
+    return res.status(400).json({ error: 'ไม่อนุมัติได้เฉพาะ NCR สถานะ pending_purchasing_manager_review' });
+  }
+
+  const { comment } = req.body;
+  if (!comment || !comment.trim()) return res.status(400).json({ error: 'กรุณาระบุเหตุผลที่ไม่อนุมัติ' });
+
+  try {
+    ncrService.rejectPurchasingManagerReview({ ncr, comment, actorId: req.user.id, actorIp: req.ip });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 // ===== POST /api/ncr/:id/regenerate-token — Purchasing รีเจเนอเรต token =====
 router.post('/:id/regenerate-token', auth, requireRole(['purchasing', 'purchasing_manager']), (req, res) => {
   const ncr = db.prepare('SELECT * FROM ncrs WHERE id = ?').get(req.params.id);
@@ -476,7 +493,8 @@ router.post('/:id/record-link-copy', auth, requireRole(['purchasing', 'purchasin
   const ncr = db.prepare('SELECT id, status, bill_id FROM ncrs WHERE id = ?').get(req.params.id);
   if (!ncr) return res.status(404).json({ error: 'ไม่พบ NCR' });
   if (blockIfNotAssignedPurchasing(req, res, ncr.bill_id)) return;
-  if (!['pending_purchasing_review', 'pending_supplier', 'uai_pending_qc_manager'].includes(ncr.status))
+  // S128 — เอา pending_purchasing_review ออก: ต้องรอ purchasing_manager อนุมัติ (pending_supplier) ก่อนถึง copy link ได้จริง
+  if (!['pending_supplier', 'uai_pending_qc_manager'].includes(ncr.status))
     return res.status(400).json({ error: 'ไม่สามารถบันทึก Copy Link ในสถานะนี้' });
 
   db.prepare("UPDATE ncrs SET link_copied_at=datetime('now'), link_copied_by=?, link_copied_count=COALESCE(link_copied_count,0)+1 WHERE id=?")

@@ -27,7 +27,7 @@ export default function UAIList() {
           <option value="">ทุกสถานะ</option>
           <option value="uai_pending_qc_manager">รอ QC Manager</option>
           <option value="uai_pending_purchasing">รอจัดซื้อ</option>
-          <option value="uai_pending_cco">รอ CCO</option>
+          <option value="uai_pending_cco">รอ COO</option>
           <option value="uai_pending_cmo">รอ CMO</option>
           <option value="uai_pending_cpo">รอ CPO</option>
           <option value="uai_pending_qc_ack">รอ QC รับทราบ</option>

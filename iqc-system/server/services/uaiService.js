@@ -83,7 +83,7 @@ function signUai({ uai, actorId, actorRole, actorIp, sigFile, action, comment })
 
     // Per-step notifications
     if (nextStatus === 'uai_pending_cco') {
-      for (const u of getUsersByRole('cco')) createNotification(u.id, 'UAI รอลงนาม CCO', `${uai.uai_code} รอ CCO ลงนาม`, `/uai/${uai.id}`);
+      for (const u of getUsersByRole('cco')) createNotification(u.id, 'UAI รอลงนาม COO', `${uai.uai_code} รอ COO ลงนาม`, `/uai/${uai.id}`);
     } else if (nextStatus === 'uai_pending_cmo') {
       for (const u of getUsersByRole('cmo')) createNotification(u.id, 'UAI รอลงนาม CMO', `${uai.uai_code} รอ CMO ลงนาม`, `/uai/${uai.id}`);
     } else if (nextStatus === 'uai_pending_cpo') {
@@ -121,7 +121,7 @@ function signUai({ uai, actorId, actorRole, actorIp, sigFile, action, comment })
 // CCO/CMO/CPO ปฏิเสธ UAI (→ uai_rejected_by_exec, NCR กลับ pending_supplier)
 function rejectExec({ uai, reason, actorId, actorRole, actorIp }) {
   const ncr = db.prepare('SELECT ncr_code FROM ncrs WHERE id=?').get(uai.ncr_id);
-  const rejectorLabel = { cco: 'CCO', cmo: 'CMO', cpo: 'CPO' }[actorRole] || actorRole;
+  const rejectorLabel = { cco: 'COO', cmo: 'CMO', cpo: 'CPO' }[actorRole] || actorRole;
 
   const reject = db.transaction(() => {
     // DEVMORE H7 — optimistic lock: เปลี่ยนสถานะเฉพาะเมื่อยังอยู่ในคิวของผู้ปฏิเสธ

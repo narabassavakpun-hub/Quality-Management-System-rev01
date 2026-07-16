@@ -4,6 +4,14 @@ import { useParams } from 'react-router-dom';
 import api from '../../utils/api';
 import Button from '../../components/UI/Button';
 
+const DISPOSITION_LABELS = {
+  return: 'Return to Supplier / ส่งคืน Supplier',
+  rework: 'Rework / แก้ไข',
+  uai: 'Use-As-Is (Special Acceptance) / ยอมรับใช้พิเศษ',
+  scrap: 'Scrap / ทำลาย',
+  re_inspect: 'Re-inspect / ตรวจซ้ำ',
+};
+
 export default function NCRResponse() {
   const { token } = useParams();
   const [form, setForm] = useState({ respondent_name: '', root_cause: '', corrective_action: '', preventive_action: '', completion_date: '' });
@@ -101,6 +109,12 @@ export default function NCRResponse() {
               <div className="text-small text-muted">Received Date / วันที่รับเข้า</div>
               <div className="font-medium">{ncr.received_date || '-'}</div>
             </div>
+            {ncr.disposition && (
+              <div className="col-span-2">
+                <div className="text-small text-muted">Disposition / ผลการพิจารณา</div>
+                <div className="font-medium">{DISPOSITION_LABELS[ncr.disposition] || ncr.disposition}</div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -117,6 +131,7 @@ export default function NCRResponse() {
                 <div className="bg-red-50 dark:bg-red-900 px-4 py-3">
                   <div className="font-semibold text-body text-primary">
                     {item.item_name_en || item.item_name}
+                    {item.product_code && <span className="text-muted font-mono text-small ml-1">({item.product_code})</span>}
                   </div>
                   {item.item_name_en && item.item_name !== item.item_name_en && (
                     <div className="text-small text-muted">{item.item_name}</div>
@@ -148,6 +163,13 @@ export default function NCRResponse() {
                       {item.defect_detail && item.defect_detail !== item.defect_detail_en && (
                         <div className="bg-surface rounded px-3 py-2 text-small text-muted">{item.defect_detail}</div>
                       )}
+                    </div>
+                  )}
+
+                  {ncr.disposition === 'return' && (
+                    <div className="mt-3 border border-danger bg-red-100 dark:bg-red-950 rounded px-3 py-2">
+                      <div className="text-small font-semibold text-danger">100% product return — failed the sampling inspection standard</div>
+                      <div className="text-small font-semibold text-danger">ตีกลับสินค้า 100% เนื่องจากไม่ผ่านมาตรฐานการสุ่มตรวจ</div>
                     </div>
                   )}
                 </div>

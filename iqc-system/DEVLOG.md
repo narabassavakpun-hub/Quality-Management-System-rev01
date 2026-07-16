@@ -2,12 +2,12 @@
 
 ---
 
-## 📌 Current State (2026-07-14)
+## 📌 Current State (2026-07-16)
 
-**Version:** rev01 · Production · **Latest code:** Session 127 (2026-07-14)
+**Version:** rev01 · Production · **Latest code:** Session 128 (2026-07-16)
 
 **Architecture Summary**
-- Backend: Express 4.18 + better-sqlite3 (WAL, FK ON), **102 ตาราง** (+`environment_presets`, S118; +`supplier_purchasing_assignees`, S125), ~33 route files, SSE + Telegram, port 3001
+- Backend: Express 4.18 + better-sqlite3 (WAL, FK ON), **102 ตาราง** (+`environment_presets`, S118; +`supplier_purchasing_assignees`, S125), ~33 route files, SSE + Telegram + **Email/SMTP (S128, `lib/mailer.js`)**, port 3001
 - Frontend: React 18 + Vite 5 + Tailwind 3.4, **51+ หน้า / 14 roles** (+`purchasing_manager`, S125; +`warehouse_supervisor`/`warehouse_manager`, S127), React Query + SSE, `rolePermissions.js` รวมสิทธิ์ + `ROLE_LABELS`/`CREATABLE_ROLES` (จุดรวม role label เดียว, S103; รองรับครบ 11 roles จริง, S105), **App-wide Dark Mode (Light/Dark/Auto ต่อ user, S121, contrast แก้แล้ว S122 — ดู §25 ใน CLAUDE.md)**, **Table redesign แบรนด์ (gradient header, S122 — ดู §26)**
 - โมดูล: IQC (Bills→NCR→UAI), Production QC (IPQC/FGQC), FG (defect→FNCP→FUAI), KPI, Attendance, Issue Talk, Delivery, Master, ProCodeSAP/PDPlan (FQC ถูกลบแล้ว — ดู S104), **Authentication Provider Framework (Local + Active Directory แบบ pluggable, S118 — ดู §24 ใน CLAUDE.md)**, **Purchasing Supplier-Assignment + Dashboards (S125 — ดูรายละเอียดด้านล่าง)**
 
@@ -46,10 +46,284 @@
   `warehouse_supervisor`/`warehouse_manager` — รับหน้าที่กด "รับทราบ" แผนรับเข้าแทน qc_staff/qc_supervisor เดิม
   ทั้งหมด (ถาม `AskUserQuestion` ยืนยันขอบเขตก่อนเริ่มเพราะกระทบ schema+workflow) qc_staff เหลือแค่บันทึกวันเวลา
   มาส่งจริง sidebar คลังโชว์เฉพาะ "ปฏิทินส่งของ" เท่านั้น
+- 🏁 **NCR: มูลค่าเคลม/รหัสสินค้า/disposition visibility/purchasing_manager gate/COO email (S128)** — เพิ่ม
+  `claim_value_thb`/`claim_value_usd` บังคับกรอกใน Purchasing Review modal (รับ `"-"` เป็นค่าถูกต้อง), เพิ่มรหัส
+  สินค้าต่อท้ายชื่อสินค้าใน "ข้อมูล NCR" (join `bill_items→products` ที่ไม่เคยมีใน `GET /ncr/:id` มาก่อน — PDF
+  export มีอยู่แล้วแต่หน้าจอไม่มี), เพิ่มกล่อง "ข้อมูลการจัดการของ QC Manager" (disposition) ใต้รายการสินค้า,
+  หมายเหตุแดง "ตีกลับสินค้า 100%..." (TH+EN) เฉพาะ `disposition='return'`, สถานะใหม่
+  `pending_purchasing_manager_review` (maker-checker gate — purchasing_manager ต้องอนุมัติก่อนจัดซื้อจะ copy
+  link ได้ ปิด gap เดิมที่ copy ได้ตั้งแต่ `pending_purchasing_review`), Email/SMTP infra ใหม่ทั้งหมด
+  (`lib/mailer.js` + Admin Settings "Email" tab + `users.email` column) ส่งแจ้ง COO (role `cco`) + Telegram
+  ส่วนตัวเมื่อ purchasing_manager อนุมัติ, แก้ label "CCO"→"COO" ทุกจุด (role id `cco` เดิมไม่แตะ) — **รอบที่ 2:**
+  แก้ "NCR/NCP ของฉัน" + KPI summary ให้รวม NCR ของ supplier ที่ยังไม่มีผู้ดูแลด้วย (fallback เหมือน `/ncr` หลัก)
+  โดย "ผู้ผลิตของฉัน" ยังคงเข้มงวดเหมือนเดิมตามมติ user — **รอบที่ 3:** เพิ่มปุ่ม "ไม่อนุมัติ" ให้ purchasing_manager
+  ที่ขั้น review — ไม่อนุมัติแล้วย้อนกลับให้จัดซื้อ Review ใหม่ (ค่าที่กรอกไว้ไม่ถูกล้าง) — **รอบที่ 4:** เพิ่มรหัส
+  สินค้า/disposition/หมายเหตุแดง (return) ในหน้า Supplier Response ด้วยตามคำขอใหม่ (เดิมตกลงไว้ว่าไม่แตะหน้านี้ —
+  รอบนี้ user ขอตรงๆ) พร้อมปิด info-leak เล็กๆ ที่เจอระหว่างแก้ (`claim_value_thb`/`usd` เคยรั่วไปให้ Supplier เห็น
+  โดยไม่ตั้งใจผ่าน `ni.*`) — รายละเอียดเต็มดู session log ด้านล่าง
 
-**Technical Debt / Roadmap:** ดู [`../AUDIT.md`](../AUDIT.md) §12 (Refactor Roadmap) — **P0 ปิดครบแล้ว (S105)**; P1 ปิดครบ; P2 ปิดครบ (S103); เหลือ P3 (horizontal scale, TypeScript) + gap ใหม่ (ipqc_records removal decision, ipqc_inspections test coverage, fgqc reset-all FK gap) + restore-drill ยังไม่ automate ใน CI (ดู AUDIT.md D5) + CLAUDE.md §11 Role Matrix ต้องเพิ่ม purchasing_manager (S125)
+**Technical Debt / Roadmap:** ดู [`../AUDIT.md`](../AUDIT.md) §12 (Refactor Roadmap) — **P0 ปิดครบแล้ว (S105)**; P1 ปิดครบ; P2 ปิดครบ (S103); เหลือ P3 (horizontal scale, TypeScript) + gap ใหม่ (ipqc_records removal decision, ipqc_inspections test coverage, fgqc reset-all FK gap) + restore-drill ยังไม่ automate ใน CI (ดู AUDIT.md D5) + CLAUDE.md §11 Role Matrix ต้องเพิ่ม purchasing_manager (S125) + purchasing_manager review step (S128)
 
 **เอกสารอ้างอิง:** [`../CLAUDE.md`](../CLAUDE.md) · [`../PRD.md`](../PRD.md) · [`../brand.md`](../brand.md) · [`../design-dashboard.md`](../design-dashboard.md) · [`../testcase.md`](../testcase.md) · [`../AUDIT.md`](../AUDIT.md)
+
+---
+
+## 2026-07-16 | Session 128 — NCR: มูลค่าเคลม/รหัสสินค้า/disposition visibility/purchasing_manager gate/COO email
+
+**คำขอ:** user รายงาน 5 เรื่องที่ฟอร์ม NCR-2026-0004 (มุมมองจัดซื้อ) — (1) จัดซื้อต้องกรอกมูลค่าสินค้าเคลม (THB/USD)
+ก่อนกด Review + เพิ่มคำแปลอังกฤษ, บังคับกรอกแต่ใส่ "-" ได้ถ้าไม่มีมูลค่า, แสดงในกล่อง "ข้อมูล NCR" ใต้รายละเอียด
+สินค้า + เพิ่มรหัสสินค้าต่อท้ายชื่อสินค้า (2) เพิ่มข้อมูลการจัดการของ QC Manager ใต้รายละเอียดสินค้าด้วย (3) เพิ่ม
+หมายเหตุแดง "ตีกลับสินค้า 100% เนื่องจากไม่ผ่านมาตรฐานการสุ่มตรวจ" (+อังกฤษ) (4) เพิ่มให้ผู้จัดการจัดซื้อต้องตรวจสอบ
+หลังพนักงานจัดซื้อ Review เสร็จ ก่อนจะกด copy link ส่ง Supplier ได้ (เพิ่มสถานะ+notification ทั้งระบบ) (5) เพิ่มให้
+COO รับทราบ NCR หลังผู้จัดการจัดซื้อตรวจสอบผ่าน ผ่าน Email (เพิ่มการตั้งค่า Email + ช่องอีเมลที่หน้าผู้ใช้งาน) +
+ส่งต่อ Telegram ส่วนตัว พร้อมแก้ label "CCO" ที่ควรเป็น "COO" ในฟอร์มสร้าง user
+
+**วิธีทำงาน:** Phase 1 อ่าน DEVLOG.md/CLAUDE.md/AUDIT.md ทั้งหมด + ส่ง Explore agent 3 ตัวขนานกันสำรวจ (1)
+NCR/Detail.jsx + product/disposition display (2) ncrService.js/notify pattern/role cco/email infra (3) schema
+ncr_items/products/bills + migration pattern ก่อนเข้า Plan mode — พบจากการสำรวจว่า: `item_name_en`/
+`defect_detail_en` (คอลัมน์ `_en` sibling pattern) มีอยู่แล้วใน Purchasing Review modal เป็นจุดต่อยอด, `ncrs.status`
+ไม่มี DB CHECK แล้ว (DEVMORE H4) เพิ่ม status ใหม่แค่เติม `VALID_NCR_STATUSES` Set ไม่ต้อง rebuild ตาราง,
+`products.code` มีอยู่แล้วแต่ query `GET /ncr/:id` ไม่เคย join (PDF export join อยู่แล้วแยกกันคนละที่), ไม่มี
+email/SMTP infra ในระบบเลย (Telegram-only มาตลอด), role `cco` ถูกใช้อยู่แล้วในขั้นตอนเซ็น UAI (คนละเรื่องกับ NCR)
+— **ถาม `AskUserQuestion` 3 ข้อก่อนสรุปแผน** เพราะกระทบ scope/schema/UX ชัดเจน: (1) COO "รับทราบ" ต้องมีปุ่ม
+กดจริงในระบบไหม — user เลือก **"แจ้งเตือนอย่างเดียว"** (ไม่มีปุ่ม/สถานะ/audit trail เพิ่ม) (2) หมายเหตุแดงแสดงเมื่อไหร่
+— user เลือก **"เฉพาะ disposition=return"** (ไม่ใช่ทุก NCR) (3) แก้ Detail.jsx เฉพาะหน้าภายในใช่ไหม — user ยืนยัน
+**"ใช่ เฉพาะหน้าภายใน"** (ไม่แตะ `Supplier/NCRResponse.jsx`)
+
+**Phase 0 (schema, additive เท่านั้น):** `safeAddColumn` เพิ่ม `ncr_items.claim_value_thb`/`claim_value_usd`
+(TEXT — อนุญาต `"-"`), `users.email` (TEXT, คู่กับ `telegram_chat_id` เดิม); เพิ่ม
+`'pending_purchasing_manager_review'` เข้า `VALID_NCR_STATUSES`; แก้ seed `'วิชัย CCO'`→`'วิชัย COO'`
+
+**Phase 1 (มูลค่าเคลม + รหัสสินค้า):** `ncrService.js` เพิ่ม `getFullNcrItems(ncrId)` (join `ncr_items→bill_items→
+products` ดึง `product_code` — reuse ทั้ง `GET /ncr/:id` และอีเมล COO แทนเขียนซ้ำ 3 ที่), `routes/ncr.js`'s
+`GET /:id` เปลี่ยนมาเรียกฟังก์ชันนี้แทน inline query เดิม; `purchasingReview()` validate
+`claim_value_thb`/`claim_value_usd` ต้องไม่ว่างทุกรายการก่อน (throw 400 ถ้าขาด) แล้วบันทึกพร้อม `item_name_en`/
+`defect_detail_en`; ฝั่ง frontend `Detail.jsx`'s Review modal เพิ่ม 2 ช่องกรอกต่อรายการ + validate ก่อน submit
+(`alert()` รายการที่ขาด เหมือน pattern เดิมของ Delivery S127) + แสดงรหัสสินค้า/มูลค่าเคลมใน "ข้อมูล NCR"
+
+**Phase 2 (disposition visibility):** เพิ่มกล่อง "ข้อมูลการจัดการของ QC Manager" ใหม่ต่อจากรายการสินค้าใน
+"ข้อมูล NCR" การ์ด (frontend-only, ข้อมูลมีอยู่แล้วจาก `GET /ncr/:id`) — คนละตำแหน่งจากที่เดิมโชว์อยู่แล้วใน
+ApprovalTimeline (ไม่ได้ลบของเดิม เพิ่มจุดแสดงที่สอง)
+
+**Phase 3 (หมายเหตุแดง):** ข้อความ TH/EN คงที่ (ไม่ใช่ DB column — ข้อความเดียวกันทุกครั้ง) แสดงต่อ item เมื่อ
+`ncr.disposition === 'return'` เท่านั้น
+
+**Phase 4 (purchasing_manager gate — ส่วนสำคัญสุด):** ใช้ประโยชน์จาก `approveNcr()`'s generic transitions map
+(ที่ qc_supervisor/qc_manager/qmr ใช้ร่วมกันอยู่แล้ว) เพิ่ม entry
+`pending_purchasing_manager_review: { role: 'purchasing_manager', next: 'pending_supplier' }` — ได้ optimistic
+lock/audit log/role-check ฟรีไม่ต้องเขียน endpoint ใหม่ `purchasingReview()` เปลี่ยนปลายทางจาก `pending_supplier`
+เป็น `pending_purchasing_manager_review` (แจ้ง purchasing_manager แทนแจ้งว่า "พร้อมส่ง Supplier" ซึ่งยังไม่จริง) —
+เพิ่ม branch ใหม่ `t.next === 'pending_supplier'` ใน `approveNcr()` เป็นจุดที่ "พร้อมส่ง Supplier" ตัวจริง (ย้าย
+notification เดิมมาจาก `purchasingReview()`) `routes/ncr.js`'s `POST /:id/approve` เพิ่ม `'purchasing_manager'`
+เข้า `requireRole` (ไม่เพิ่ม supplier-scoping ให้ role นี้ — ตรวจพบว่า `purchasingScope.js` ออกแบบไว้แล้วว่า
+purchasing_manager ไม่ถูก scope ตาม supplier เหมือน purchasing ทั่วไป), `record-link-copy` ตัด
+`pending_purchasing_review` ออกจาก allowed-status (ปิด gap เดิมที่ copy link ได้ตั้งแต่ก่อน review เสร็จด้วยซ้ำ);
+frontend `canCopyLink`/`canApprove`/`approveLabel` อัปเดตตาม — ปุ่ม "อนุมัติ" เดิม (generic, ใช้ modal เดียวกับ
+qc_supervisor/qmr) ใช้ได้ทันทีไม่ต้องสร้าง UI ใหม่ (ตรวจแล้ว disposition dropdown gate เฉพาะ `pending_manager`
+ไม่รั่วมาสถานะใหม่)
+
+**Phase 5 (Email infra + COO notification + CCO→COO label fix):** เพิ่ม `nodemailer@9.0.3` (0 vulnerability จาก
+dependency tree ของตัวเอง, ตรวจก่อน commit) + `lib/mailer.js` (`sendEmail`, cached transporter, log-and-continue
+ถ้า SMTP ไม่ครบ — เหมือน `sendTelegram` เป๊ะ) + `lib/ncrEmailTemplate.js` (HTML/plain-text template ของกล่อง
+"ข้อมูล NCR" ใช้ทั้งอีเมลและ Telegram ส่วนตัว) + `purchasingScope.js`'s `getCooUsers()` (role `cco`, คืน
+`email`/`telegram_chat_id` เต็ม) — ผูกเข้า `approveNcr()`'s `pending_supplier` branch: ส่ง email (ถ้ามี) +
+forward Telegram ส่วนตัว (ถ้ามี) ให้ COO ทุกคน หัวเรื่องตรงตามที่ user ระบุเป๊ะ
+("มีเอกสาร NCR สร้างใหม่ เลขที่ ... จำนวน x รายการ") `server/index.js` เพิ่ม
+`GET/POST/POST-test /api/admin/settings/email` (mirror pattern เดียวกับ Telegram settings เป๊ะ,
+`smtp_password` เข้ารหัสผ่าน `setSecretSetting` ต่างจาก Telegram token ที่เป็น plain write-only) + เพิ่ม `email`
+เข้า 3 จุดของ Users routes (GET/POST/PATCH, เหมือน `telegram_chat_id`) — frontend: `Admin/Users.jsx` เพิ่มช่อง
+"อีเมล" (form+table+mobile card), `Admin/Settings.jsx` เพิ่ม tab "Email" ใหม่ (mirror `TelegramTab` เป๊ะ รวม
+show/hide password + placeholder `_set` + ปุ่มทดสอบส่ง) — แก้ label "CCO"→"COO" 9 จุด (`rolePermissions.js`
+×2, `IssueTalk/index.jsx`, `IssueTalk/Detail.jsx`, `UAI/index.jsx`, `uaiService.js` ×2, `exports.js` ×2) **role
+identifier `cco` ไม่แตะเลย** (ยังผูกอยู่กับ UAI exec sign-off flow เดิมทั้งหมด — เปลี่ยนแค่ label ที่ user เห็น)
+
+**Test:** เพิ่ม fixture user `purmgr1` (role `purchasing_manager`, ไม่มี seed มาเป็นค่าเริ่มต้น — เหมือน
+`purchasingScope.test.js` ทำไว้ก่อนหน้า) ใน `ncrUai.test.js`, แก้ NCR-09 (assert สถานะใหม่แทน `pending_supplier`
+ตรงๆ) + เพิ่ม NCR-09b/09c (403 ก่อนอนุมัติ, 200 หลังอนุมัติ + link คัดลอกได้เฉพาะหลัง), เพิ่ม step
+purchasing_manager approve ใน `walkToManagerReview`/UAI-01/RX-01 setup helper (fixture เดิมเดินสถานะเต็มเส้นทาง
+ต้องผ่านขั้นใหม่ด้วย), เพิ่ม GROUP E ใหม่ (CV-01..05) คลุม claim value validation (400 ตอนขาด, 200 + persist
+ตอนกรอกครบรวม `"-"`) + `product_code` join + `record-link-copy` gate; เพิ่ม `test/mailer.test.js` ใหม่ (4 เคส —
+SMTP ไม่ครบ → no-op ไม่ throw, ครบ → ได้ transporter จริง) — `node --test` → **283/283 เขียว, 0 skip** (272
+baseline + 11 เคสใหม่)
+
+**Verify:** `npm run build` (client) ผ่านไม่มี error/warning ใหม่ (มีแค่ chunk-size warning เดิมที่ไม่เกี่ยวกับรอบนี้)
+— ยังไม่ได้ verify ผ่าน Playwright ของจริง (ต่างจาก session ก่อนๆ ที่ verify ผ่าน UI จริงเสมอ) เพราะรอบนี้เป็นงาน
+implementation ตามแผนที่ user อนุมัติแล้วผ่าน plan mode ไม่ใช่ debug-and-verify loop — แนะนำให้ QA/user ทดสอบ
+flow เต็มจริงก่อน deploy: (1) จัดซื้อกรอกมูลค่าเคลม+EN แล้ว submit (2) ผู้จัดการจัดซื้ออนุมัติ (3) จัดซื้อ copy
+link ได้ (4) ตั้งค่า SMTP จริง + อีเมล COO แล้วเช็คว่าอีเมล/Telegram ส่วนตัวส่งถึงจริง
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/db/database.js` | + `claim_value_thb`/`usd`, `users.email`, `pending_purchasing_manager_review` ใน status Set, แก้ seed CCO→COO |
+| `server/services/ncrService.js` | + `getFullNcrItems()`, `purchasingReview()` validate+เปลี่ยนปลายทาง, `approveNcr()` เพิ่ม transition+`pending_supplier` branch (link ready + COO notify) |
+| `server/routes/ncr.js` | `GET /:id` ใช้ `getFullNcrItems`, `/approve` เพิ่ม `purchasing_manager`, `/record-link-copy` แก้ status guard |
+| `server/lib/purchasingScope.js` | + `getCooUsers()` |
+| `server/lib/mailer.js` | ใหม่ทั้งหมด — SMTP sender |
+| `server/lib/ncrEmailTemplate.js` | ใหม่ทั้งหมด — HTML/text template อีเมล COO |
+| `server/index.js` | + Email settings routes ×3, + `email` เข้า Users routes ×3 |
+| `server/package.json` | + `nodemailer@^9.0.3` |
+| `client/src/pages/NCR/Detail.jsx` | + claim value fields, product_code display, disposition block, red note, purchasing_manager approve/label/copy-link gate |
+| `client/src/utils/rolePermissions.js` | + `pending_purchasing_manager_review` label, CCO→COO ×2 |
+| `client/src/pages/Admin/Users.jsx` | + ช่องอีเมล (form/table/mobile) |
+| `client/src/pages/Admin/Settings.jsx` | + tab "Email" ใหม่ |
+| `client/src/pages/IssueTalk/{index,Detail}.jsx`, `UAI/index.jsx`, `server/services/uaiService.js`, `server/routes/exports.js` | CCO→COO label (9 จุดรวม) |
+| `server/test/ncrUai.test.js` | + fixture `purmgr1`, แก้/เพิ่ม NCR-09*, GROUP E (CV-01..05) |
+| `server/test/mailer.test.js` | ใหม่ทั้งหมด — 4 เคส |
+| `CLAUDE.md` | §4 เพิ่มสถานะใหม่, §12 เพิ่มกฎ Email |
+
+---
+
+**รอบที่ 2 (S128b):** user รายงานต่อว่าที่หน้าจัดซื้อ (หน้าหลัก) NCR ของ supplier ที่ยังไม่ได้ตั้งผู้ดูแล (@ ผู้ดูแล)
+ไม่ขึ้นในแท็บ "NCR/NCP ของฉัน" เลยสำหรับใครทั้งนั้น ต้องการให้ขึ้นให้จัดซื้อทุกคนเห็นด้วย
+
+**สิ่งที่พบ:** `purchasingDashboardService.js`'s `scopeClause()` ใช้ `purchasingStrictAssignedSQL` (ไม่มี fallback
+รวม supplier ที่ยังไม่มีผู้ดูแล) ร่วมกันทั้ง 3 ฟังก์ชัน — `getSuppliers`/`getSummary`/`getNcrList` — ความเข้มงวดนี้
+ตั้งใจแก้ไว้ตั้งแต่ S125 เฉพาะสำหรับ "ผู้ผลิตของฉัน" (กัน bug เดิมที่เคยโชว์ supplier ที่ไม่มีผู้ดูแลปนกันหมด) แต่ดัน
+กระทบ `getNcrList`/`getSummary` ไปด้วยเพราะใช้ scope function เดียวกัน ทำให้ NCR ของ supplier ที่ยังไม่มีผู้ดูแลไม่มี
+ใครเห็นเลยใน "NCR/NCP ของฉัน" — ต่างจากหน้า `/ncr` หลัก และ UAI list ที่มี fallback (`purchasingVisibilitySQL`)
+อยู่แล้วให้ทุกคนเห็น — **ถาม `AskUserQuestion` 2 ข้อก่อนแก้** เพราะกระทบตัวเลข KPI การ์ดด้านบนด้วย: (1) ต้องแก้ตัวเลข
+สรุป KPI (การ์ดบนสุด) ให้ตรงกับ list ด้วยไหม — user เลือก **"แก้ทั้งคู่ให้ตรงกัน"** (2) "ผู้ผลิตของฉัน" อีก tab ที่ใช้
+scope เข้มงวดเหมือนกัน ต้องแก้ด้วยไหม — user เลือก **"คงพฤติกรรมเดิม"** (ตรงกับ Master List assignment เป๊ะๆ)
+
+**การแก้:** `scopeClause(user, supplierIdExpr, { includeUnassigned })` เพิ่ม option ใหม่ — `includeUnassigned:
+true` สลับไปใช้ `purchasingVisibilitySQL` (มี fallback) แทน `purchasingStrictAssignedSQL` เฉพาะตอนเรียกจาก
+`getNcrList` และ (เฉพาะส่วน NCR count queries ของ) `getSummary` — ส่วน `supplier_count` ใน `getSummary` ยังคงเรียก
+scope แบบเข้มงวดแยกต่างหาก (จับคู่กับ "ผู้ผลิตของฉัน" ที่คงพฤติกรรมเดิม) ไม่ให้ตัวเลขพอง `getSuppliers` ไม่แตะเลย —
+ผลพลอยได้: PDF export ("รายการเกินกำหนด" ใน `/purchasing-dashboard/pdf`) ก็เห็น NCR ของ supplier ไม่มีผู้ดูแลด้วย
+โดยอัตโนมัติเพราะเรียก `getNcrList` เดียวกัน (ไม่ต้องแก้แยก)
+
+**Test:** แก้ `purchasingDashboard.test.js` — DASH-02/03 (`ncr_waiting_review` รวม `supOpen` แล้ว, `supplier_count`
+ยังเข้มงวดเหมือนเดิม), DASH-07 (`total` เป็น 2 รวม `supOpen`, เช็ค supplier_id ทั้งคู่แทนสมมติ order) — DASH-04/05/06
+(purchasing_manager/getSuppliers) ไม่ต้องแก้เพราะพฤติกรรมเดิม — `node --test` → **283/283 เขียว** (ไม่มีเคสใหม่ แก้แค่
+assertion เดิมให้ตรงพฤติกรรมใหม่)
+
+**Verify:** ยังไม่ได้ verify ผ่าน Playwright จริง — แนะนำให้ทดสอบ: seed supplier ที่ไม่มีผู้ดูแล + NCR อย่างน้อย 1 ใบ
+แล้ว login เป็น purchasing คนใดก็ได้ (ที่ไม่ใช่ผู้ดูแล supplier นั้น) เช็คว่าเห็นใน "NCR/NCP ของฉัน" + ตัวเลข KPI
+การ์ดด้านบนตรงกับจำนวนแถวใน list
+
+### Files Changed (รอบที่ 2)
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/services/purchasingDashboardService.js` | `scopeClause()` เพิ่ม `includeUnassigned` option, ใช้กับ `getSummary` (NCR counts เท่านั้น)/`getNcrList` |
+| `server/test/purchasingDashboard.test.js` | แก้ DASH-02/03/07 assertion ให้ตรงพฤติกรรมใหม่ |
+
+---
+
+**รอบที่ 3 (S128c):** user ขอเพิ่มปุ่ม "ไม่อนุมัติ" ให้ผู้จัดการจัดซื้อที่ขั้น `pending_purchasing_manager_review` —
+ถ้าไม่อนุมัติให้ย้อนกลับไปที่จัดซื้อ Review ใหม่อีกครั้ง (เดิมมีแค่ปุ่ม "อนุมัติ" ทางเดียว ไม่มีทางส่งกลับ)
+
+**การแก้:** มิเรอร์ pattern เดียวกับ "QC Manager ไม่อนุมัติคำตอบ Supplier" (`rejectSupplierResponse`) ที่มีอยู่แล้ว
+เป๊ะๆ — เพิ่ม `ncrService.js`'s `rejectPurchasingManagerReview({ ncr, comment, actorId, actorIp })`
+(`pending_purchasing_manager_review → pending_purchasing_review`, บันทึก `ncr_approvals` action
+`rejected_purchasing_review`, แจ้งเตือนจัดซื้อ + telegram กลุ่มจัดซื้อ, audit log) **ไม่ล้างค่า
+`claim_value_thb`/`usd`/EN translation ที่กรอกไว้แล้ว** เพื่อให้จัดซื้อแก้ไขต่อได้ไม่ต้องกรอกใหม่ทั้งหมด —
+`routes/ncr.js` เพิ่ม `POST /:id/reject-purchasing-review` (`requireRole(['purchasing_manager'])`, บังคับ status
+`pending_purchasing_manager_review` + comment) — frontend `Detail.jsx` เพิ่ม state/mutation/ปุ่ม "ไม่อนุมัติ"
+(`canRejectPurchasingReview`) คู่กับปุ่ม "อนุมัติ" เดิม + modal ใหม่ (มิเรอร์ modal เดิมของ QC Manager) — เผื่อจับได้
+ระหว่างแก้: `getProcessLabel()` ใน `ApprovalTimeline` ไม่เคยมี case ให้ role `purchasing_manager` เลย (ทั้งตอน
+อนุมัติปกติและไม่อนุมัติ) จะ fallback ไปโชว์ raw string `"purchasing_manager"` ในไทม์ไลน์ — เป็น gap ที่ค้างมาตั้งแต่
+S128 ตอนเพิ่ม step นี้ครั้งแรก แก้พร้อมกันในรอบนี้ (เพิ่ม label ทั้งกรณีอนุมัติ/ไม่อนุมัติ)
+
+**Test:** เพิ่ม CV-06..09 ใน `ncrUai.test.js` ต่อจาก GROUP E เดิม — 403 สำหรับ qc_manager/purchasing, 400 เมื่อไม่ใส่
+เหตุผล, ไม่อนุมัติแล้วกลับไป `pending_purchasing_review` พร้อมยืนยันค่าที่กรอกไว้ไม่ถูกล้าง, จัดซื้อ Review ใหม่
+อีกครั้งแล้ว manager อนุมัติผ่านจนถึง `pending_supplier` ได้จริง (full round-trip) — `node --test` → **287/287
+เขียว** (283 + 4 เคสใหม่)
+
+**Verify:** `npm run build` (client) ผ่านไม่มี error — ยังไม่ได้ verify ผ่าน Playwright จริง แนะนำทดสอบ: purchasing
+review NCR → purchasing_manager กด "ไม่อนุมัติ" พร้อมเหตุผล → เช็คว่า badge สถานะกลับเป็น "รอจัดซื้อ Review" +
+ปุ่ม "Review" กลับมาให้จัดซื้อกดอีกครั้ง + ค่าที่กรอกไว้เดิมยังอยู่ในฟอร์ม + ไทม์ไลน์แสดง "ผู้จัดการจัดซื้อไม่อนุมัติ
+Review" สีแดงพร้อมเหตุผล
+
+### Files Changed (รอบที่ 3)
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/services/ncrService.js` | + `rejectPurchasingManagerReview()` |
+| `server/routes/ncr.js` | + `POST /:id/reject-purchasing-review` |
+| `client/src/pages/NCR/Detail.jsx` | + ปุ่ม/modal "ไม่อนุมัติ" สำหรับ purchasing_manager, แก้ `getProcessLabel()` เพิ่ม label ให้ role `purchasing_manager` (ทั้งอนุมัติ/ไม่อนุมัติ) |
+| `server/test/ncrUai.test.js` | + CV-06..09 |
+
+---
+
+**รอบที่ 4 (S128d):** user ขอให้หน้า Supplier Response (ตอบกลับ NCR — public, ไม่ auth) เพิ่ม (1) รหัสสินค้าต่อท้าย
+ชื่อสินค้า เหมือนหน้าภายใน (2) รายละเอียดผลการพิจารณาว่า "return supplier" (3) หมายเหตุแดง "ตีกลับสินค้า 100%
+เนื่องจากไม่ผ่านมาตรฐานการสุ่มตรวจ / 100% product return — failed the sampling inspection standard" เหมือนหน้า
+ภายใน — **ข้อสังเกต:** หน้านี้คือหน้าเดียวกับที่ตกลงไว้ตอน S128 ว่า "ไม่แตะ" (เฉพาะหน้าภายในเท่านั้น) แต่รอบนี้ user
+ขอตรงๆ ให้เพิ่มที่หน้านี้เอง จึงทำตามคำขอใหม่ (ไม่ใช่การตีความขยายขอบเขตเอง)
+
+**สิ่งที่พบ:** `routes/supplier.js`'s `GET /ncr/:token` มี query ของตัวเองแยกจาก `ncrService.getFullNcrItems()` (ที่
+หน้าภายในใช้) — เดิม `SELECT ni.*, dc.name ...` ไม่ join `products` เลยจึงไม่มี `product_code`; ส่วน `disposition`/
+`disposition_note`/`disposition_due_date` มีอยู่แล้วในเพย์โหลด (คอลัมน์ตรงบน `ncrs`, query header ใช้ `SELECT n.*`
+อยู่แล้ว) เพียงแต่ frontend ไม่เคยอ่านมาแสดง — **จุดที่ต้องระวัง:** `ni.*` เดิมของ route นี้ (ก่อนแก้) ก็คืน
+`claim_value_thb`/`claim_value_usd` (มูลค่าเคลมภายใน, เพิ่มจาก S128) ออกไปให้ Supplier อยู่แล้วโดยไม่ตั้งใจ (แค่
+frontend ไม่เคยอ่านมาโชว์) — ถือเป็น info-leak เล็กๆ ที่ต้องปิดพร้อมกันตอนแก้ query นี้ ไม่ใช่แค่เพิ่ม
+`product_code` เฉยๆ
+
+**การแก้:** `routes/supplier.js` เปลี่ยน items query จาก `ni.*` เป็น**ระบุคอลัมน์ชัดเจนทีละตัว** (ไม่รวม
+`claim_value_thb`/`usd`) + เพิ่ม `LEFT JOIN bill_items→products` ดึง `product_code` (เหมือน
+`getFullNcrItems` แต่แยก query ของตัวเอง ไม่ reuse ตรงๆ เพราะต้อง whitelist คอลัมน์ต่างกัน) — frontend
+`NCRResponse.jsx` (หน้านี้เป็น bilingual EN/TH ทั้งหน้า ต่างจากหน้าภายในที่เป็นไทยล้วน) เพิ่ม `DISPOSITION_LABELS`
+map แบบสองภาษาในตัวเอง (local const ใหม่ — ของหน้าภายในเป็น local const ไม่ได้ export ใช้ร่วมไม่ได้), แสดงแถว
+"Disposition / ผลการพิจารณา" ใน "NCR Information" card เมื่อ `ncr.disposition` มีค่า, แสดงรหัสสินค้าต่อท้ายชื่อ
+สินค้าต่อ item, และหมายเหตุแดง (ข้อความ EN ขึ้นก่อน TH ตามลำดับภาษาที่หน้านี้ใช้ทั้งหน้า) เมื่อ
+`ncr.disposition === 'return'` — เงื่อนไขเดียวกับหน้าภายในเป๊ะ
+
+**Test:** เพิ่ม CV-10 ใน `ncrUai.test.js` — เรียก `GET /api/supplier/ncr/:token` จริงของ NCR ที่มี disposition=return
+(ใช้ ncrE เดิมจาก GROUP E ที่เดินไปถึง `pending_supplier` แล้วใน CV-09) ยืนยัน `product_code`/`disposition` มาครบ
+และ `claim_value_thb`/`usd` เป็น `undefined` (ไม่รั่วออกไป) — `node --test` → **288/288 เขียว**
+
+**Verify:** `npm run build` (client) ผ่าน — ยังไม่ได้ verify ผ่าน Playwright จริง แนะนำเปิดลิงก์ supplier ของ NCR ที่มี
+disposition=return จริง เช็คว่าเห็นรหัสสินค้า/แถว Disposition/กล่องแดงครบ และเช็ค Network tab ว่า response ไม่มี
+`claim_value_thb`/`usd` ติดมาด้วย
+
+### Files Changed (รอบที่ 4)
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/routes/supplier.js` | items query: whitelist คอลัมน์ (ตัด claim_value ออก) + join `products` ได้ `product_code` |
+| `client/src/pages/Supplier/NCRResponse.jsx` | + `DISPOSITION_LABELS` (bilingual), แถว disposition, รหัสสินค้าต่อชื่อสินค้า, หมายเหตุแดง (return only) |
+| `server/test/ncrUai.test.js` | + CV-10 |
+
+---
+
+**รอบที่ 5 (S128e) — บั๊ก:** user ตั้งค่า SMTP (Gmail, `windowasiaqc@gmail.com`, port 587, TLS/SSL ปิด) แล้วกด
+"ทดสอบส่งอีเมล" ได้ข้อความ "ส่งอีเมลทดสอบไปที่ ... แล้ว" (สีเขียว, ok) แต่อีเมลไม่เข้าจริง
+
+**Root cause:** `lib/mailer.js`'s `sendEmail()` (เขียนตอน S128) จับ error จาก `transporter.sendMail()` แล้ว
+`console.error` เฉยๆ ไม่ throw/ไม่คืนผลลัพธ์อะไรกลับเลย (`try { await sendMail(...) } catch (e) { console.error(...) }`
+จบแค่นั้น) — ตั้งใจให้เป็น fire-and-forget สำหรับจุดแจ้งเตือน COO (ห้าม throw กระทบ transaction NCR หลัก ตาม
+CLAUDE.md §12) แต่ปุ่ม **"ทดสอบส่งอีเมล"** ที่ `server/index.js`'s `/api/admin/settings/email/test` เรียกใช้ตัวเดียวกัน
+แล้ว `await` เฉยๆ ไม่เช็คอะไรต่อ จึงตอบ `{ ok: true }` เสมอไม่ว่า SMTP จะสำเร็จจริงหรือไม่ — เป็น bug จริง (ไม่ใช่
+ปัญหาการตั้งค่า SMTP ของ user) ที่ทำให้ผลทดสอบไม่มีความหมายเลยตั้งแต่ S128
+
+**การแก้:** `sendEmail()` เปลี่ยนให้คืน `{ ok, error? }` เสมอ (ยังไม่ throw — fire-and-forget call site เดิม
+(`ncrService.js`'s COO notify) ยังปลอดภัย ไม่ต้องแก้) — `/api/admin/settings/email/test` เช็ค `result.ok` แล้วตอบ
+500 พร้อม error message จริงจาก nodemailer ถ้าส่งไม่สำเร็จ แทนที่จะตอบ 200 เสมอ
+
+**สาเหตุที่เป็นไปได้มากที่สุดสำหรับ Gmail โดยเฉพาะ (ยังไม่ยืนยันได้จริงเพราะไม่มีสิทธิ์เข้าบัญชี Gmail ของ user):**
+Gmail ปิดการล็อกอินด้วยรหัสผ่านบัญชีปกติผ่าน SMTP มาตั้งแต่ปี 2022 (less secure apps) — ต้องเปิด 2-Step
+Verification แล้วสร้าง **App Password** (16 ตัวอักษร, Google Account → Security → App Passwords → เลือก "Mail")
+มาใช้แทนรหัสผ่านจริงในช่อง SMTP Password — ถ้ากรอกรหัสผ่านบัญชีปกติจะ auth fail แต่เงียบเพราะบั๊กข้างต้น ส่วน
+Host/Port/TLS ที่ตั้งไว้ (`smtp.gmail.com`, 587, TLS/SSL ปิด) ถูกต้องแล้ว (port 587 ใช้ STARTTLS อัตโนมัติ ไม่ต้อง
+เปิด toggle) — หลังแก้บั๊กแล้ว ให้กดทดสอบอีกครั้งจะเห็น error message จริงจาก Gmail ถ้ายังไม่สำเร็จ (เช่น
+`Invalid login: 535-5.7.8 Username and Password not accepted`)
+
+**Test:** แก้ `mailer.test.js`'s MAIL-02/03 ให้เช็ค return shape `{ ok: false, error }` จริง (regression guard กัน
+บั๊กนี้กลับมา) — `node --test` → **288/288 เขียว**
+
+**Verify:** ยังไม่ได้ verify กับ Gmail จริง (ไม่มีสิทธิ์เข้าบัญชี) — แนะนำ user restart server (หรือรอ nodemon
+auto-reload ถ้ารัน `npm run dev`) แล้วกด "ทดสอบส่งอีเมล" อีกครั้งเพื่อดู error message จริง
+
+### Files Changed (รอบที่ 5)
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/lib/mailer.js` | `sendEmail()` คืน `{ ok, error? }` แทนกลืน error ทิ้งเงียบๆ |
+| `server/index.js` | `/api/admin/settings/email/test` เช็ค `result.ok` ก่อนตอบ 200 |
+| `server/test/mailer.test.js` | แก้ MAIL-02/03 ให้เช็ค return shape จริง |
 
 ---
 

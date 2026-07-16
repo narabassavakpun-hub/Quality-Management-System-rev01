@@ -210,6 +210,44 @@ app.post('/api/admin/settings/telegram/test', ...adminOnly, async (req, res) => 
   }
 });
 
+// ===== EMAIL (SMTP) SETTINGS — S128, mirror ของ Telegram settings ด้านบน =====
+app.get('/api/admin/settings/email', ...adminOnly, (req, res) => {
+  res.json({
+    smtp_host: db.getSetting('smtp_host') || '',
+    smtp_port: db.getSetting('smtp_port') || '587',
+    smtp_secure: db.getSetting('smtp_secure') === '1',
+    smtp_user: db.getSetting('smtp_user') || '',
+    smtp_password: '',
+    smtp_password_set: !!db.getSecretSetting('smtp_password'),
+    smtp_from: db.getSetting('smtp_from') || '',
+  });
+});
+
+app.post('/api/admin/settings/email', ...adminOnly, (req, res) => {
+  const { smtp_host, smtp_port, smtp_secure, smtp_user, smtp_password, smtp_from } = req.body;
+  if (smtp_host !== undefined) db.setSetting('smtp_host', smtp_host);
+  if (smtp_port !== undefined) db.setSetting('smtp_port', String(smtp_port));
+  if (smtp_secure !== undefined) db.setSetting('smtp_secure', smtp_secure ? '1' : '0');
+  if (smtp_user !== undefined) db.setSetting('smtp_user', smtp_user);
+  // เว้นว่าง = ใช้ค่าเดิม (write-only เหมือน ad_secret_key)
+  if (smtp_password) db.setSecretSetting('smtp_password', smtp_password);
+  if (smtp_from !== undefined) db.setSetting('smtp_from', smtp_from);
+  db.auditLog('settings', 0, 'UPDATE', null, { smtp_host, smtp_port, smtp_secure, smtp_user, smtp_from }, req.user.id, req.ip);
+  res.json({ ok: true });
+});
+
+app.post('/api/admin/settings/email/test', ...adminOnly, async (req, res) => {
+  const { sendEmail } = require('./lib/mailer');
+  const to = req.body.to || req.user.email;
+  if (!to) return res.status(400).json({ error: 'ไม่มีอีเมลปลายทางสำหรับทดสอบ — กรอกอีเมลผู้รับทดสอบ' });
+  if (!db.getSetting('smtp_host') || !db.getSetting('smtp_user') || !db.getSecretSetting('smtp_password')) {
+    return res.status(400).json({ error: 'ยังไม่ตั้งค่า SMTP ครบถ้วน' });
+  }
+  const result = await sendEmail(to, 'ทดสอบระบบอีเมล IQC', '<p>นี่คืออีเมลทดสอบจากระบบ IQC QMS</p>');
+  if (!result.ok) return res.status(500).json({ error: `ส่งอีเมลไม่สำเร็จ: ${result.error}` });
+  res.json({ ok: true, message: `ส่งอีเมลทดสอบไปที่ ${to} แล้ว` });
+});
+
 // ===== PDF TEMPLATE SETTINGS =====
 const PDF_SETTING_KEYS = ['company_name','company_address','company_logo','ncr_img_cols','ncr_img_max_width','uai_img_cols','uai_img_max_height','uai_img_inbox_max_height'];
 
@@ -252,7 +290,7 @@ app.delete('/api/admin/settings/logo', ...adminOnly, (req, res) => {
 
 // ===== ADMIN USERS =====
 app.get('/api/admin/users', ...adminOnly, (req, res) => {
-  const rows = db.prepare('SELECT id, username, full_name, role, qc_station, telegram_chat_id, auth_provider, is_active, created_at FROM users ORDER BY created_at').all();
+  const rows = db.prepare('SELECT id, username, full_name, role, qc_station, telegram_chat_id, email, auth_provider, is_active, created_at FROM users ORDER BY created_at').all();
   res.json(rows);
 });
 
@@ -260,7 +298,7 @@ const VALID_AUTH_PROVIDERS = new Set(['local', 'ad']);
 
 app.post('/api/admin/users', ...adminOnly, (req, res) => {
   const bcrypt = require('bcryptjs');
-  const { username, password, full_name, role, qc_station, telegram_chat_id, auth_provider } = req.body;
+  const { username, password, full_name, role, qc_station, telegram_chat_id, email, auth_provider } = req.body;
   if (!username || !password || !full_name || !role) return res.status(400).json({ error: 'กรุณากรอกข้อมูลครบ' });
   const minLength = parseInt(db.getSetting('password_min_length'), 10) || 8;
   if (password.length < minLength) return res.status(400).json({ error: `รหัสผ่านต้องยาวอย่างน้อย ${minLength} ตัว` });
@@ -269,9 +307,9 @@ app.post('/api/admin/users', ...adminOnly, (req, res) => {
   }
   try {
     const hash = bcrypt.hashSync(password, parseInt(process.env.BCRYPT_ROUNDS) || 12);
-    const result = db.prepare('INSERT INTO users (username, password_hash, full_name, role, qc_station, telegram_chat_id, auth_provider) VALUES (?, ?, ?, ?, ?, ?, ?)').run(username, hash, full_name, role, qc_station || null, telegram_chat_id ? String(telegram_chat_id).trim() : null, auth_provider || 'local');
-    db.auditLog('users', result.lastInsertRowid, 'CREATE', null, { username, full_name, role, qc_station, telegram_chat_id, auth_provider }, req.user.id, req.ip);
-    res.json(db.prepare('SELECT id, username, full_name, role, qc_station, telegram_chat_id, auth_provider, is_active, created_at FROM users WHERE id = ?').get(result.lastInsertRowid));
+    const result = db.prepare('INSERT INTO users (username, password_hash, full_name, role, qc_station, telegram_chat_id, email, auth_provider) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(username, hash, full_name, role, qc_station || null, telegram_chat_id ? String(telegram_chat_id).trim() : null, email ? String(email).trim() : null, auth_provider || 'local');
+    db.auditLog('users', result.lastInsertRowid, 'CREATE', null, { username, full_name, role, qc_station, telegram_chat_id, email, auth_provider }, req.user.id, req.ip);
+    res.json(db.prepare('SELECT id, username, full_name, role, qc_station, telegram_chat_id, email, auth_provider, is_active, created_at FROM users WHERE id = ?').get(result.lastInsertRowid));
   } catch (e) {
     if (e.message.includes('UNIQUE')) return res.status(400).json({ error: 'username ซ้ำ' });
     res.status(500).json({ error: e.message });
@@ -279,7 +317,7 @@ app.post('/api/admin/users', ...adminOnly, (req, res) => {
 });
 
 app.patch('/api/admin/users/:id', ...adminOnly, (req, res) => {
-  const { username, full_name, role, qc_station, telegram_chat_id, auth_provider } = req.body;
+  const { username, full_name, role, qc_station, telegram_chat_id, email, auth_provider } = req.body;
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!user) return res.status(404).json({ error: 'ไม่พบ user' });
   if (username && username !== user.username) {
@@ -289,17 +327,18 @@ app.patch('/api/admin/users/:id', ...adminOnly, (req, res) => {
   if (auth_provider !== undefined && !VALID_AUTH_PROVIDERS.has(auth_provider)) {
     return res.status(400).json({ error: 'auth_provider ไม่ถูกต้อง' });
   }
-  db.prepare('UPDATE users SET username=?, full_name=?, role=?, qc_station=?, telegram_chat_id=?, auth_provider=? WHERE id=?').run(
+  db.prepare('UPDATE users SET username=?, full_name=?, role=?, qc_station=?, telegram_chat_id=?, email=?, auth_provider=? WHERE id=?').run(
     username || user.username,
     full_name || user.full_name,
     role || user.role,
     qc_station !== undefined ? (qc_station || null) : user.qc_station,
     telegram_chat_id !== undefined ? (telegram_chat_id ? String(telegram_chat_id).trim() : null) : user.telegram_chat_id,
+    email !== undefined ? (email ? String(email).trim() : null) : user.email,
     auth_provider !== undefined ? auth_provider : user.auth_provider,
     req.params.id
   );
-  db.auditLog('users', req.params.id, 'UPDATE', user, { username, full_name, role, qc_station, telegram_chat_id, auth_provider }, req.user.id, req.ip);
-  res.json(db.prepare('SELECT id, username, full_name, role, qc_station, telegram_chat_id, auth_provider, is_active, created_at FROM users WHERE id = ?').get(req.params.id));
+  db.auditLog('users', req.params.id, 'UPDATE', user, { username, full_name, role, qc_station, telegram_chat_id, email, auth_provider }, req.user.id, req.ip);
+  res.json(db.prepare('SELECT id, username, full_name, role, qc_station, telegram_chat_id, email, auth_provider, is_active, created_at FROM users WHERE id = ?').get(req.params.id));
 });
 
 // ทดสอบส่งข้อความเข้า Telegram ส่วนตัวของ user คนนั้น — ให้ admin verify chat id ที่กรอก

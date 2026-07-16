@@ -68,10 +68,11 @@ function statusLabel(status) {
   const map = {
     draft: 'ร่าง', pending_approval: 'รออนุมัติ', approved: 'อนุมัติแล้ว',
     pending_supervisor: 'รอหัวหน้า QC', pending_manager: 'รอ QC Manager',
-    pending_qmr_open: 'รอ QMR เปิด', pending_supplier: 'รอ Supplier',
+    pending_qmr_open: 'รอ QMR เปิด', pending_purchasing_review: 'รอจัดซื้อ Review',
+    pending_purchasing_manager_review: 'รอผู้จัดการจัดซื้อตรวจสอบ', pending_supplier: 'รอ Supplier',
     pending_manager_review: 'รอ Manager ตรวจ', pending_supplier_resubmit: 'ถูกส่งกลับ', pending_qmr_close: 'รอ QMR ปิด',
     closed: 'ปิดแล้ว', pending_uai: 'รอดำเนินการ UAI', uai_pending_qc_manager: 'UAI รอ QC Manager',
-    uai_pending_purchasing: 'UAI รอจัดซื้อ', uai_pending_cco: 'UAI รอ CCO',
+    uai_pending_purchasing: 'UAI รอจัดซื้อ', uai_pending_cco: 'UAI รอ COO',
     uai_pending_cmo: 'UAI รอ CMO', uai_pending_cpo: 'UAI รอ CPO',
     uai_pending_qc_ack: 'UAI รอ QC รับทราบ', uai_pending_production_ack: 'UAI รอผลิตรับทราบ',
     uai_pending_qmr_ack: 'UAI รอ QMR รับทราบ', uai_completed: 'UAI เสร็จสมบูรณ์',
@@ -934,7 +935,7 @@ router.get('/uai/:id/pdf', auth, pdfRateLimit, async (req, res) => {
     rejected: 'ปฏิเสธ',
   };
   const roleLabelsFull = {
-    qc_manager: 'QC Manager', purchasing: 'จัดซื้อ', cco: 'CCO', cmo: 'CMO',
+    qc_manager: 'QC Manager', purchasing: 'จัดซื้อ', cco: 'COO', cmo: 'CMO',
     cpo: 'CPO', production_manager: 'ผู้จัดการผลิต', qmr: 'QMR',
   };
 

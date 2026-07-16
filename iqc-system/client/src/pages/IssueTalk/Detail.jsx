@@ -103,7 +103,7 @@ function AddParticipantsModal({ issueId, existingIds, onClose }) {
   const ROLE_LABEL = {
     admin: 'Admin', qc_staff: 'QC Staff', qc_supervisor: 'หัวหน้า QC',
     qc_manager: 'QC Manager', qmr: 'QMR', purchasing: 'จัดซื้อ',
-    cco: 'CCO', cmo: 'CMO', cpo: 'CPO', production_manager: 'ผจก.ผลิต',
+    cco: 'COO', cmo: 'CMO', cpo: 'CPO', production_manager: 'ผจก.ผลิต',
   };
 
   return (
