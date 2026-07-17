@@ -27,9 +27,24 @@
         } catch (e) {}
       })();
     </script>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- favicon.svg เดิมไม่มีไฟล์จริงอยู่เลย (404 มาตั้งแต่แรก) — เปลี่ยนไปใช้โลโก้ที่มีจริงใน public/ แทน -->
+    <link rel="icon" type="image/png" href="/og-image.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Window Asia · IQC System</title>
+    <title>Window Asia QMS</title>
+    <meta name="description" content="Window Asia Quality Management System — ระบบบริหารคุณภาพ IQC/IPQC/FGQC, NCR/UAI, KPI และ Delivery" />
+
+    <!-- Open Graph — คุมหน้าตา preview การ์ดตอนแชร์ลิงก์ (LINE/Facebook/Slack ฯลฯ) โดยตรง ไม่ต้องพึ่ง fallback
+         จาก <title> (ที่เคยค้างชื่อเดิม "IQC System" ทั้งที่ในระบบเปลี่ยนเป็น "QMS" แล้ว) — ตัว crawler ของแอปแชท
+         ส่วนใหญ่ (รวม LINE) ดึงแค่ HTML ดิบ ไม่รัน JavaScript จึงต้องเป็นค่าคงที่ในไฟล์นี้ตรงๆ ไม่ใช่ตั้งผ่าน React
+         (เช่น react-helmet) — og:url/og:image เป็น absolute URL ของ production จริง (Render) ต้องแก้มือถ้าเปลี่ยน
+         โดเมนในอนาคต -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Window Asia QMS" />
+    <meta property="og:title" content="Window Asia QMS" />
+    <meta property="og:description" content="ระบบบริหารคุณภาพ Window Asia — IQC/IPQC/FGQC, NCR/UAI, KPI และ Delivery" />
+    <meta property="og:url" content="https://qms-d5fm.onrender.com/login" />
+    <meta property="og:image" content="https://qms-d5fm.onrender.com/og-image.png" />
+
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet" />

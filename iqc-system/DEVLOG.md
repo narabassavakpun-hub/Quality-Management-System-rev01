@@ -4,7 +4,7 @@
 
 ## 📌 Current State (2026-07-17)
 
-**Version:** rev01 · Production · **Latest code:** Session 139 (2026-07-17)
+**Version:** rev01 · Production · **Latest code:** Session 140 (2026-07-17)
 
 **Architecture Summary**
 - Backend: Express 4.18 + better-sqlite3 (WAL, FK ON), **102 ตาราง** (+`environment_presets`, S118; +`supplier_purchasing_assignees`, S125), ~33 route files, SSE + Telegram + **Email/SMTP (S128, `lib/mailer.js`)**, port 3001
@@ -1056,6 +1056,50 @@ permission gate (403 ไม่ใช่ 404) ของ PDF route ใหม่ท
 | `client/src/utils/rolePermissions.js` | nav item `/reports` roles เพิ่ม 2 role เดียวกัน |
 | `client/src/App.jsx` | `ProtectedRoute` ของ route `reports` เพิ่ม 2 role เดียวกัน |
 | `server/test/reports.test.js` | + REP-01b, REP-01c |
+
+---
+
+## 2026-07-17 | Session 140 — LINE link preview ขึ้น "IQC System" แทน "QMS" + favicon เดิม 404 มาตลอด
+
+**คำขอ:** ส่ง link `https://qms-d5fm.onrender.com/login` เข้า LINE แล้วการ์ด preview ขึ้นชื่อ "IQC System" ทั้งที่
+ในระบบเปลี่ยนเป็น "QMS" แล้ว (Login.jsx โชว์ "Window Asia QMS" จริง) เกิดจากอะไร แก้ยังไง
+
+**สิ่งที่พบ (root cause):** LINE (เหมือน Facebook/Slack/Discord ฯลฯ) สร้างการ์ด preview โดยดึง HTML ดิบของหน้า
+เว็บมาอ่าน Open Graph meta tag (`og:title`/`og:description`/`og:image`) — **ไม่รัน JavaScript เลย** ถ้าไม่มี
+tag พวกนี้ จะ fallback ไปใช้ `<title>` ธรรมดาแทน — `client/index.html` มีแค่ `<title>Window Asia · IQC System
+</title>` ค้างชื่อเดิมอยู่ (ไม่เคยอัปเดตตอนเปลี่ยนชื่อในระบบเป็น QMS) และ**ไม่มี Open Graph tag เลยสักตัว** — LINE
+เลย fallback ไปอ่าน `<title>` เดิมที่ยังไม่ได้แก้ นี่คือทั้งหมดของปัญหา (ไม่ใช่ปัญหา cache ฝั่ง LINE อย่างเดียว
+เพราะ title จริงในไฟล์ก็ยังผิดอยู่)
+
+**เจอเพิ่มระหว่างตรวจ:** `<link rel="icon" href="/favicon.svg">` **ไม่มีไฟล์ `favicon.svg` อยู่จริงในโปรเจกต์เลย**
+(404 มาตั้งแต่แรกเริ่ม ไม่ใช่ regression) — `client/` ไม่มีโฟลเดอร์ `public/` มาก่อนด้วยซ้ำ
+
+**การแก้:**
+- สร้างโฟลเดอร์ `client/public/` (ไม่เคยมีมาก่อน) + คัดลอกโลโก้ที่มีอยู่แล้ว (`src/assets/logo-window-asia.png`,
+  960×960) เข้าไปเป็น `public/og-image.png` — Vite copy ไฟล์ใน `public/` ไปที่ root ของ `dist/` อัตโนมัติ ทำให้เข้าถึง
+  ได้ที่ `/og-image.png` บน production จริง (verify แล้วด้วย `npm run build`)
+- `client/index.html`: แก้ `<title>` → "Window Asia QMS" (ตรงกับ Login.jsx), เพิ่ม `<meta name="description">` +
+  ชุด Open Graph tag เต็ม (`og:type`/`og:site_name`/`og:title`/`og:description`/`og:url`/`og:image`) — `og:url`/
+  `og:image` เป็น absolute URL ของ production จริง (`https://qms-d5fm.onrender.com/...`) เพราะ crawler ภายนอกไม่
+  รู้จัก origin ของหน้าที่ fetch มาเสมอไป (ต้องแก้มือถ้าเปลี่ยนโดเมนในอนาคต — ข้อจำกัดของ static meta tag ในระบบที่
+  ไม่มี SSR) — แก้ favicon ที่เสียไปในตัวด้วย เปลี่ยนไปชี้ `/og-image.png` (type image/png) แทน `/favicon.svg`
+  ที่ไม่มีไฟล์จริง
+
+**Test:** ไม่มี test อัตโนมัติ (เนื้อหา `<head>` ล้วน ไม่มี logic ให้ทดสอบ) — verify ด้วย `npm run build` แล้วเปิด
+`dist/index.html` อ่านตรงๆ ยืนยัน meta tag ครบถูกต้อง + `dist/og-image.png` มีไฟล์จริง
+
+**Verify:** ยังไม่ได้ verify ผ่าน LINE จริง (ต้อง deploy ขึ้น production ก่อน) — **สำคัญ: LINE (เหมือน Facebook)
+cache ผลลัพธ์ unfurl ต่อ URL ไว้นานได้เป็นวันๆ** ต่างจาก Facebook ที่มี "Sharing Debugger" ให้ force refresh cache
+ได้ LINE ไม่มีเครื่องมือ public แบบนี้ — หลัง deploy แล้วส่ง link เดิมซ้ำอาจยังเห็นการ์ดเก่าอยู่ชั่วคราว แนะนำให้ผู้ใช้
+ลองส่งลิงก์ใหม่พร้อม query string ปลอมๆ ต่อท้าย (เช่น `?v=2`) เพื่อบังคับให้ LINE มองเป็น URL ใหม่ที่ต้อง fetch สด
+แทนที่จะรอ cache หมดอายุเอง
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `client/public/og-image.png` | ใหม่ — คัดลอกจาก `src/assets/logo-window-asia.png` ใช้เป็นทั้ง og:image และ favicon |
+| `client/index.html` | `<title>` แก้เป็น QMS, เพิ่ม meta description + Open Graph tags เต็มชุด, แก้ favicon ที่เสีย |
 
 ---
 
