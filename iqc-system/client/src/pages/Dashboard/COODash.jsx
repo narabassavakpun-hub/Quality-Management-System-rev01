@@ -2,7 +2,6 @@ import { useQuery } from '@tanstack/react-query';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
 import SummaryCard from '../../components/UI/SummaryCard';
 import HeroStat, { HeroIcons } from '../../components/UI/HeroStat';
-import { useAuth } from '../../contexts/AuthContext';
 import { useStats } from './shared';
 import api from '../../utils/api';
 
@@ -80,7 +79,6 @@ function ClosingRateDonut({ closed, total }) {
 
 export default function COODash({ navigate }) {
   const { data: stats } = useStats();
-  const { user } = useAuth();
   const myUAI = stats?.uai_my_sign || [];
 
   const { data: teamData, isLoading, isError } = useTeamData();
@@ -96,7 +94,7 @@ export default function COODash({ navigate }) {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="page-title">หน้าหลัก {user?.role?.toUpperCase()}</h1>
+        <h1 className="page-title">หน้าหลัก</h1>
         <p className="text-muted text-small mt-0.5">วันนี้{thaiTodayLabel()}</p>
       </div>
 

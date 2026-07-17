@@ -4,7 +4,7 @@ const db = require('../db/database');
 const auth = require('../middleware/auth');
 const requireRole = require('../middleware/requireRole');
 
-const REPORT_ROLES = ['qc_manager', 'cco', 'cmo', 'cpo'];
+const REPORT_ROLES = ['qc_supervisor', 'qc_manager', 'purchasing_manager', 'cco', 'cmo', 'cpo'];
 const MAX_REPORT_ROWS = 2000; // DEVMORE M13 — กัน result set ไม่จำกัด (summary คำนวณจาก SQL เต็มชุด)
 
 function buildDateFilter(from, to, col) {
@@ -23,35 +23,37 @@ router.get('/receiving', auth, requireRole(REPORT_ROLES), (req, res) => {
   let extra = dateFilter.sql;
   if (supplier_id) { extra += ' AND b.supplier_id = ?'; params.push(supplier_id); }
 
+  // รายการ = จำนวนแถว bill_items (ไม่ใช่ผลรวมจำนวนชิ้น qty_received) — ผ่าน/ไม่ผ่านนับจาก "รายการที่มีการออก NCR"
+  // (ni.bill_item_id) เทียบกับรายการทั้งหมด ไม่ใช่ qty_passed/qty_failed (คำขอ user — ดู DEVLOG)
   const bills = db.prepare(`
     SELECT b.*, s.name as supplier_name,
-           COUNT(bi.id) as item_count,
-           SUM(bi.qty_passed) as total_passed,
-           SUM(bi.qty_failed) as total_failed,
-           SUM(bi.qty_received) as total_received
+           COUNT(DISTINCT bi.id) as item_count,
+           COUNT(DISTINCT ni.bill_item_id) as ncr_item_count
     FROM bills b
     LEFT JOIN suppliers s ON s.id = b.supplier_id
     LEFT JOIN bill_items bi ON bi.bill_id = b.id
+    LEFT JOIN ncr_items ni ON ni.bill_item_id = bi.id
     WHERE 1=1 ${extra}
     GROUP BY b.id ORDER BY b.received_date DESC
     LIMIT ${MAX_REPORT_ROWS}
   `).all(...params);
+  for (const b of bills) b.passed_item_count = b.item_count - b.ncr_item_count;
 
   // DEVMORE M13 — summary จาก SQL aggregate (ครบทั้งชุด ไม่ใช่เฉพาะ list ที่ cap)
   const agg = db.prepare(`
-    SELECT COUNT(DISTINCT b.id) as total_bills, COUNT(bi.id) as total_items,
-           SUM(bi.qty_received) as total_received, SUM(bi.qty_passed) as total_passed, SUM(bi.qty_failed) as total_failed
+    SELECT COUNT(DISTINCT b.id) as total_bills, COUNT(DISTINCT bi.id) as total_items,
+           COUNT(DISTINCT ni.bill_item_id) as ncr_item_count
     FROM bills b LEFT JOIN suppliers s ON s.id = b.supplier_id
-    LEFT JOIN bill_items bi ON bi.bill_id = b.id WHERE 1=1 ${extra}
+    LEFT JOIN bill_items bi ON bi.bill_id = b.id
+    LEFT JOIN ncr_items ni ON ni.bill_item_id = bi.id WHERE 1=1 ${extra}
   `).get(...params);
   const summary = {
     total_bills: agg.total_bills || 0,
     total_items: agg.total_items || 0,
-    total_passed: agg.total_passed || 0,
-    total_failed: agg.total_failed || 0,
-    total_received: agg.total_received || 0,
+    ncr_item_count: agg.ncr_item_count || 0,
   };
-  summary.pass_rate = summary.total_received > 0 ? ((summary.total_passed / summary.total_received) * 100).toFixed(1) : '0.0';
+  summary.passed_item_count = summary.total_items - summary.ncr_item_count;
+  summary.pass_rate = summary.total_items > 0 ? ((summary.passed_item_count / summary.total_items) * 100).toFixed(1) : '0.0';
 
   res.json({ summary, bills, truncated: bills.length >= MAX_REPORT_ROWS });
 });
@@ -95,7 +97,22 @@ router.get('/ncr', auth, requireRole(REPORT_ROLES), (req, res) => {
     pending_supplier: agg.pending_supplier || 0, major: agg.major || 0, minor: agg.minor || 0,
   };
 
-  res.json({ summary, ncrs, truncated: ncrs.length >= MAX_REPORT_ROWS });
+  // สัดส่วน NCR ตามกลุ่มปัญหา — เดิมไม่มี query นี้เลย ฝั่ง frontend เลยพยายามอ่าน n.defect_category_name จากแถว
+  // ข้างบน (query นั้นไม่เคย join defect_categories เลย → undefined ทุกแถว → กลายเป็น "อื่นๆ" ทั้งหมด, ดู DEVLOG)
+  // นับ NCR ต่อกลุ่มปัญหาแบบเดียวกับ topDefects ใน GET /summary (COUNT DISTINCT n.id ต่อ dc.id — 1 NCR ที่มีหลาย
+  // รายการคนละกลุ่มปัญหาจะถูกนับในทุกกลุ่มที่เกี่ยวข้อง ไม่ mutually exclusive แต่สอดคล้องกับที่มีอยู่แล้วในระบบ)
+  const defectBreakdown = db.prepare(`
+    SELECT COALESCE(dc.name, 'อื่นๆ') as name, COUNT(DISTINCT n.id) as value
+    FROM ncrs n
+    LEFT JOIN bills b ON b.id = n.bill_id
+    LEFT JOIN ncr_items ni ON ni.ncr_id = n.id
+    LEFT JOIN defect_categories dc ON dc.id = ni.defect_category_id
+    WHERE 1=1 ${extra}
+    GROUP BY dc.id
+    ORDER BY value DESC
+  `).all(...params);
+
+  res.json({ summary, ncrs, defect_breakdown: defectBreakdown, truncated: ncrs.length >= MAX_REPORT_ROWS });
 });
 
 // GET /api/reports/uai
@@ -132,7 +149,18 @@ router.get('/uai', auth, requireRole(REPORT_ROLES), (req, res) => {
     pending: agg.pending || 0, rejected: agg.rejected || 0,
   };
 
-  res.json({ summary, uais, truncated: uais.length >= MAX_REPORT_ROWS });
+  // Top 5 Supplier มี UAI มากที่สุด (คำขอ user — เดิมหน้านี้ไม่มีกราฟ/ตารางนี้เลย)
+  const topUaiSuppliers = db.prepare(`
+    SELECT s.name, COUNT(u.id) as uai_count
+    FROM uai_documents u
+    LEFT JOIN ncrs n ON n.id = u.ncr_id
+    LEFT JOIN bills b ON b.id = n.bill_id
+    LEFT JOIN suppliers s ON s.id = b.supplier_id
+    WHERE 1=1 ${extra}
+    GROUP BY s.id ORDER BY uai_count DESC LIMIT 5
+  `).all(...params);
+
+  res.json({ summary, uais, top_uai_suppliers: topUaiSuppliers, truncated: uais.length >= MAX_REPORT_ROWS });
 });
 
 // GET /api/reports/summary
@@ -143,12 +171,14 @@ router.get('/summary', auth, requireRole(REPORT_ROLES), (req, res) => {
   let extra = dateFilter.sql;
   if (supplier_id) { extra += ' AND b.supplier_id = ?'; params.push(supplier_id); }
 
+  // รายการรับเข้า = จำนวนแถว bill_items (ไม่ใช่ผลรวมจำนวนชิ้น qty_received) — อัตราผ่านนับจาก "รายการที่มีการออก
+  // NCR" (ni.bill_item_id) เทียบกับรายการทั้งหมด (คำขอ user — ดู DEVLOG, เหมือน /receiving endpoint ด้านบน)
   const billStats = db.prepare(`
     SELECT COUNT(DISTINCT b.id) as total_bills,
-           SUM(bi.qty_received) as total_received,
-           SUM(bi.qty_passed) as total_passed,
-           SUM(bi.qty_failed) as total_failed
-    FROM bills b LEFT JOIN bill_items bi ON bi.bill_id = b.id WHERE 1=1 ${extra}
+           COUNT(DISTINCT bi.id) as total_items,
+           COUNT(DISTINCT ni.bill_item_id) as ncr_item_count
+    FROM bills b LEFT JOIN bill_items bi ON bi.bill_id = b.id
+    LEFT JOIN ncr_items ni ON ni.bill_item_id = bi.id WHERE 1=1 ${extra}
   `).get(...params);
 
   const ncrDateFilter = buildDateFilter(from, to, 'n.created_at');
@@ -200,14 +230,16 @@ router.get('/summary', auth, requireRole(REPORT_ROLES), (req, res) => {
     GROUP BY s.id ORDER BY total_ncr DESC
   `).all(...params);
 
-  const passRate = billStats.total_received > 0
-    ? ((billStats.total_passed / billStats.total_received) * 100).toFixed(1)
+  const totalItems = billStats.total_items || 0;
+  const ncrItemCount = billStats.ncr_item_count || 0;
+  const passRate = totalItems > 0
+    ? (((totalItems - ncrItemCount) / totalItems) * 100).toFixed(1)
     : '0.0';
 
   res.json({
     summary: {
       total_bills: billStats.total_bills || 0,
-      total_received: billStats.total_received || 0,
+      total_items: totalItems,
       pass_rate: passRate,
       total_ncr: ncrStats.total_ncr || 0,
       open_ncr: ncrStats.open_ncr || 0,

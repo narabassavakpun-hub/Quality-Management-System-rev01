@@ -4,6 +4,8 @@ import api, { downloadFile } from '../../utils/api';
 import SummaryCard from '../../components/UI/SummaryCard';
 import Badge from '../../components/UI/Badge';
 import Button from '../../components/UI/Button';
+import SortTh from '../../components/UI/SortTh';
+import { useSortable } from '../../hooks/useSortable';
 
 export default function ReceivingReport() {
   const today = new Date().toISOString().slice(0, 10);
@@ -17,6 +19,8 @@ export default function ReceivingReport() {
     queryFn: () => api.get(`/reports/receiving?from=${applied.from}&to=${applied.to}`).then(r => r.data),
   });
 
+  const { sorted: sortedBills, onSort, sortKey, sortDir } = useSortable(data?.bills || [], 'received_date');
+
   return (
     <div className="space-y-4">
       <div className="card flex flex-wrap gap-3 items-end">
@@ -25,6 +29,7 @@ export default function ReceivingReport() {
         <Button onClick={() => setApplied({ from, to })}>แสดงข้อมูล</Button>
         <div className="ml-auto flex gap-2">
           <button onClick={() => downloadFile('/reports/receiving/excel', { from: applied.from, to: applied.to }, 'receiving_report.xlsx')} className="btn-secondary btn text-small">Export Excel</button>
+          <button onClick={() => downloadFile('/reports/receiving/pdf', { from: applied.from, to: applied.to }, 'receiving_report.pdf')} className="btn-primary btn text-small">Export PDF</button>
         </div>
       </div>
 
@@ -35,25 +40,36 @@ export default function ReceivingReport() {
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             <SummaryCard value={data.summary.total_bills} label="บิลทั้งหมด" color="primary" />
             <SummaryCard value={data.summary.total_items} label="รายการทั้งหมด" color="accent" />
-            <SummaryCard value={data.summary.total_passed} label="ผ่าน" color="success" />
-            <SummaryCard value={data.summary.total_failed} label="ไม่ผ่าน" color="danger" />
+            <SummaryCard value={data.summary.passed_item_count} label="ผ่าน" color="success" />
+            <SummaryCard value={data.summary.ncr_item_count} label="ไม่ผ่าน (มี NCR)" color="danger" />
             <SummaryCard value={`${data.summary.pass_rate}%`} label="อัตราผ่าน" color="success" />
           </div>
           <div className="card">
             <h3 className="text-h3 font-semibold text-primary mb-3">รายการบิล</h3>
             <div className="table-container">
               <table className="table">
-                <thead><tr><th>Invoice No.</th><th>PO No.</th><th>Supplier</th><th>วันที่</th><th>รายการ</th><th>ผ่าน</th><th>ไม่ผ่าน</th><th>สถานะ</th></tr></thead>
+                <thead>
+                  <tr>
+                    <SortTh col="invoice_no" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>Invoice No.</SortTh>
+                    <SortTh col="po_no" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>PO No.</SortTh>
+                    <SortTh col="supplier_name" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>Supplier</SortTh>
+                    <SortTh col="received_date" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>วันที่</SortTh>
+                    <SortTh col="item_count" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>รายการ</SortTh>
+                    <SortTh col="passed_item_count" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>ผ่าน</SortTh>
+                    <SortTh col="ncr_item_count" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>ไม่ผ่าน (มี NCR)</SortTh>
+                    <SortTh col="status" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>สถานะ</SortTh>
+                  </tr>
+                </thead>
                 <tbody>
-                  {data.bills?.map(b => (
+                  {sortedBills.map(b => (
                     <tr key={b.id} className="cursor-default">
                       <td className="font-mono">{b.invoice_no}</td>
                       <td className="font-mono">{b.po_no}</td>
                       <td>{b.supplier_name}</td>
                       <td>{b.received_date}</td>
                       <td className="font-mono">{b.item_count || 0}</td>
-                      <td className="font-mono text-success">{b.total_passed || 0}</td>
-                      <td className="font-mono text-danger">{b.total_failed || 0}</td>
+                      <td className="font-mono text-success">{b.passed_item_count || 0}</td>
+                      <td className="font-mono text-danger">{b.ncr_item_count || 0}</td>
                       <td><Badge status={b.status} /></td>
                     </tr>
                   ))}

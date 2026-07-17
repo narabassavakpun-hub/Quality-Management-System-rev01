@@ -136,7 +136,7 @@ function AppRoutes() {
           <Route path="defect-categories" element={<ProtectedRoute roles={['admin']}><DefectCategories /></ProtectedRoute>} />
           <Route path="colors" element={<ProtectedRoute roles={['admin']}><Colors /></ProtectedRoute>} />
         </Route>
-        <Route path="reports" element={<ProtectedRoute roles={['qc_manager','cco','cmo','cpo']}><ReportsLayout /></ProtectedRoute>}>
+        <Route path="reports" element={<ProtectedRoute roles={['qc_supervisor','qc_manager','purchasing_manager','cco','cmo','cpo']}><ReportsLayout /></ProtectedRoute>}>
           <Route index element={<Navigate to="summary" replace />} />
           <Route path="receiving" element={<ReceivingReport />} />
           <Route path="ncr" element={<NCRReport />} />

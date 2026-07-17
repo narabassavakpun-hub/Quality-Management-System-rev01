@@ -4,6 +4,8 @@ import api, { downloadFile } from '../../utils/api';
 import SummaryCard from '../../components/UI/SummaryCard';
 import Badge from '../../components/UI/Badge';
 import Button from '../../components/UI/Button';
+import SortTh from '../../components/UI/SortTh';
+import { useSortable } from '../../hooks/useSortable';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
 const COLORS = ['#1A3A5C', '#DC2626', '#D97706', '#16A34A', '#2E6DA4', '#7C3AED'];
@@ -20,12 +22,12 @@ export default function NCRReport() {
     queryFn: () => api.get(`/reports/ncr?from=${applied.from}&to=${applied.to}`).then(r => r.data),
   });
 
-  const defectData = React.useMemo(() => {
-    if (!data?.ncrs) return [];
-    const counts = {};
-    data.ncrs.forEach(n => { const k = n.defect_category_name || 'อื่นๆ'; counts[k] = (counts[k] || 0) + 1; });
-    return Object.entries(counts).map(([name, value]) => ({ name, value }));
-  }, [data]);
+  // เดิมคำนวณจาก n.defect_category_name ที่ backend query ของ ncrs ไม่เคย join defect_categories เลย (undefined
+  // ทุกแถว) จึงกลายเป็น "อื่นๆ" ทั้งหมดเสมอ — ตอนนี้ backend ส่ง defect_breakdown มาให้ตรงๆ แล้ว (นับ NCR ต่อกลุ่ม
+  // ปัญหาจริงจาก ncr_items ดู routes/reports.js GET /ncr)
+  const defectData = data?.defect_breakdown || [];
+
+  const { sorted: sortedNcrs, onSort, sortKey, sortDir } = useSortable(data?.ncrs || [], 'created_at');
 
   return (
     <div className="space-y-4">
@@ -35,6 +37,7 @@ export default function NCRReport() {
         <Button onClick={() => setApplied({ from, to })}>แสดงข้อมูล</Button>
         <div className="ml-auto flex gap-2">
           <button onClick={() => downloadFile('/reports/ncr/excel', { from: applied.from, to: applied.to }, 'ncr_report.xlsx')} className="btn-secondary btn text-small">Export Excel</button>
+          <button onClick={() => downloadFile('/reports/ncr/pdf', { from: applied.from, to: applied.to }, 'ncr_report.pdf')} className="btn-primary btn text-small">Export PDF</button>
         </div>
       </div>
 
@@ -69,9 +72,18 @@ export default function NCRReport() {
             <h3 className="text-h3 font-semibold text-primary mb-3">รายการ NCR</h3>
             <div className="table-container">
               <table className="table">
-                <thead><tr><th>รหัส NCR</th><th>รายการ</th><th>Supplier</th><th>ระดับ</th><th>วันที่เปิด</th><th>สถานะ</th></tr></thead>
+                <thead>
+                  <tr>
+                    <SortTh col="ncr_code" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>รหัส NCR</SortTh>
+                    <SortTh col="item_count" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>รายการ</SortTh>
+                    <SortTh col="supplier_name" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>Supplier</SortTh>
+                    <SortTh col="severity" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>ระดับ</SortTh>
+                    <SortTh col="created_at" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>วันที่เปิด</SortTh>
+                    <SortTh col="status" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>สถานะ</SortTh>
+                  </tr>
+                </thead>
                 <tbody>
-                  {data.ncrs?.map(n => (
+                  {sortedNcrs.map(n => (
                     <tr key={n.id} className="cursor-default">
                       <td className="font-mono text-primary">{n.ncr_code}</td>
                       <td>{n.item_count || 1} รายการ</td>

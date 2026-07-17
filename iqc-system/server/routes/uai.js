@@ -273,7 +273,7 @@ router.post('/:id/sign', auth, (req, res) => {
   }
 });
 
-// ===== POST /api/uai/:id/reject-exec — CCO/CMO/CPO ปฏิเสธ =====
+// ===== POST /api/uai/:id/reject-exec — COO/CMO/CPO ปฏิเสธ =====
 router.post('/:id/reject-exec', auth, requireRole(['cco', 'cmo', 'cpo']), (req, res) => {
   const uai = db.prepare('SELECT * FROM uai_documents WHERE id = ?').get(req.params.id);
   if (!uai) return res.status(404).json({ error: 'ไม่พบ UAI' });

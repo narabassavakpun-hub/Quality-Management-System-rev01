@@ -1061,7 +1061,7 @@ router.get('/uai/:id/excel', auth, async (req, res) => {
 });
 
 // ===== REPORT EXPORTS =====
-const REPORT_ROLES = ['qc_manager', 'cco', 'cmo', 'cpo'];
+const REPORT_ROLES = ['qc_supervisor', 'qc_manager', 'purchasing_manager', 'cco', 'cmo', 'cpo'];
 
 function buildDateFilter(from, to, col) {
   const parts = [];
@@ -1071,32 +1071,140 @@ function buildDateFilter(from, to, col) {
   return { sql: parts.length ? ' AND ' + parts.join(' AND ') : '', params };
 }
 
+// ข้อความช่วงเวลาของข้อมูล — ใส่เป็นแถวแรก (merge เต็มความกว้าง) เหนือหัวตารางของทุก report export (คำขอ user:
+// เดิม export excel ไม่มีช่วงวันที่ติดไปกับไฟล์เลย เปิดไฟล์แล้วไม่รู้ว่าข้อมูลกรองช่วงไหนไว้)
+function dateRangeLabel(from, to) {
+  if (from && to) return `ช่วงข้อมูล: ${from} ถึง ${to}`;
+  if (from) return `ช่วงข้อมูล: ตั้งแต่ ${from}`;
+  if (to) return `ช่วงข้อมูล: ถึง ${to}`;
+  return 'ช่วงข้อมูล: ทั้งหมด (ไม่ได้กรองช่วงวันที่)';
+}
+
+// เขียนแถวช่วงเวลา (merge เต็มความกว้างตาม colCount) ลงแถว 1 ของ worksheet ที่ column ถูกกำหนดไว้แล้ว (key/width
+// เท่านั้น ไม่มี header — header จริงเขียนเป็นแถว 2 แยกต่างหากโดยผู้เรียก)
+function writeDateRangeRow(ws, colCount, from, to) {
+  ws.mergeCells(1, 1, 1, colCount);
+  const cell = ws.getCell(1, 1);
+  cell.value = dateRangeLabel(from, to);
+  cell.font = { italic: true, color: { argb: 'FF6B7280' } };
+  cell.alignment = { horizontal: 'left', vertical: 'middle' };
+  ws.getRow(1).height = 20;
+}
+
+// ===== Shared shell สำหรับ Export PDF ของเมนู "รายงาน" ทุกหน้า (ภาพรวม/การรับเข้า/NCR/UAI) =====
+// รูปแบบสั้นกว่า dateRangeLabel ข้างบน (ใช้ inline ในบรรทัดเดียวของ header PDF ไม่ใช่ merge cell แยกแถวแบบ Excel)
+function pdfRangeLabel(from, to) {
+  return (from || to) ? `${esc(from || '-')} ถึง ${esc(to || '-')}` : 'ทั้งหมด';
+}
+
+// CSS ใช้ร่วมกันทุก report PDF (hero KPI row, split 2 คอลัมน์, ตารางหลัก) — คัดลอกมาจาก /reports/summary/pdf เดิม
+function reportPdfStyle() {
+  return `
+  ${FONT_FACE_CSS}
+  body{font-family:'IBM Plex Sans Thai','Segoe UI',Arial,sans-serif;font-size:11px;color:#1F2937;margin:0;}
+  .section-title{font-size:14px;font-weight:700;color:#1A3A5C;margin:16px 0 8px;border-bottom:2px solid #1A3A5C;padding-bottom:4px;page-break-after:avoid;}
+  .section-title:first-child{margin-top:0;}
+  .hero-row{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;}
+  .hero-box{flex:1;min-width:90px;border:1px solid #D1D5DB;border-radius:6px;padding:10px 10px;background:#F5F6F8;}
+  .hero-value{font-size:22px;font-weight:700;line-height:1.1;}
+  .hero-label{font-size:9px;color:#6B7280;margin-top:4px;}
+  .split-row{display:flex;gap:16px;margin-bottom:8px;}
+  .split-col{flex:1;border:1px solid #D1D5DB;border-radius:6px;padding:12px;}
+  .split-heading{font-size:11px;font-weight:700;color:#1A3A5C;margin-bottom:8px;}
+  table{width:100%;border-collapse:collapse;margin-bottom:6px;}
+  thead{display:table-header-group;}
+  th{background:#1A3A5C;color:#fff;padding:6px;font-size:10px;text-align:left;white-space:nowrap;}
+  td{padding:5px 6px;border-bottom:1px solid #E5E7EB;font-size:10px;vertical-align:middle;}
+  tr{page-break-inside:avoid;}
+  tr:nth-child(even) td{background:#F9FAFB;}
+  .no-data{text-align:center;color:#6B7280;padding:40px;font-size:14px;}
+  .no-data-inline{color:#6B7280;font-size:10px;text-align:center;}
+  `;
+}
+
+// header/footer template (Puppeteer headerTemplate ต้องกำหนด style เองทั้งหมด ไม่รับ CSS จาก body) — title/
+// rangeLabel/extraInfo ต่างกันตามรายงาน
+function reportPdfHeaderFooter(req, title, rangeLabel, extraInfo) {
+  const companyName = db.getSetting('company_name') || '';
+  const logoFile = db.getSetting('company_logo') || '';
+  const logoSrc = logoFile ? (imgToBase64('general', logoFile) || '') : '';
+  const exportTime = new Date().toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Bangkok' });
+  const headerTemplate = `
+    <div style="font-family:'IBM Plex Sans Thai','Tahoma','Leelawadee UI',sans-serif;width:100%;padding:0 8mm;box-sizing:border-box;color:#1F2937;">
+      <div style="display:flex;align-items:center;gap:8px;border-bottom:2px solid #1A3A5C;padding-bottom:4px;">
+        ${logoSrc ? `<img src="${logoSrc}" style="max-height:32px;max-width:110px;object-fit:contain;" />` : ''}
+        <div style="flex:1;">
+          ${companyName ? `<div style="font-size:10px;font-weight:700;color:#1A3A5C;">${esc(companyName)}</div>` : ''}
+          <div style="font-size:12px;font-weight:700;color:#1A3A5C;">${esc(title)}</div>
+          <div style="font-size:8px;color:#6B7280;">ช่วงวันที่: ${rangeLabel} &nbsp;|&nbsp; Export: ${esc(exportTime)} &nbsp;|&nbsp; ผู้ออกรายงาน: ${esc(req.user.full_name)}${extraInfo ? ` &nbsp;|&nbsp; ${extraInfo}` : ''}</div>
+        </div>
+      </div>
+    </div>`;
+  const footerTemplate = `
+    <div style="font-family:'IBM Plex Sans Thai','Tahoma','Leelawadee UI',sans-serif;font-size:9px;color:#6B7280;width:100%;text-align:center;">
+      หน้า <span class="pageNumber"></span>/<span class="totalPages"></span>
+    </div>`;
+  return { headerTemplate, footerTemplate };
+}
+
+// เรนเดอร์ + ส่ง PDF (acquire/release slot + isolated page เหมือนทุก PDF route อื่นในไฟล์นี้)
+async function sendReportPdf(res, html, headerTemplate, footerTemplate, filename) {
+  await acquirePdfSlot();
+  let ctx;
+  try {
+    const { page, context } = await openIsolatedPage();
+    ctx = context;
+    await page.setContent(html, { waitUntil: 'domcontentloaded' });
+    await page.evaluate(async () => { await document.fonts.ready; });
+    const buffer = await page.pdf({
+      format: 'A4',
+      landscape: true,
+      printBackground: true,
+      displayHeaderFooter: true,
+      headerTemplate,
+      footerTemplate,
+      margin: { top: '30mm', bottom: '14mm', left: '8mm', right: '8mm' },
+    });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  } finally {
+    await closeIsolated(ctx);
+    releasePdfSlot();
+  }
+}
+
+// รายการ/ผ่าน/ไม่ผ่าน นับจากแถว bill_items (ไม่ใช่ผลรวมจำนวนชิ้น) — ไม่ผ่าน = มีการออก NCR อ้างอิงถึง (เหมือน
+// routes/reports.js GET /receiving — คำขอ user, ดู DEVLOG)
 router.get('/reports/receiving/excel', auth, requireRole(REPORT_ROLES), async (req, res) => {
   const { from, to } = req.query;
   const dateFilter = buildDateFilter(from, to, 'b.received_date');
   const bills = db.prepare(`
     SELECT b.invoice_no, b.po_no, s.name as supplier_name, b.received_date, b.status,
-           COUNT(bi.id) as item_count, SUM(bi.qty_received) as qty_received,
-           SUM(bi.qty_passed) as qty_passed, SUM(bi.qty_failed) as qty_failed
+           COUNT(DISTINCT bi.id) as item_count,
+           COUNT(DISTINCT ni.bill_item_id) as ncr_item_count
     FROM bills b LEFT JOIN suppliers s ON s.id = b.supplier_id
     LEFT JOIN bill_items bi ON bi.bill_id = b.id
+    LEFT JOIN ncr_items ni ON ni.bill_item_id = bi.id
     WHERE 1=1 ${dateFilter.sql} GROUP BY b.id ORDER BY b.received_date DESC
   `).all(...dateFilter.params);
+  bills.forEach(b => { b.passed_item_count = b.item_count - b.ncr_item_count; });
 
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('รายงานการรับเข้า');
   ws.columns = [
-    { header: 'Invoice No.', key: 'invoice_no', width: 18 },
-    { header: 'PO No.', key: 'po_no', width: 18 },
-    { header: 'Supplier', key: 'supplier_name', width: 25 },
-    { header: 'วันที่รับ', key: 'received_date', width: 14 },
-    { header: 'รายการ', key: 'item_count', width: 10 },
-    { header: 'จำนวนรับ', key: 'qty_received', width: 12 },
-    { header: 'ผ่าน', key: 'qty_passed', width: 10 },
-    { header: 'ไม่ผ่าน', key: 'qty_failed', width: 10 },
-    { header: 'สถานะ', key: 'status', width: 18 },
+    { key: 'invoice_no', width: 18 },
+    { key: 'po_no', width: 18 },
+    { key: 'supplier_name', width: 25 },
+    { key: 'received_date', width: 14 },
+    { key: 'item_count', width: 10 },
+    { key: 'passed_item_count', width: 10 },
+    { key: 'ncr_item_count', width: 14 },
+    { key: 'status', width: 18 },
   ];
-  ws.getRow(1).eachCell(cell => {
+  writeDateRangeRow(ws, ws.columns.length, from, to);
+  ws.addRow(['Invoice No.', 'PO No.', 'Supplier', 'วันที่รับ', 'รายการ', 'ผ่าน', 'ไม่ผ่าน (มี NCR)', 'สถานะ']);
+  ws.getRow(2).eachCell(cell => {
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1A3A5C' } };
     cell.font = { color: { argb: 'FFFFFFFF' }, bold: true };
   });
@@ -1124,16 +1232,18 @@ router.get('/reports/ncr/excel', auth, requireRole(REPORT_ROLES), async (req, re
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('รายงาน NCR');
     ws.columns = [
-      { header: 'รหัส NCR', key: 'ncr_code', width: 16 },
-      { header: 'รายการ', key: 'item_name', width: 30 },
-      { header: 'Supplier', key: 'supplier_name', width: 25 },
-      { header: 'Invoice No.', key: 'invoice_no', width: 18 },
-      { header: 'ระดับ', key: 'severity', width: 10 },
-      { header: 'กลุ่มปัญหา', key: 'defect_category_name', width: 20 },
-      { header: 'สถานะ', key: 'status', width: 22 },
-      { header: 'วันที่เปิด', key: 'created_at', width: 20 },
+      { key: 'ncr_code', width: 16 },
+      { key: 'item_name', width: 30 },
+      { key: 'supplier_name', width: 25 },
+      { key: 'invoice_no', width: 18 },
+      { key: 'severity', width: 10 },
+      { key: 'defect_category_name', width: 20 },
+      { key: 'status', width: 22 },
+      { key: 'created_at', width: 20 },
     ];
-    ws.getRow(1).eachCell(cell => {
+    writeDateRangeRow(ws, ws.columns.length, from, to);
+    ws.addRow(['รหัส NCR', 'รายการ', 'Supplier', 'Invoice No.', 'ระดับ', 'กลุ่มปัญหา', 'สถานะ', 'วันที่เปิด']);
+    ws.getRow(2).eachCell(cell => {
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1A3A5C' } };
       cell.font = { color: { argb: 'FFFFFFFF' }, bold: true };
     });
@@ -1162,14 +1272,16 @@ router.get('/reports/uai/excel', auth, requireRole(REPORT_ROLES), async (req, re
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('รายงาน UAI');
   ws.columns = [
-    { header: 'รหัส UAI', key: 'uai_code', width: 16 },
-    { header: 'NCR อ้างอิง', key: 'ncr_code', width: 16 },
-    { header: 'รายการ', key: 'item_name', width: 30 },
-    { header: 'Supplier', key: 'supplier_name', width: 25 },
-    { header: 'สถานะ', key: 'status', width: 25 },
-    { header: 'วันที่สร้าง', key: 'created_at', width: 20 },
+    { key: 'uai_code', width: 16 },
+    { key: 'ncr_code', width: 16 },
+    { key: 'item_name', width: 30 },
+    { key: 'supplier_name', width: 25 },
+    { key: 'status', width: 25 },
+    { key: 'created_at', width: 20 },
   ];
-  ws.getRow(1).eachCell(cell => {
+  writeDateRangeRow(ws, ws.columns.length, from, to);
+  ws.addRow(['รหัส UAI', 'NCR อ้างอิง', 'รายการ', 'Supplier', 'สถานะ', 'วันที่สร้าง']);
+  ws.getRow(2).eachCell(cell => {
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1A3A5C' } };
     cell.font = { color: { argb: 'FFFFFFFF' }, bold: true };
   });
@@ -1196,13 +1308,15 @@ router.get('/reports/summary/excel', auth, requireRole(REPORT_ROLES), async (req
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Supplier Scorecard');
   ws.columns = [
-    { header: 'Supplier', key: 'supplier_name', width: 30 },
-    { header: 'บิลทั้งหมด', key: 'total_bills', width: 14 },
-    { header: 'NCR ทั้งหมด', key: 'total_ncr', width: 14 },
-    { header: 'อัตรา NCR (%)', key: 'ncr_rate', width: 16 },
-    { header: 'UAI ทั้งหมด', key: 'total_uai', width: 14 },
+    { key: 'supplier_name', width: 30 },
+    { key: 'total_bills', width: 14 },
+    { key: 'total_ncr', width: 14 },
+    { key: 'ncr_rate', width: 16 },
+    { key: 'total_uai', width: 14 },
   ];
-  ws.getRow(1).eachCell(cell => {
+  writeDateRangeRow(ws, ws.columns.length, from, to);
+  ws.addRow(['Supplier', 'บิลทั้งหมด', 'NCR ทั้งหมด', 'อัตรา NCR (%)', 'UAI ทั้งหมด']);
+  ws.getRow(2).eachCell(cell => {
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1A3A5C' } };
     cell.font = { color: { argb: 'FFFFFFFF' }, bold: true };
   });
@@ -1214,6 +1328,398 @@ router.get('/reports/summary/excel', auth, requireRole(REPORT_ROLES), async (req
   res.setHeader('Content-Disposition', `attachment; filename="report-summary-${from||'all'}-${to||'all'}.xlsx"`);
   await wb.xlsx.write(res);
   res.end();
+});
+
+// ===== GET /api/reports/summary/pdf — รายงานภาพรวม (ตรงกับหน้าจอ Reports/Summary.jsx) =====
+// เดิมหน้าจอมีปุ่ม Export PDF อยู่แล้วแต่ไม่มี route นี้เลย (กด export ไม่สำเร็จทุก role — ไม่ใช่ปัญหาสิทธิ์ COO
+// โดยเฉพาะ) — สร้างใหม่ครั้งแรก คำนวณตรงกับ GET /api/reports/summary เป๊ะ (รายการรับเข้า/อัตราผ่านนับจาก
+// bill_items แถว ไม่ใช่ผลรวมจำนวนชิ้น — ดู DEVLOG)
+router.get('/reports/summary/pdf', auth, requireRole(REPORT_ROLES), pdfRateLimit, async (req, res) => {
+  try {
+    const { from, to, supplier_id } = req.query;
+    const dateFilter = buildDateFilter(from, to, 'b.received_date');
+    const params = [...dateFilter.params];
+    let extra = dateFilter.sql;
+    if (supplier_id) { extra += ' AND b.supplier_id = ?'; params.push(supplier_id); }
+
+    const billStats = db.prepare(`
+      SELECT COUNT(DISTINCT b.id) as total_bills,
+             COUNT(DISTINCT bi.id) as total_items,
+             COUNT(DISTINCT ni.bill_item_id) as ncr_item_count
+      FROM bills b LEFT JOIN bill_items bi ON bi.bill_id = b.id
+      LEFT JOIN ncr_items ni ON ni.bill_item_id = bi.id WHERE 1=1 ${extra}
+    `).get(...params);
+
+    const ncrDateFilter = buildDateFilter(from, to, 'n.created_at');
+    const ncrParams = [...ncrDateFilter.params];
+    let ncrExtra = ncrDateFilter.sql;
+    if (supplier_id) { ncrExtra += ' AND b2.supplier_id = ?'; ncrParams.push(supplier_id); }
+
+    const ncrStats = db.prepare(`
+      SELECT COUNT(*) as total_ncr,
+             SUM(CASE WHEN n.status NOT IN ('closed') THEN 1 ELSE 0 END) as open_ncr
+      FROM ncrs n LEFT JOIN bills b2 ON b2.id = n.bill_id WHERE 1=1 ${ncrExtra}
+    `).get(...ncrParams);
+
+    const uaiStats = db.prepare(`
+      SELECT COUNT(*) as total_uai FROM uai_documents u
+      LEFT JOIN ncrs n ON n.id = u.ncr_id
+      LEFT JOIN bills b3 ON b3.id = n.bill_id
+      WHERE 1=1 ${ncrDateFilter.sql.replace(/b2\./g, 'b3.')}
+    `).get(...ncrDateFilter.params, ...(supplier_id ? [supplier_id] : []));
+
+    const topNcrSuppliers = db.prepare(`
+      SELECT s.name, COUNT(n.id) as ncr_count
+      FROM ncrs n
+      LEFT JOIN bills b ON b.id = n.bill_id
+      LEFT JOIN suppliers s ON s.id = b.supplier_id
+      WHERE 1=1 ${ncrExtra}
+      GROUP BY s.id ORDER BY ncr_count DESC LIMIT 5
+    `).all(...ncrParams);
+
+    const topDefects = db.prepare(`
+      SELECT dc.name, COUNT(DISTINCT n.id) as ncr_count
+      FROM ncrs n
+      LEFT JOIN ncr_items ni ON ni.ncr_id = n.id
+      LEFT JOIN defect_categories dc ON dc.id = ni.defect_category_id
+      LEFT JOIN bills b ON b.id = n.bill_id
+      WHERE 1=1 ${ncrExtra}
+      GROUP BY dc.id ORDER BY ncr_count DESC LIMIT 5
+    `).all(...ncrParams);
+
+    const supplierScorecard = db.prepare(`
+      SELECT s.name as supplier_name,
+             COUNT(DISTINCT b.id) as total_bills,
+             COUNT(n.id) as total_ncr,
+             COUNT(u.id) as total_uai
+      FROM suppliers s
+      LEFT JOIN bills b ON b.supplier_id = s.id ${extra ? 'AND 1=1 ' + extra : ''}
+      LEFT JOIN ncrs n ON n.bill_id = b.id
+      LEFT JOIN uai_documents u ON u.ncr_id = n.id
+      GROUP BY s.id ORDER BY total_ncr DESC
+    `).all(...params);
+
+    const totalItems = billStats.total_items || 0;
+    const ncrItemCount = billStats.ncr_item_count || 0;
+    const passRate = totalItems > 0 ? (((totalItems - ncrItemCount) / totalItems) * 100).toFixed(1) : '0.0';
+
+    const rangeLabel = pdfRangeLabel(from, to);
+
+    const HERO_STATS = [
+      { value: billStats.total_bills || 0, label: 'บิลทั้งหมด', color: '#1A3A5C' },
+      { value: totalItems, label: 'รายการรับเข้า', color: '#2E6DA4' },
+      { value: `${passRate}%`, label: 'อัตราผ่าน', color: '#16A34A' },
+      { value: ncrStats.total_ncr || 0, label: 'NCR ทั้งหมด', color: '#D97706' },
+      { value: ncrStats.open_ncr || 0, label: 'NCR เปิดอยู่', color: '#DC2626' },
+      { value: uaiStats.total_uai || 0, label: 'UAI ทั้งหมด', color: '#1A3A5C' },
+    ];
+    const heroCells = HERO_STATS.map(h => `
+      <div class="hero-box" style="border-top:4px solid ${h.color};">
+        <div class="hero-value" style="color:${h.color};">${esc(h.value)}</div>
+        <div class="hero-label">${esc(h.label)}</div>
+      </div>`).join('');
+
+    const topSuppliersRows = topNcrSuppliers.length
+      ? topNcrSuppliers.map(s => `<tr><td>${esc(s.name || '-')}</td><td style="text-align:right;">${s.ncr_count}</td></tr>`).join('')
+      : `<tr><td colspan="2" class="no-data-inline">ไม่มีข้อมูล</td></tr>`;
+    const topDefectsRows = topDefects.length
+      ? topDefects.map(d => `<tr><td>${esc(d.name || '-')}</td><td style="text-align:right;">${d.ncr_count}</td></tr>`).join('')
+      : `<tr><td colspan="2" class="no-data-inline">ไม่มีข้อมูล</td></tr>`;
+
+    const scorecardTheadRow = `<tr><th>Supplier</th><th style="text-align:right;">บิลทั้งหมด</th><th style="text-align:right;">NCR ทั้งหมด</th><th style="text-align:right;">อัตรา NCR (%)</th><th style="text-align:right;">UAI ทั้งหมด</th></tr>`;
+    const scorecardRows = supplierScorecard.map(s => `
+      <tr>
+        <td>${esc(s.supplier_name)}</td>
+        <td style="text-align:right;">${s.total_bills}</td>
+        <td style="text-align:right;">${s.total_ncr}</td>
+        <td style="text-align:right;">${s.total_bills > 0 ? ((s.total_ncr / s.total_bills) * 100).toFixed(1) : '0.0'}%</td>
+        <td style="text-align:right;">${s.total_uai}</td>
+      </tr>`).join('');
+
+    const { headerTemplate, footerTemplate } = reportPdfHeaderFooter(req, 'รายงานภาพรวม (Summary Report)', rangeLabel);
+
+    const html = `<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8">
+<style>${reportPdfStyle()}</style>
+</head><body>
+<div class="hero-row">${heroCells}</div>
+<div class="split-row">
+  <div class="split-col">
+    <div class="split-heading">Top 5 Supplier มี NCR มากที่สุด</div>
+    <table><thead><tr><th>Supplier</th><th style="text-align:right;">NCR</th></tr></thead><tbody>${topSuppliersRows}</tbody></table>
+  </div>
+  <div class="split-col">
+    <div class="split-heading">Top 5 กลุ่มปัญหา</div>
+    <table><thead><tr><th>กลุ่มปัญหา</th><th style="text-align:right;">NCR</th></tr></thead><tbody>${topDefectsRows}</tbody></table>
+  </div>
+</div>
+<div class="section-title">Supplier Scorecard (${supplierScorecard.length})</div>
+${supplierScorecard.length === 0
+  ? '<div class="no-data">ไม่มีข้อมูล Supplier</div>'
+  : `<table><thead>${scorecardTheadRow}</thead><tbody>${scorecardRows}</tbody></table>`}
+</body></html>`;
+
+    await sendReportPdf(res, html, headerTemplate, footerTemplate, `report-summary-${from||'all'}-${to||'all'}.pdf`);
+  } catch (e) {
+    if (!res.headersSent) res.status(500).json({ error: 'Export ไม่สำเร็จ: ' + e.message });
+  }
+});
+
+// ===== GET /api/reports/receiving/pdf — รายงานการรับเข้า (ตรงกับหน้าจอ Reports/Receiving.jsx) =====
+router.get('/reports/receiving/pdf', auth, requireRole(REPORT_ROLES), pdfRateLimit, async (req, res) => {
+  try {
+    const { from, to, supplier_id } = req.query;
+    const dateFilter = buildDateFilter(from, to, 'b.received_date');
+    const params = [...dateFilter.params];
+    let extra = dateFilter.sql;
+    if (supplier_id) { extra += ' AND b.supplier_id = ?'; params.push(supplier_id); }
+
+    const bills = db.prepare(`
+      SELECT b.invoice_no, b.po_no, s.name as supplier_name, b.received_date, b.status,
+             COUNT(DISTINCT bi.id) as item_count,
+             COUNT(DISTINCT ni.bill_item_id) as ncr_item_count
+      FROM bills b LEFT JOIN suppliers s ON s.id = b.supplier_id
+      LEFT JOIN bill_items bi ON bi.bill_id = b.id
+      LEFT JOIN ncr_items ni ON ni.bill_item_id = bi.id
+      WHERE 1=1 ${extra} GROUP BY b.id ORDER BY b.received_date DESC
+    `).all(...params);
+    bills.forEach(b => { b.passed_item_count = b.item_count - b.ncr_item_count; });
+
+    const agg = db.prepare(`
+      SELECT COUNT(DISTINCT b.id) as total_bills, COUNT(DISTINCT bi.id) as total_items,
+             COUNT(DISTINCT ni.bill_item_id) as ncr_item_count
+      FROM bills b LEFT JOIN bill_items bi ON bi.bill_id = b.id
+      LEFT JOIN ncr_items ni ON ni.bill_item_id = bi.id WHERE 1=1 ${extra}
+    `).get(...params);
+    const totalItems = agg.total_items || 0;
+    const ncrItemCount = agg.ncr_item_count || 0;
+    const passedItemCount = totalItems - ncrItemCount;
+    const passRate = totalItems > 0 ? ((passedItemCount / totalItems) * 100).toFixed(1) : '0.0';
+
+    const HERO_STATS = [
+      { value: agg.total_bills || 0, label: 'บิลทั้งหมด', color: '#1A3A5C' },
+      { value: totalItems, label: 'รายการทั้งหมด', color: '#2E6DA4' },
+      { value: passedItemCount, label: 'ผ่าน', color: '#16A34A' },
+      { value: ncrItemCount, label: 'ไม่ผ่าน (มี NCR)', color: '#DC2626' },
+      { value: `${passRate}%`, label: 'อัตราผ่าน', color: '#16A34A' },
+    ];
+    const heroCells = HERO_STATS.map(h => `
+      <div class="hero-box" style="border-top:4px solid ${h.color};">
+        <div class="hero-value" style="color:${h.color};">${esc(h.value)}</div>
+        <div class="hero-label">${esc(h.label)}</div>
+      </div>`).join('');
+
+    const theadRow = `<tr><th>Invoice No.</th><th>PO No.</th><th>Supplier</th><th>วันที่รับ</th><th style="text-align:right;">รายการ</th><th style="text-align:right;">ผ่าน</th><th style="text-align:right;">ไม่ผ่าน (มี NCR)</th><th>สถานะ</th></tr>`;
+    const dataRows = bills.map(b => `
+      <tr>
+        <td>${esc(b.invoice_no)}</td>
+        <td>${esc(b.po_no)}</td>
+        <td>${esc(b.supplier_name || '-')}</td>
+        <td>${esc(b.received_date)}</td>
+        <td style="text-align:right;">${b.item_count}</td>
+        <td style="text-align:right;color:#16A34A;">${b.passed_item_count}</td>
+        <td style="text-align:right;${b.ncr_item_count > 0 ? 'color:#DC2626;font-weight:700;' : ''}">${b.ncr_item_count}</td>
+        <td>${esc(statusLabel(b.status))}</td>
+      </tr>`).join('');
+
+    const rangeLabel = pdfRangeLabel(from, to);
+    const { headerTemplate, footerTemplate } = reportPdfHeaderFooter(req, 'รายงานการรับเข้า (Receiving Report)', rangeLabel);
+
+    const html = `<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8">
+<style>${reportPdfStyle()}</style>
+</head><body>
+<div class="hero-row">${heroCells}</div>
+<div class="section-title">รายการบิล (${bills.length})</div>
+${bills.length === 0
+  ? '<div class="no-data">ไม่มีข้อมูล</div>'
+  : `<table><thead>${theadRow}</thead><tbody>${dataRows}</tbody></table>`}
+</body></html>`;
+
+    await sendReportPdf(res, html, headerTemplate, footerTemplate, `report-receiving-${from||'all'}-${to||'all'}.pdf`);
+  } catch (e) {
+    if (!res.headersSent) res.status(500).json({ error: 'Export ไม่สำเร็จ: ' + e.message });
+  }
+});
+
+// ===== GET /api/reports/ncr/pdf — รายงาน NCR (ตรงกับหน้าจอ Reports/NCRReport.jsx) =====
+router.get('/reports/ncr/pdf', auth, requireRole(REPORT_ROLES), pdfRateLimit, async (req, res) => {
+  try {
+    const { from, to, supplier_id } = req.query;
+    const dateFilter = buildDateFilter(from, to, 'n.created_at');
+    const params = [...dateFilter.params];
+    let extra = dateFilter.sql;
+    if (supplier_id) { extra += ' AND b.supplier_id = ?'; params.push(supplier_id); }
+
+    const ncrs = db.prepare(`
+      SELECT n.ncr_code, s.name as supplier_name, n.severity, n.status, n.created_at, COUNT(ni.id) as item_count
+      FROM ncrs n
+      LEFT JOIN bills b ON b.id = n.bill_id
+      LEFT JOIN suppliers s ON s.id = b.supplier_id
+      LEFT JOIN ncr_items ni ON ni.ncr_id = n.id
+      WHERE 1=1 ${extra} GROUP BY n.id ORDER BY n.created_at DESC
+    `).all(...params);
+
+    const openStatuses = ['pending_supervisor', 'pending_manager', 'pending_qmr_open', 'pending_supplier', 'pending_manager_review', 'pending_qmr_close', 'pending_uai'];
+    const openIn = openStatuses.map(() => '?').join(',');
+    const agg = db.prepare(`
+      SELECT COUNT(*) as total,
+             SUM(CASE WHEN n.status IN (${openIn}) THEN 1 ELSE 0 END) as open,
+             SUM(CASE WHEN n.status = 'closed' THEN 1 ELSE 0 END) as closed,
+             SUM(CASE WHEN n.severity = 'major' THEN 1 ELSE 0 END) as major,
+             SUM(CASE WHEN n.severity = 'minor' THEN 1 ELSE 0 END) as minor
+      FROM ncrs n LEFT JOIN bills b ON b.id = n.bill_id WHERE 1=1 ${extra}
+    `).get(...openStatuses, ...params);
+
+    const defectBreakdown = db.prepare(`
+      SELECT COALESCE(dc.name, 'อื่นๆ') as name, COUNT(DISTINCT n.id) as value
+      FROM ncrs n
+      LEFT JOIN bills b ON b.id = n.bill_id
+      LEFT JOIN ncr_items ni ON ni.ncr_id = n.id
+      LEFT JOIN defect_categories dc ON dc.id = ni.defect_category_id
+      WHERE 1=1 ${extra}
+      GROUP BY dc.id ORDER BY value DESC LIMIT 5
+    `).all(...params);
+
+    const HERO_STATS = [
+      { value: agg.total || 0, label: 'NCR ทั้งหมด', color: '#1A3A5C' },
+      { value: agg.open || 0, label: 'เปิดอยู่', color: '#DC2626' },
+      { value: agg.closed || 0, label: 'ปิดแล้ว', color: '#16A34A' },
+      { value: agg.major || 0, label: 'Major', color: '#DC2626' },
+      { value: agg.minor || 0, label: 'Minor', color: '#D97706' },
+    ];
+    const heroCells = HERO_STATS.map(h => `
+      <div class="hero-box" style="border-top:4px solid ${h.color};">
+        <div class="hero-value" style="color:${h.color};">${esc(h.value)}</div>
+        <div class="hero-label">${esc(h.label)}</div>
+      </div>`).join('');
+
+    const defectRows = defectBreakdown.length
+      ? defectBreakdown.map(d => `<tr><td>${esc(d.name)}</td><td style="text-align:right;">${d.value}</td></tr>`).join('')
+      : `<tr><td colspan="2" class="no-data-inline">ไม่มีข้อมูล</td></tr>`;
+
+    const theadRow = `<tr><th>รหัส NCR</th><th>Supplier</th><th style="text-align:right;">รายการ</th><th>ระดับ</th><th>วันที่เปิด</th><th>สถานะ</th></tr>`;
+    const dataRows = ncrs.map(n => `
+      <tr>
+        <td>${esc(n.ncr_code)}</td>
+        <td>${esc(n.supplier_name || '-')}</td>
+        <td style="text-align:right;">${n.item_count}</td>
+        <td>${n.severity === 'major' ? 'Major' : 'Minor'}</td>
+        <td>${esc((n.created_at || '').slice(0, 10))}</td>
+        <td>${esc(statusLabel(n.status))}</td>
+      </tr>`).join('');
+
+    const rangeLabel = pdfRangeLabel(from, to);
+    const { headerTemplate, footerTemplate } = reportPdfHeaderFooter(req, 'รายงาน NCR (NCR Report)', rangeLabel);
+
+    const html = `<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8">
+<style>${reportPdfStyle()}</style>
+</head><body>
+<div class="hero-row">${heroCells}</div>
+<div class="split-row">
+  <div class="split-col">
+    <div class="split-heading">สัดส่วน NCR ตามกลุ่มปัญหา (Top 5)</div>
+    <table><thead><tr><th>กลุ่มปัญหา</th><th style="text-align:right;">NCR</th></tr></thead><tbody>${defectRows}</tbody></table>
+  </div>
+</div>
+<div class="section-title">รายการ NCR (${ncrs.length})</div>
+${ncrs.length === 0
+  ? '<div class="no-data">ไม่มีข้อมูล</div>'
+  : `<table><thead>${theadRow}</thead><tbody>${dataRows}</tbody></table>`}
+</body></html>`;
+
+    await sendReportPdf(res, html, headerTemplate, footerTemplate, `report-ncr-${from||'all'}-${to||'all'}.pdf`);
+  } catch (e) {
+    if (!res.headersSent) res.status(500).json({ error: 'Export ไม่สำเร็จ: ' + e.message });
+  }
+});
+
+// ===== GET /api/reports/uai/pdf — รายงาน UAI (ตรงกับหน้าจอ Reports/UAIReport.jsx) =====
+router.get('/reports/uai/pdf', auth, requireRole(REPORT_ROLES), pdfRateLimit, async (req, res) => {
+  try {
+    const { from, to, supplier_id } = req.query;
+    const dateFilter = buildDateFilter(from, to, 'u.created_at');
+    const params = [...dateFilter.params];
+    let extra = dateFilter.sql;
+    if (supplier_id) { extra += ' AND b.supplier_id = ?'; params.push(supplier_id); }
+
+    const uais = db.prepare(`
+      SELECT u.uai_code, n.ncr_code, s.name as supplier_name, u.status, u.created_at
+      FROM uai_documents u
+      LEFT JOIN ncrs n ON n.id = u.ncr_id
+      LEFT JOIN bills b ON b.id = n.bill_id
+      LEFT JOIN suppliers s ON s.id = b.supplier_id
+      WHERE 1=1 ${extra} ORDER BY u.created_at DESC
+    `).all(...params);
+
+    const agg = db.prepare(`
+      SELECT COUNT(*) as total,
+             SUM(CASE WHEN u.status = 'uai_completed' THEN 1 ELSE 0 END) as completed,
+             SUM(CASE WHEN u.status NOT IN ('uai_completed','uai_rejected') THEN 1 ELSE 0 END) as pending,
+             SUM(CASE WHEN u.status = 'uai_rejected' THEN 1 ELSE 0 END) as rejected
+      FROM uai_documents u
+      LEFT JOIN ncrs n ON n.id = u.ncr_id
+      LEFT JOIN bills b ON b.id = n.bill_id WHERE 1=1 ${extra}
+    `).get(...params);
+
+    // Top 5 Supplier มี UAI มากที่สุด (คำขอ user — เดิมหน้านี้ไม่มีกราฟ/ตารางนี้เลย)
+    const topUaiSuppliers = db.prepare(`
+      SELECT s.name, COUNT(u.id) as uai_count
+      FROM uai_documents u
+      LEFT JOIN ncrs n ON n.id = u.ncr_id
+      LEFT JOIN bills b ON b.id = n.bill_id
+      LEFT JOIN suppliers s ON s.id = b.supplier_id
+      WHERE 1=1 ${extra}
+      GROUP BY s.id ORDER BY uai_count DESC LIMIT 5
+    `).all(...params);
+
+    const HERO_STATS = [
+      { value: agg.total || 0, label: 'UAI ทั้งหมด', color: '#1A3A5C' },
+      { value: agg.completed || 0, label: 'เสร็จสมบูรณ์', color: '#16A34A' },
+      { value: agg.pending || 0, label: 'รอดำเนินการ', color: '#D97706' },
+      { value: agg.rejected || 0, label: 'ปฏิเสธ', color: '#DC2626' },
+    ];
+    const heroCells = HERO_STATS.map(h => `
+      <div class="hero-box" style="border-top:4px solid ${h.color};">
+        <div class="hero-value" style="color:${h.color};">${esc(h.value)}</div>
+        <div class="hero-label">${esc(h.label)}</div>
+      </div>`).join('');
+
+    const topSuppliersRows = topUaiSuppliers.length
+      ? topUaiSuppliers.map(s => `<tr><td>${esc(s.name || '-')}</td><td style="text-align:right;">${s.uai_count}</td></tr>`).join('')
+      : `<tr><td colspan="2" class="no-data-inline">ไม่มีข้อมูล</td></tr>`;
+
+    const theadRow = `<tr><th>รหัส UAI</th><th>NCR อ้างอิง</th><th>Supplier</th><th>วันที่ขอ</th><th>สถานะ</th></tr>`;
+    const dataRows = uais.map(u => `
+      <tr>
+        <td>${esc(u.uai_code)}</td>
+        <td>${esc(u.ncr_code || '-')}</td>
+        <td>${esc(u.supplier_name || '-')}</td>
+        <td>${esc((u.created_at || '').slice(0, 10))}</td>
+        <td>${esc(statusLabel(u.status))}</td>
+      </tr>`).join('');
+
+    const rangeLabel = pdfRangeLabel(from, to);
+    const { headerTemplate, footerTemplate } = reportPdfHeaderFooter(req, 'รายงาน UAI (UAI Report)', rangeLabel);
+
+    const html = `<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8">
+<style>${reportPdfStyle()}</style>
+</head><body>
+<div class="hero-row">${heroCells}</div>
+<div class="split-row">
+  <div class="split-col">
+    <div class="split-heading">Top 5 Supplier มี UAI มากที่สุด</div>
+    <table><thead><tr><th>Supplier</th><th style="text-align:right;">UAI</th></tr></thead><tbody>${topSuppliersRows}</tbody></table>
+  </div>
+</div>
+<div class="section-title">รายการ UAI (${uais.length})</div>
+${uais.length === 0
+  ? '<div class="no-data">ไม่มีข้อมูล</div>'
+  : `<table><thead>${theadRow}</thead><tbody>${dataRows}</tbody></table>`}
+</body></html>`;
+
+    await sendReportPdf(res, html, headerTemplate, footerTemplate, `report-uai-${from||'all'}-${to||'all'}.pdf`);
+  } catch (e) {
+    if (!res.headersSent) res.status(500).json({ error: 'Export ไม่สำเร็จ: ' + e.message });
+  }
 });
 
 // ===== DAILY RECEIVING REPORT =====

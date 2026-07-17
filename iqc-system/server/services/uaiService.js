@@ -118,7 +118,7 @@ function signUai({ uai, actorId, actorRole, actorIp, sigFile, action, comment })
   return sign();
 }
 
-// CCO/CMO/CPO ปฏิเสธ UAI (→ uai_rejected_by_exec, NCR กลับ pending_supplier)
+// COO/CMO/CPO ปฏิเสธ UAI (→ uai_rejected_by_exec, NCR กลับ pending_supplier)
 function rejectExec({ uai, reason, actorId, actorRole, actorIp }) {
   const ncr = db.prepare('SELECT ncr_code FROM ncrs WHERE id=?').get(uai.ncr_id);
   const rejectorLabel = { cco: 'COO', cmo: 'CMO', cpo: 'CPO' }[actorRole] || actorRole;

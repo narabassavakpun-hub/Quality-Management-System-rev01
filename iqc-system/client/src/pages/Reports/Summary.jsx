@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api, { downloadFile } from '../../utils/api';
 import SummaryCard from '../../components/UI/SummaryCard';
 import Button from '../../components/UI/Button';
+import SortTh from '../../components/UI/SortTh';
+import { useSortable } from '../../hooks/useSortable';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
 function useDateRange() {
@@ -26,6 +28,12 @@ export default function SummaryReport() {
     queryFn: () => api.get(`/reports/summary?from=${applied.from}&to=${applied.to}`).then(r => r.data),
   });
 
+  // เติม ncr_rate เป็นตัวเลขไว้ก่อน sort (คอลัมน์ "อัตรา NCR (%)" เดิม compute ตอน render เฉยๆ ไม่มี field ให้ sort ตรงๆ)
+  const scorecardRows = useMemo(() => (data?.supplier_scorecard || []).map(s => ({
+    ...s, ncr_rate: s.total_bills > 0 ? (s.total_ncr / s.total_bills) * 100 : 0,
+  })), [data]);
+  const { sorted: sortedScorecard, onSort, sortKey, sortDir } = useSortable(scorecardRows, 'total_ncr');
+
   return (
     <div className="space-y-4">
       <div className="card flex flex-wrap gap-3 items-end sticky top-0 z-10">
@@ -44,7 +52,7 @@ export default function SummaryReport() {
         <>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <SummaryCard value={data.summary.total_bills} label="บิลทั้งหมด" color="primary" />
-            <SummaryCard value={data.summary.total_received} label="รายการรับเข้า" color="accent" />
+            <SummaryCard value={data.summary.total_items} label="รายการรับเข้า" color="accent" />
             <SummaryCard value={`${data.summary.pass_rate}%`} label="อัตราผ่าน" color="success" />
             <SummaryCard value={data.summary.total_ncr} label="NCR ทั้งหมด" color="warning" />
             <SummaryCard value={data.summary.open_ncr} label="NCR เปิดอยู่" color="danger" />
@@ -84,9 +92,17 @@ export default function SummaryReport() {
             <h3 className="text-h3 font-semibold text-primary mb-3">Supplier Scorecard</h3>
             <div className="table-container">
               <table className="table">
-                <thead><tr><th>Supplier</th><th>บิลทั้งหมด</th><th>NCR ทั้งหมด</th><th>อัตรา NCR (%)</th><th>UAI ทั้งหมด</th></tr></thead>
+                <thead>
+                  <tr>
+                    <SortTh col="supplier_name" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>Supplier</SortTh>
+                    <SortTh col="total_bills" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>บิลทั้งหมด</SortTh>
+                    <SortTh col="total_ncr" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>NCR ทั้งหมด</SortTh>
+                    <SortTh col="ncr_rate" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>อัตรา NCR (%)</SortTh>
+                    <SortTh col="total_uai" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>UAI ทั้งหมด</SortTh>
+                  </tr>
+                </thead>
                 <tbody>
-                  {data.supplier_scorecard?.map((s, i) => (
+                  {sortedScorecard.map((s, i) => (
                     <tr key={i} className="cursor-default">
                       <td>{s.supplier_name}</td>
                       <td className="font-mono">{s.total_bills}</td>
