@@ -196,10 +196,16 @@ function approveNcr({ ncr, actorId, actorRole, actorIp, comment, action, disposi
       );
 
       // COO รับทราบ NCR (email + Telegram ส่วนตัว) — แจ้งเตือนเฉยๆ ไม่มีปุ่ม/สถานะ acknowledge ในระบบ (ยืนยันกับ user แล้ว)
+      // S128f — bug จริง: `ncr` ที่รับมาจาก routes/ncr.js's POST /:id/approve มาจาก `SELECT * FROM ncrs` เปล่าๆ
+      // (ไม่ join bills/suppliers เหมือน GET /:id) จึงไม่มี ncr.supplier_name เลย ต้อง query เพิ่มเอง
+      const supplierRow = db.prepare(`
+        SELECT s.name as supplier_name FROM bills b LEFT JOIN suppliers s ON s.id = b.supplier_id WHERE b.id = ?
+      `).get(ncr.bill_id);
+      const ncrWithSupplier = { ...ncr, supplier_name: supplierRow?.supplier_name || '-' };
       const fullItems = getFullNcrItems(ncr.id);
-      const subject = `มีเอกสาร NCR สร้างใหม่ เลขที่ ${ncr.ncr_code} (${ncr.supplier_name}) จำนวน ${fullItems.length} รายการ`;
-      const html = buildNcrInfoHtml(ncr, fullItems);
-      const text = buildNcrInfoText(ncr, fullItems);
+      const subject = `${ncr.ncr_code} (${ncrWithSupplier.supplier_name}) จำนวน ${fullItems.length} รายการ`;
+      const html = buildNcrInfoHtml(ncrWithSupplier, fullItems);
+      const text = buildNcrInfoText(ncrWithSupplier, fullItems);
       for (const coo of getCooUsers()) {
         if (coo.email) sendEmail(coo.email, subject, html);
         if (coo.telegram_chat_id) sendTelegram(coo.telegram_chat_id, `[IQC] ${subject}\n\n${text}`);

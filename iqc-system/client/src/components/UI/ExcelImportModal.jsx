@@ -3,7 +3,11 @@ import api from '../../utils/api';
 import Modal from './Modal';
 import Button from './Button';
 
-const STATUS_BG = { error: 'bg-red-50 dark:bg-red-900', warning: 'bg-amber-50 dark:bg-amber-900', ok: '' };
+const STATUS_BG = {
+  error: 'bg-red-50 dark:bg-red-900', warning: 'bg-amber-50 dark:bg-amber-900', ok: '',
+  // S128k — Suppliers import เท่านั้นที่ผลิต status เหล่านี้ (route อื่นไม่มีทางได้ค่านี้ ปลอดภัยที่จะเพิ่มไว้เฉยๆ)
+  update: 'bg-blue-50 dark:bg-blue-900', skip: 'bg-gray-50 dark:bg-gray-800',
+};
 
 const Spinner = () => (
   <svg className="w-8 h-8 mx-auto mb-3 animate-spin text-accent" fill="none" viewBox="0 0 24 24">
@@ -19,11 +23,12 @@ export default function ExcelImportModal({ open, onClose, title = 'Import Excel'
   const [step, setStep]       = useState('pick'); // pick | previewing | preview | importing | done
   const [error, setError]     = useState('');
   const [count, setCount]     = useState(0);
+  const [doneExtra, setDoneExtra] = useState(null); // { updated, skipped } — เฉพาะ route ที่ส่งมา (Suppliers)
   const fileRef = useRef();
 
   function handleClose() {
     if (step === 'importing') return;
-    setFile(null); setPreview(null); setStep('pick'); setError(''); setCount(0);
+    setFile(null); setPreview(null); setStep('pick'); setError(''); setCount(0); setDoneExtra(null);
     onClose();
   }
 
@@ -46,7 +51,9 @@ export default function ExcelImportModal({ open, onClose, title = 'Import Excel'
     try {
       const fd = new FormData(); fd.append('file', file);
       const { data } = await api.post(`${apiPath}/import`, fd);
-      setCount(data.imported); setStep('done');
+      setCount(data.imported);
+      setDoneExtra((data.updated !== undefined || data.skipped !== undefined) ? { updated: data.updated || 0, skipped: data.skipped || 0 } : null);
+      setStep('done');
       onDone?.();
     } catch (e) {
       setError(e?.response?.data?.error || 'Import ไม่สำเร็จ');
@@ -98,6 +105,10 @@ export default function ExcelImportModal({ open, onClose, title = 'Import Excel'
       {/* ── Step: preview ── */}
       {step === 'preview' && preview && (
         <div className="space-y-4">
+          {preview.headerWarnings?.map((w, i) => (
+            <div key={i} className="text-warning text-small bg-amber-50 dark:bg-amber-900 border border-amber-200 dark:border-amber-700 rounded px-3 py-2">{w}</div>
+          ))}
+
           {/* summary chips */}
           <div className="flex flex-wrap gap-2">
             <span className="px-2.5 py-1 rounded-full text-small bg-gray-100 dark:bg-gray-900 text-text font-medium">
@@ -111,6 +122,16 @@ export default function ExcelImportModal({ open, onClose, title = 'Import Excel'
             {preview.warningCount > 0 && (
               <span className="px-2.5 py-1 rounded-full text-small bg-amber-100 dark:bg-amber-900 text-warning font-medium">
                 คำเตือน {preview.warningCount} รายการ
+              </span>
+            )}
+            {preview.updateCount > 0 && (
+              <span className="px-2.5 py-1 rounded-full text-small bg-blue-100 dark:bg-blue-900 text-accent font-medium">
+                อัปเดต {preview.updateCount} รายการ
+              </span>
+            )}
+            {preview.skipCount > 0 && (
+              <span className="px-2.5 py-1 rounded-full text-small bg-gray-100 dark:bg-gray-800 text-muted font-medium">
+                ข้าม {preview.skipCount} รายการ (ไม่มีการเปลี่ยนแปลง)
               </span>
             )}
             {preview.errorCount === 0 && (
@@ -140,9 +161,18 @@ export default function ExcelImportModal({ open, onClose, title = 'Import Excel'
                       <td key={k} className="px-2 py-1.5">{r.display?.[k] ?? '-'}</td>
                     ))}
                     <td className="px-2 py-1.5">
-                      {r.errors.length === 0 && r.warnings.length === 0 && (
+                      {r.status === 'skip' && (
+                        <span className="text-muted font-medium text-[11px]">ไม่มีการเปลี่ยนแปลง — ข้าม</span>
+                      )}
+                      {r.status === 'update' && (
+                        <span className="text-accent font-medium text-[11px]">อัปเดต</span>
+                      )}
+                      {r.errors.length === 0 && r.warnings.length === 0 && r.status !== 'skip' && r.status !== 'update' && (
                         <span className="text-success font-medium text-[11px]">OK</span>
                       )}
+                      {r.changes?.map((c, i) => (
+                        <div key={i} className="text-accent text-[11px] leading-snug">{c}</div>
+                      ))}
                       {r.errors.map((e, i) => (
                         <div key={i} className="text-danger text-[11px] leading-snug">{e}</div>
                       ))}
@@ -190,7 +220,15 @@ export default function ExcelImportModal({ open, onClose, title = 'Import Excel'
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           <p className="text-h3 font-semibold text-text">นำเข้าข้อมูลสำเร็จ</p>
-          <p className="text-muted text-small">เพิ่ม {count} รายการเรียบร้อยแล้ว</p>
+          {doneExtra ? (
+            <p className="text-muted text-small">
+              เพิ่มใหม่ {count} รายการ
+              {doneExtra.updated > 0 && <> · อัปเดต {doneExtra.updated} รายการ</>}
+              {doneExtra.skipped > 0 && <> · ข้าม {doneExtra.skipped} รายการ (ไม่มีการเปลี่ยนแปลง)</>}
+            </p>
+          ) : (
+            <p className="text-muted text-small">เพิ่ม {count} รายการเรียบร้อยแล้ว</p>
+          )}
           <div className="pt-2"><Button onClick={handleClose}>ปิด</Button></div>
         </div>
       )}

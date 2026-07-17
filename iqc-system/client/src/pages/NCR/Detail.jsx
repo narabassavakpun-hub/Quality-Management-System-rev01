@@ -8,6 +8,7 @@ import Button from '../../components/UI/Button';
 import Modal from '../../components/UI/Modal';
 import ConfirmDialog from '../../components/UI/ConfirmDialog';
 import ImageUploadPair from '../../components/UI/ImageUploadPair';
+import { ncrDisplayStatusKey } from '../../utils/rolePermissions';
 
 const DISPOSITION_LABELS = {
   return: 'ส่งคืน Supplier (Return)',
@@ -384,7 +385,7 @@ export default function NCRDetail() {
         <div>
           <h1 className="page-title">{ncr.ncr_code}</h1>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
-            <Badge status={ncr.status} />
+            <Badge status={ncrDisplayStatusKey(ncr)} />
             <span className={`badge ${isNCP ? 'bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-200' : 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-200'}`}>
               {isNCP ? 'NCP Minor — บันทึกภายใน' : 'NCR Major'}
             </span>
@@ -468,6 +469,9 @@ export default function NCRDetail() {
                   <div className="col-span-2 sm:col-span-3">
                     <span className="font-medium text-body">{item.item_name}</span>
                     {item.product_code && <span className="text-muted font-mono text-small ml-1">({item.product_code})</span>}
+                    {item.item_name_en && (
+                      <div className="text-small text-muted italic">EN: {item.item_name_en}</div>
+                    )}
                   </div>
                   <div className="text-small">
                     <span className="text-muted">รับเข้า: </span>
@@ -491,6 +495,12 @@ export default function NCRDetail() {
                     <div className="text-small col-span-2 sm:col-span-3">
                       <span className="text-muted">รายละเอียด: </span>
                       {item.defect_detail}
+                    </div>
+                  )}
+                  {item.defect_detail_en && (
+                    <div className="text-small col-span-2 sm:col-span-3 italic text-muted">
+                      <span className="not-italic">รายละเอียด (EN): </span>
+                      {item.defect_detail_en}
                     </div>
                   )}
                   {(item.claim_value_thb || item.claim_value_usd) && (

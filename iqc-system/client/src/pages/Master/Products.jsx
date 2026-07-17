@@ -14,7 +14,10 @@ import SearchableSelect from '../../components/UI/SearchableSelect';
 const PAGE_SIZE = 20;
 import { useSortable } from '../../hooks/useSortable';
 
-const IMPORT_STATUS_CLASS = { error: 'bg-red-50 dark:bg-red-900', warning: 'bg-amber-50 dark:bg-amber-900', ok: '' };
+const IMPORT_STATUS_CLASS = {
+  error: 'bg-red-50 dark:bg-red-900', warning: 'bg-amber-50 dark:bg-amber-900', ok: '',
+  update: 'bg-blue-50 dark:bg-blue-900', skip: 'bg-gray-50 dark:bg-gray-800',
+};
 
 // ─── AQL Inspection Plan Options ───────────────────────────────────────────────
 const INSPECTION_LEVELS = [
@@ -469,6 +472,7 @@ export default function Products() {
   const [importStep, setImportStep]   = useState('pick'); // pick | previewing | preview | importing | done
   const [importError, setImportError] = useState('');
   const [importCount, setImportCount] = useState(0);
+  const [importExtra, setImportExtra] = useState(null); // { updated, skipped }
   const importFileRef = useRef();
 
   useEffect(() => {
@@ -516,7 +520,7 @@ export default function Products() {
 
   function openImport() {
     setImportOpen(true); setImportFile(null); setImportPreview(null);
-    setImportStep('pick'); setImportError(''); setImportCount(0);
+    setImportStep('pick'); setImportError(''); setImportCount(0); setImportExtra(null);
   }
   function closeImport() { setImportOpen(false); }
 
@@ -545,7 +549,9 @@ export default function Products() {
     try {
       const fd = new FormData(); fd.append('file', importFile);
       const { data } = await api.post('/master/products/import', fd);
-      setImportCount(data.imported); setImportStep('done');
+      setImportCount(data.imported);
+      setImportExtra((data.updated !== undefined || data.skipped !== undefined) ? { updated: data.updated || 0, skipped: data.skipped || 0 } : null);
+      setImportStep('done');
       qc.invalidateQueries(['products']);
     } catch (e) {
       setImportError(e?.response?.data?.error || 'Import ไม่สำเร็จ');
@@ -893,6 +899,16 @@ export default function Products() {
                   คำเตือน {importPreview.warningCount} รายการ
                 </span>
               )}
+              {importPreview.updateCount > 0 && (
+                <span className="px-2.5 py-1 rounded-full text-small bg-blue-100 dark:bg-blue-900 text-accent font-medium">
+                  อัปเดต {importPreview.updateCount} รายการ
+                </span>
+              )}
+              {importPreview.skipCount > 0 && (
+                <span className="px-2.5 py-1 rounded-full text-small bg-gray-100 dark:bg-gray-800 text-muted font-medium">
+                  ข้าม {importPreview.skipCount} รายการ (ไม่มีการเปลี่ยนแปลง)
+                </span>
+              )}
               {importPreview.errorCount === 0 && (
                 <span className="px-2.5 py-1 rounded-full text-small bg-green-100 dark:bg-green-900 text-success font-medium">
                   พร้อม Import
@@ -918,15 +934,24 @@ export default function Products() {
                   {importPreview.results.map(r => (
                     <tr key={r.row} className={`border-b border-border ${IMPORT_STATUS_CLASS[r.status]}`}>
                       <td className="px-2 py-1.5 text-muted font-mono">{r.row}</td>
-                      <td className="px-2 py-1.5 font-mono">{r.code || '-'}</td>
-                      <td className="px-2 py-1.5 font-medium">{r.name || <span className="text-danger italic">ว่าง</span>}</td>
-                      <td className="px-2 py-1.5">{r.supplierName || '-'}</td>
-                      <td className="px-2 py-1.5">{r.groupName || '-'}</td>
-                      <td className="px-2 py-1.5">{r.unitName || '-'}</td>
+                      <td className="px-2 py-1.5 font-mono">{r.display?.รหัส || '-'}</td>
+                      <td className="px-2 py-1.5 font-medium">{r.display?.ชื่อสินค้า || <span className="text-danger italic">ว่าง</span>}</td>
+                      <td className="px-2 py-1.5">{r.display?.Supplier || '-'}</td>
+                      <td className="px-2 py-1.5">{r.display?.กลุ่ม || '-'}</td>
+                      <td className="px-2 py-1.5">{r.display?.หน่วย || '-'}</td>
                       <td className="px-2 py-1.5">
-                        {r.errors.length === 0 && r.warnings.length === 0 && (
+                        {r.status === 'skip' && (
+                          <span className="text-muted font-medium text-[12px]">ไม่มีการเปลี่ยนแปลง — ข้าม</span>
+                        )}
+                        {r.status === 'update' && (
+                          <span className="text-accent font-medium text-[12px]">อัปเดต</span>
+                        )}
+                        {r.errors.length === 0 && r.warnings.length === 0 && r.status !== 'skip' && r.status !== 'update' && (
                           <span className="text-success font-medium">OK</span>
                         )}
+                        {r.changes?.map((c, i) => (
+                          <div key={i} className="text-accent text-[12px] leading-snug">{c}</div>
+                        ))}
                         {r.errors.map((e, i) => (
                           <div key={i} className="text-danger text-[12px] leading-snug">{e}</div>
                         ))}
@@ -979,7 +1004,15 @@ export default function Products() {
           <div className="py-10 text-center space-y-3">
             <svg className="w-14 h-14 mx-auto text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
             <p className="text-h3 font-semibold text-text">นำเข้าข้อมูลสำเร็จ</p>
-            <p className="text-muted text-small">เพิ่มสินค้า {importCount} รายการเรียบร้อยแล้ว</p>
+            {importExtra ? (
+              <p className="text-muted text-small">
+                เพิ่มใหม่ {importCount} รายการ
+                {importExtra.updated > 0 && <> · อัปเดต {importExtra.updated} รายการ</>}
+                {importExtra.skipped > 0 && <> · ข้าม {importExtra.skipped} รายการ (ไม่มีการเปลี่ยนแปลง)</>}
+              </p>
+            ) : (
+              <p className="text-muted text-small">เพิ่มสินค้า {importCount} รายการเรียบร้อยแล้ว</p>
+            )}
             <div className="pt-2">
               <Button onClick={closeImport}>ปิด</Button>
             </div>

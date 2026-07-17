@@ -39,12 +39,16 @@ function parseImportFile(buffer) {
 
 function cellStr(row, n) { return String(row.getCell(n).value ?? '').trim(); }
 
-function importResponse(results) {
+function importResponse(results, extra = {}) {
   return {
     results,
     total:        results.length,
     errorCount:   results.filter(r => r.status === 'error').length,
     warningCount: results.filter(r => r.status === 'warning').length,
+    // S128k — update/skip: เฉพาะ Suppliers import ที่ผลิต status เหล่านี้จริง (route อื่นจะได้ 0 เสมอ ไม่กระทบ)
+    updateCount:  results.filter(r => r.status === 'update').length,
+    skipCount:    results.filter(r => r.status === 'skip').length,
+    ...extra,
   };
 }
 
@@ -54,6 +58,22 @@ function makeResult(row, display, errors, warnings) {
 
 function parseBool(v) {
   return ['ใช่','yes','y','1','true'].includes(String(v ?? '').trim().toLowerCase());
+}
+
+// S129 — normalize null/undefined/'' ให้เท่ากันตอนเทียบ field เดิมกับที่ import เข้ามา (diff-aware import ทุก route)
+function normVal(v) {
+  return (v === null || v === undefined) ? '' : String(v).trim();
+}
+
+// S129 — แถบสีสลับ (zebra stripe) ให้ทุก export sheet กันกรอกข้อมูลผิดแถวตอนแก้ไฟล์เอง — ใช้กับทุก Master List export
+function applyZebraStripes(ws, firstDataRow, lastDataRow, colCount) {
+  for (let r = firstDataRow; r <= lastDataRow; r++) {
+    if ((r - firstDataRow) % 2 === 1) continue; // แถวคี่ (นับจากแถวข้อมูลแรก) ปล่อยว่าง/ขาว
+    const row = ws.getRow(r);
+    for (let c = 1; c <= colCount; c++) {
+      row.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F6F8' } };
+    }
+  }
 }
 
 // ── Header validation ────────────────────────────────────────────────────────
@@ -71,25 +91,41 @@ function checkHeaders(ws, expectedHeaders) {
   return mismatches;
 }
 
+// ── Purchasing users (active) — ใช้ทั้ง export (สร้างคอลัมน์) และ import (จับคู่ header กับ user)
+function getActivePurchasingUsers() {
+  return db.prepare("SELECT id, full_name FROM users WHERE role = 'purchasing' AND is_active = 1 ORDER BY full_name").all();
+}
+
 // ===== SUPPLIERS =====
+// S128k — เพิ่มคอลัมน์ "ผู้ดูแลจัดซื้อ" แบบ 1 คอลัมน์ต่อ 1 คน (Y/ว่าง) แทน dropdown เดียว — Excel data validation
+// รองรับแค่ single-select ต่อเซลล์ (multi-select ต้องพึ่ง VBA macro ซึ่ง exceljs เขียนไม่ได้ ยืนยันกับ user แล้ว)
 router.get('/suppliers/export', ...adminOnly, async (req, res) => {
   const wb = new ExcelJS.Workbook(); wb.creator = 'IQC System';
   const ws = wb.addWorksheet('ผู้ผลิต');
+  const purchasingUsers = getActivePurchasingUsers();
   ws.columns = [
     { header: 'รหัสผู้ผลิต',   key: 'code',  width: 16 },
     { header: 'ชื่อผู้ผลิต *', key: 'name',  width: 32 },
     { header: 'อีเมล',         key: 'email', width: 28 },
     { header: 'เบอร์โทร',      key: 'phone', width: 18 },
     { header: 'หมายเหตุ',      key: 'notes', width: 36 },
+    ...purchasingUsers.map(u => ({ header: u.full_name, key: `pu_${u.id}`, width: 14 })),
   ];
-  styleExcelHeader(ws, 5);
-  db.prepare('SELECT code, name, email, phone, notes FROM suppliers ORDER BY name').all()
-    .forEach(r => ws.addRow([r.code||'', r.name, r.email||'', r.phone||'', r.notes||'']));
+  styleExcelHeader(ws, 5 + purchasingUsers.length);
+  const suppliers = db.prepare('SELECT id, code, name, email, phone, notes FROM suppliers ORDER BY name').all();
+  attachSupplierPurchasingAssignees(suppliers);
+  suppliers.forEach(r => {
+    const assignedIds = new Set(r.purchasing_user_ids);
+    ws.addRow([r.code||'', r.name, r.email||'', r.phone||'', r.notes||'', ...purchasingUsers.map(u => assignedIds.has(u.id) ? 'Y' : '')]);
+  });
+  applyZebraStripes(ws, 2, suppliers.length + 1, 5 + purchasingUsers.length);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', "attachment; filename*=UTF-8''suppliers_template.xlsx");
   await wb.xlsx.write(res); res.end();
 });
 
+// S128k — diff-aware import: ถ้ารหัส/ชื่อตรงกับ supplier เดิม เช็คทีละ field แทนที่จะ error ทันที
+// เหมือนกัน 100% (รวมผู้ดูแลจัดซื้อที่คอลัมน์จำได้) → skip เงียบๆ ไม่แตะ DB, มีจุดต่างอย่างน้อย 1 จุด → update จริง
 router.post('/suppliers/import', ...adminOnly, excelMemUpload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'กรุณาอัปโหลดไฟล์ .xlsx' });
   let wb; try { wb = await parseImportFile(req.file.buffer); } catch { return res.status(400).json({ error: 'ไฟล์ไม่ถูกต้อง' }); }
@@ -99,8 +135,43 @@ router.post('/suppliers/import', ...adminOnly, excelMemUpload.single('file'), as
   const hErr = checkHeaders(ws, ['รหัสผู้ผลิต', 'ชื่อผู้ผลิต *', 'อีเมล', 'เบอร์โทร', 'หมายเหตุ']);
   if (hErr.length) return res.status(400).json({ error: 'Header ไม่ตรงกับ template — กรุณาใช้ไฟล์ที่ดาวน์โหลดจากระบบ', headerErrors: hErr });
 
-  const existingCodes = new Set(db.prepare('SELECT code FROM suppliers WHERE code IS NOT NULL').all().map(r => r.code.toLowerCase()));
-  const existingNames = new Set(db.prepare('SELECT LOWER(name) as n FROM suppliers').all().map(r => r.n));
+  // คอลัมน์ 6 เป็นต้นไป = ผู้ดูแลจัดซื้อ — จับคู่ header กับ purchasing user ที่ active อยู่ ณ ตอนนี้ (อาจต่างจาก
+  // ตอน export ถ้ามีคนเพิ่ม/ปิดใช้งานหลังจากนั้น — header ที่จำไม่ได้ = เตือนแล้วข้าม ไม่ error ทั้งไฟล์)
+  const purchasingUsers = getActivePurchasingUsers();
+  const nameToId = new Map(purchasingUsers.map(u => [u.full_name.trim().toLowerCase(), u.id]));
+  const headerRow = ws.getRow(1);
+  const lastCol = Math.max(headerRow.cellCount, ws.columnCount || 0, 5);
+  const assigneeColumns = []; // [{ col, userId }]
+  const unrecognizedHeaders = [];
+  for (let c = 6; c <= lastCol; c++) {
+    const headerText = String(headerRow.getCell(c).value ?? '').trim();
+    if (!headerText) continue;
+    const uid = nameToId.get(headerText.toLowerCase());
+    if (uid) assigneeColumns.push({ col: c, userId: uid });
+    else unrecognizedHeaders.push(headerText);
+  }
+  const recognizedUserIds = assigneeColumns.map(a => a.userId);
+
+  const existingSuppliers = db.prepare('SELECT id, code, name, email, phone, notes FROM suppliers').all();
+  const byCode = new Map(), byName = new Map();
+  for (const s of existingSuppliers) {
+    if (s.code) byCode.set(s.code.toLowerCase(), s);
+    byName.set(s.name.toLowerCase(), s);
+  }
+  // ผู้ดูแลปัจจุบันของแต่ละ supplier — จำกัดเฉพาะ user ที่คอลัมน์ในไฟล์นี้จำได้ (กันไม่ให้ import ไปล้างผู้ดูแลที่ถูก
+  // เพิ่มเข้าระบบทีหลัง ไม่มีคอลัมน์ในไฟล์เก่าเลย)
+  const currentAssigneesBySupplier = new Map(); // supplierId -> Set(userId)
+  if (recognizedUserIds.length && existingSuppliers.length) {
+    const ph1 = existingSuppliers.map(() => '?').join(',');
+    const ph2 = recognizedUserIds.map(() => '?').join(',');
+    for (const row of db.prepare(`SELECT supplier_id, user_id FROM supplier_purchasing_assignees WHERE supplier_id IN (${ph1}) AND user_id IN (${ph2})`)
+      .all(...existingSuppliers.map(s => s.id), ...recognizedUserIds)) {
+      if (!currentAssigneesBySupplier.has(row.supplier_id)) currentAssigneesBySupplier.set(row.supplier_id, new Set());
+      currentAssigneesBySupplier.get(row.supplier_id).add(row.user_id);
+    }
+  }
+
+  const nameOfUser = id => purchasingUsers.find(u => u.id === id)?.full_name || String(id);
   const seenCodes = new Set(), seenNames = new Set(), results = [];
 
   ws.eachRow({ includeEmpty: false }, (row, rowNum) => {
@@ -109,36 +180,93 @@ router.post('/suppliers/import', ...adminOnly, excelMemUpload.single('file'), as
     if (!name && !code) return;
     const errors = [], warnings = [];
     if (!name) errors.push('ชื่อผู้ผลิตห้ามว่าง');
+    // ซ้ำในไฟล์เดียวกันเท่านั้นที่ยัง error ตรงๆ (2 แถวอ้างรหัส/ชื่อเดียวกันในไฟล์เดียวกันคือข้อมูลกำกวม ไม่ใช่ update ที่ถูกต้อง)
     if (code) {
-      if (existingCodes.has(code.toLowerCase()))  errors.push(`รหัส "${code}" มีอยู่แล้ว`);
-      else if (seenCodes.has(code.toLowerCase()))  errors.push(`รหัส "${code}" ซ้ำในไฟล์`);
+      if (seenCodes.has(code.toLowerCase())) errors.push(`รหัส "${code}" ซ้ำในไฟล์`);
       else seenCodes.add(code.toLowerCase());
     }
     if (name) {
-      if (existingNames.has(name.toLowerCase()))   warnings.push(`ชื่อ "${name}" มีอยู่แล้ว`);
-      else if (seenNames.has(name.toLowerCase()))  warnings.push(`ชื่อ "${name}" ซ้ำในไฟล์`);
+      if (seenNames.has(name.toLowerCase())) warnings.push(`ชื่อ "${name}" ซ้ำในไฟล์`);
       else seenNames.add(name.toLowerCase());
     }
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) warnings.push(`อีเมลรูปแบบไม่ถูกต้อง`);
-    results.push({ ...makeResult(rowNum, { รหัส: code||'-', ชื่อผู้ผลิต: name, อีเมล: email||'-', เบอร์โทร: phone||'-' }, errors, warnings), _data: { code:code||null, name, email:email||null, phone:phone||null, notes:notes||null } });
+
+    const rowAssigneeIds = new Set(assigneeColumns.filter(a => parseBool(cellStr(row, a.col))).map(a => a.userId));
+    const display = { รหัส: code||'-', ชื่อผู้ผลิต: name, อีเมล: email||'-', เบอร์โทร: phone||'-' };
+    const _data = { code:code||null, name, email:email||null, phone:phone||null, notes:notes||null, assigneeIds: [...rowAssigneeIds] };
+
+    if (errors.length) { results.push({ row: rowNum, display, errors, warnings, status: 'error', _data }); return; }
+
+    const existing = (code && byCode.get(code.toLowerCase())) || (name && byName.get(name.toLowerCase())) || null;
+
+    if (existing) {
+      _data.id = existing.id;
+      const currentIds = currentAssigneesBySupplier.get(existing.id) || new Set();
+      const changes = [];
+      if (normVal(existing.name)  !== normVal(name))  changes.push(`ชื่อ: "${existing.name}" → "${name}"`);
+      if (normVal(existing.email) !== normVal(email)) changes.push(`อีเมล: "${existing.email||'-'}" → "${email||'-'}"`);
+      if (normVal(existing.phone) !== normVal(phone)) changes.push(`เบอร์โทร: "${existing.phone||'-'}" → "${phone||'-'}"`);
+      if (normVal(existing.notes) !== normVal(notes)) changes.push(`หมายเหตุ: "${existing.notes||'-'}" → "${notes||'-'}"`);
+      const added   = [...rowAssigneeIds].filter(id => !currentIds.has(id));
+      const removed = [...currentIds].filter(id => !rowAssigneeIds.has(id));
+      if (added.length || removed.length) {
+        const parts = [];
+        if (added.length)   parts.push(`+${added.map(nameOfUser).join(', ')}`);
+        if (removed.length) parts.push(`-${removed.map(nameOfUser).join(', ')}`);
+        changes.push(`ผู้ดูแลจัดซื้อ: ${parts.join(' ')}`);
+      }
+      if (!changes.length) {
+        results.push({ row: rowNum, display, errors: [], warnings, status: 'skip', changes: [], _data });
+      } else {
+        results.push({ row: rowNum, display, errors: [], warnings, status: 'update', changes, _data });
+      }
+    } else {
+      results.push({ row: rowNum, display, errors: [], warnings, status: warnings.length ? 'warning' : 'ok', _data });
+    }
   });
 
   if (!results.length) return res.status(400).json({ error: 'ไม่พบข้อมูลในไฟล์' });
-  if (req.query.preview === '1') return res.json(importResponse(results));
+  const headerWarnings = unrecognizedHeaders.length
+    ? [`ไม่รู้จักผู้ดูแลจัดซื้อคอลัมน์: ${unrecognizedHeaders.join(', ')} — ข้ามคอลัมน์นี้`]
+    : undefined;
+  if (req.query.preview === '1') return res.json(importResponse(results, headerWarnings ? { headerWarnings } : {}));
   if (results.some(r => r.errors.length)) return res.status(400).json({ error: 'มีข้อมูลที่ไม่ถูกต้อง' });
 
-  const ins = db.prepare('INSERT INTO suppliers (code, name, email, phone, notes) VALUES (?, ?, ?, ?, ?)');
+  const insSupplier = db.prepare('INSERT INTO suppliers (code, name, email, phone, notes) VALUES (?, ?, ?, ?, ?)');
+  const updSupplier = db.prepare('UPDATE suppliers SET code=?, name=?, email=?, phone=?, notes=? WHERE id=?');
+  const insAssignee = db.prepare('INSERT OR IGNORE INTO supplier_purchasing_assignees (supplier_id, user_id) VALUES (?, ?)');
+  const delAssigneesScoped = recognizedUserIds.length
+    ? db.prepare(`DELETE FROM supplier_purchasing_assignees WHERE supplier_id = ? AND user_id IN (${recognizedUserIds.map(() => '?').join(',')})`)
+    : null;
+  function syncAssignees(supplierId, assigneeIds) {
+    if (delAssigneesScoped) delAssigneesScoped.run(supplierId, ...recognizedUserIds);
+    for (const uid of assigneeIds) insAssignee.run(supplierId, uid);
+  }
+
   const doImport = db.transaction(rows => {
-    let n = 0;
+    let inserted = 0, updated = 0, skipped = 0;
     for (const r of rows) {
+      if (r.status === 'skip') { skipped++; continue; }
       const d = r._data;
-      const res2 = ins.run(d.code, d.name, d.email, d.phone, d.notes);
-      db.auditLog('suppliers', res2.lastInsertRowid, 'CREATE', null, { name: d.name, source: 'excel_import' }, req.user.id, req.ip);
-      n++;
+      if (r.status === 'update') {
+        const old = existingSuppliers.find(s => s.id === d.id);
+        updSupplier.run(d.code, d.name, d.email, d.phone, d.notes, d.id);
+        syncAssignees(d.id, d.assigneeIds);
+        db.auditLog('suppliers', d.id, 'UPDATE', old, { name: d.name, email: d.email, phone: d.phone, notes: d.notes, source: 'excel_import' }, req.user.id, req.ip);
+        updated++;
+      } else {
+        const res2 = insSupplier.run(d.code, d.name, d.email, d.phone, d.notes);
+        if (d.assigneeIds.length) syncAssignees(res2.lastInsertRowid, d.assigneeIds);
+        db.auditLog('suppliers', res2.lastInsertRowid, 'CREATE', null, { name: d.name, source: 'excel_import' }, req.user.id, req.ip);
+        inserted++;
+      }
     }
-    return n;
+    return { inserted, updated, skipped };
   });
-  try { res.json({ success: true, imported: doImport(results) }); }
+  try {
+    const { inserted, updated, skipped } = doImport(results);
+    res.json({ success: true, imported: inserted, updated, skipped });
+  }
   catch (e) { res.status(e.message?.includes('UNIQUE') ? 400 : 500).json({ error: e.message?.includes('UNIQUE') ? 'รหัสหรือชื่อซ้ำ' : e.message }); }
 });
 
@@ -346,6 +474,8 @@ router.patch('/suppliers/:id/risks/:riskId', ...adminOrQCManager, (req, res) => 
 });
 
 // ===== PRODUCT GROUPS =====
+// S129 — เพิ่ม has_shelf_life/shelf_life_days (มีอยู่ในตารางจริง+ใช้ใน POST/PATCH JSON API อยู่แล้ว แต่ export/import
+// Excel เดิมไม่เคยมี 2 คอลัมน์นี้เลย)
 router.get('/product-groups/export', ...adminOnly, async (req, res) => {
   const wb = new ExcelJS.Workbook(); wb.creator = 'IQC System';
   const ws = wb.addWorksheet('กลุ่มสินค้า');
@@ -356,40 +486,51 @@ router.get('/product-groups/export', ...adminOnly, async (req, res) => {
     { header: 'บังคับ Lot Number',    key: 'lot',   width: 22 },
     { header: 'บังคับวันหมดอายุ',     key: 'exp',   width: 22 },
     { header: 'บังคับ Certificate',   key: 'cert',  width: 22 },
+    { header: 'มีอายุการเก็บ',        key: 'shelf', width: 18 },
+    { header: 'อายุการเก็บ (วัน)',    key: 'shelf_days', width: 18 },
   ];
-  styleExcelHeader(ws, 6);
+  styleExcelHeader(ws, 8);
 
   // Dropdown ใช่/"" สำหรับ boolean columns
   const dvYN = { type: 'list', allowBlank: true, formulae: ['"ใช่,"'] };
   for (let r = 2; r <= 300; r++) {
-    [3,4,5,6].forEach(c => { ws.getCell(r, c).dataValidation = dvYN; });
+    [3,4,5,6,7].forEach(c => { ws.getCell(r, c).dataValidation = dvYN; });
   }
 
-  db.prepare('SELECT code, name, require_inspection_doc, require_lot_number, require_expiry_date, require_certificate FROM product_groups ORDER BY name').all()
-    .forEach(r => ws.addRow([
-      r.code||'', r.name,
-      r.require_inspection_doc ? 'ใช่' : '',
-      r.require_lot_number     ? 'ใช่' : '',
-      r.require_expiry_date    ? 'ใช่' : '',
-      r.require_certificate    ? 'ใช่' : '',
-    ]));
+  const rows = db.prepare('SELECT code, name, require_inspection_doc, require_lot_number, require_expiry_date, require_certificate, has_shelf_life, shelf_life_days FROM product_groups ORDER BY name').all();
+  rows.forEach(r => ws.addRow([
+    r.code||'', r.name,
+    r.require_inspection_doc ? 'ใช่' : '',
+    r.require_lot_number     ? 'ใช่' : '',
+    r.require_expiry_date    ? 'ใช่' : '',
+    r.require_certificate    ? 'ใช่' : '',
+    r.has_shelf_life          ? 'ใช่' : '',
+    r.shelf_life_days ?? '',
+  ]));
+  applyZebraStripes(ws, 2, rows.length + 1, 8);
 
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', "attachment; filename*=UTF-8''product_groups_template.xlsx");
   await wb.xlsx.write(res); res.end();
 });
 
+// S129 — diff-aware: เหมือนกัน 100% (รวม has_shelf_life/shelf_life_days) → skip, ต่างจุดใดจุดหนึ่ง → update จริง
 router.post('/product-groups/import', ...adminOnly, excelMemUpload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'กรุณาอัปโหลดไฟล์ .xlsx' });
   let wb; try { wb = await parseImportFile(req.file.buffer); } catch { return res.status(400).json({ error: 'ไฟล์ไม่ถูกต้อง' }); }
   const ws = wb.getWorksheet('กลุ่มสินค้า') || wb.worksheets[0];
   if (!ws) return res.status(400).json({ error: 'ไม่พบ Sheet ในไฟล์' });
 
-  const hErr = checkHeaders(ws, ['รหัสกลุ่ม', 'ชื่อกลุ่มสินค้า *', 'บังคับเอกสารตรวจ', 'บังคับ Lot Number', 'บังคับวันหมดอายุ', 'บังคับ Certificate']);
+  const hErr = checkHeaders(ws, ['รหัสกลุ่ม', 'ชื่อกลุ่มสินค้า *', 'บังคับเอกสารตรวจ', 'บังคับ Lot Number', 'บังคับวันหมดอายุ', 'บังคับ Certificate', 'มีอายุการเก็บ', 'อายุการเก็บ (วัน)']);
   if (hErr.length) return res.status(400).json({ error: 'Header ไม่ตรงกับ template — กรุณาใช้ไฟล์ที่ดาวน์โหลดจากระบบ', headerErrors: hErr });
 
-  const existingNames = new Set(db.prepare('SELECT LOWER(name) as n FROM product_groups').all().map(r => r.n));
-  const existingCodes = new Set(db.prepare('SELECT code FROM product_groups WHERE code IS NOT NULL').all().map(r => r.code.toLowerCase()));
+  const existingGroups = db.prepare('SELECT * FROM product_groups').all();
+  const byCode = new Map(), byName = new Map();
+  for (const g of existingGroups) {
+    if (g.code) byCode.set(g.code.toLowerCase(), g);
+    byName.set(g.name.toLowerCase(), g);
+  }
+
   const seenNames = new Set(), seenCodes = new Set(), results = [];
 
   ws.eachRow({ includeEmpty: false }, (row, rowNum) => {
@@ -397,38 +538,73 @@ router.post('/product-groups/import', ...adminOnly, excelMemUpload.single('file'
     const code = cellStr(row,1), name = cellStr(row,2);
     const doc  = parseBool(row.getCell(3).value), lot  = parseBool(row.getCell(4).value);
     const exp  = parseBool(row.getCell(5).value), cert = parseBool(row.getCell(6).value);
+    const shelf = parseBool(row.getCell(7).value);
+    const shelfDaysStr = cellStr(row,8);
+    const shelfDays = shelfDaysStr ? Number(shelfDaysStr) : null;
     if (!name && !code) return;
     const errors = [], warnings = [];
     if (!name) errors.push('ชื่อกลุ่มห้ามว่าง');
+    if (shelfDaysStr && !Number.isFinite(shelfDays)) errors.push('อายุการเก็บ (วัน) ต้องเป็นตัวเลข');
     if (code) {
-      if (existingCodes.has(code.toLowerCase()))  errors.push(`รหัส "${code}" มีอยู่แล้ว`);
-      else if (seenCodes.has(code.toLowerCase()))  errors.push(`รหัส "${code}" ซ้ำในไฟล์`);
+      if (seenCodes.has(code.toLowerCase())) errors.push(`รหัส "${code}" ซ้ำในไฟล์`);
       else seenCodes.add(code.toLowerCase());
     }
     if (name) {
-      if (existingNames.has(name.toLowerCase()))   warnings.push(`ชื่อ "${name}" มีอยู่แล้ว`);
-      else if (seenNames.has(name.toLowerCase()))  warnings.push(`ชื่อ "${name}" ซ้ำในไฟล์`);
+      if (seenNames.has(name.toLowerCase())) warnings.push(`ชื่อ "${name}" ซ้ำในไฟล์`);
       else seenNames.add(name.toLowerCase());
     }
-    results.push({ ...makeResult(rowNum, { รหัส: code||'-', ชื่อกลุ่ม: name, 'เอกสารตรวจ': doc?'ใช่':'-', Lot: lot?'ใช่':'-', 'หมดอายุ': exp?'ใช่':'-', Certificate: cert?'ใช่':'-' }, errors, warnings), _data: { code:code||null, name, doc, lot, exp, cert } });
+
+    const display = { รหัส: code||'-', ชื่อกลุ่ม: name, 'เอกสารตรวจ': doc?'ใช่':'-', Lot: lot?'ใช่':'-', 'หมดอายุ': exp?'ใช่':'-', Certificate: cert?'ใช่':'-', 'อายุการเก็บ': shelf?'ใช่':'-' };
+    const _data = { code:code||null, name, doc, lot, exp, cert, shelf, shelfDays };
+
+    if (errors.length) { results.push({ row: rowNum, display, errors, warnings, status: 'error', _data }); return; }
+
+    const existing = (code && byCode.get(code.toLowerCase())) || (name && byName.get(name.toLowerCase())) || null;
+    if (existing) {
+      _data.id = existing.id;
+      const changes = [];
+      if (normVal(existing.name) !== normVal(name)) changes.push(`ชื่อ: "${existing.name}" → "${name}"`);
+      if (!!existing.require_inspection_doc !== doc) changes.push(`บังคับเอกสารตรวจ: ${existing.require_inspection_doc?'ใช่':'-'} → ${doc?'ใช่':'-'}`);
+      if (!!existing.require_lot_number     !== lot) changes.push(`บังคับ Lot Number: ${existing.require_lot_number?'ใช่':'-'} → ${lot?'ใช่':'-'}`);
+      if (!!existing.require_expiry_date    !== exp) changes.push(`บังคับวันหมดอายุ: ${existing.require_expiry_date?'ใช่':'-'} → ${exp?'ใช่':'-'}`);
+      if (!!existing.require_certificate    !== cert) changes.push(`บังคับ Certificate: ${existing.require_certificate?'ใช่':'-'} → ${cert?'ใช่':'-'}`);
+      if (!!existing.has_shelf_life         !== shelf) changes.push(`มีอายุการเก็บ: ${existing.has_shelf_life?'ใช่':'-'} → ${shelf?'ใช่':'-'}`);
+      if (normVal(existing.shelf_life_days) !== normVal(shelfDays)) changes.push(`อายุการเก็บ (วัน): "${existing.shelf_life_days??'-'}" → "${shelfDays??'-'}"`);
+      if (!changes.length) results.push({ row: rowNum, display, errors: [], warnings, status: 'skip', changes: [], _data });
+      else results.push({ row: rowNum, display, errors: [], warnings, status: 'update', changes, _data });
+    } else {
+      results.push({ row: rowNum, display, errors: [], warnings, status: warnings.length ? 'warning' : 'ok', _data });
+    }
   });
 
   if (!results.length) return res.status(400).json({ error: 'ไม่พบข้อมูลในไฟล์' });
   if (req.query.preview === '1') return res.json(importResponse(results));
   if (results.some(r => r.errors.length)) return res.status(400).json({ error: 'มีข้อมูลที่ไม่ถูกต้อง' });
 
-  const ins = db.prepare('INSERT INTO product_groups (code, name, require_inspection_doc, require_lot_number, require_expiry_date, require_certificate) VALUES (?, ?, ?, ?, ?, ?)');
+  const ins = db.prepare('INSERT INTO product_groups (code, name, require_inspection_doc, require_lot_number, require_expiry_date, require_certificate, has_shelf_life, shelf_life_days) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+  const upd = db.prepare('UPDATE product_groups SET code=?, name=?, require_inspection_doc=?, require_lot_number=?, require_expiry_date=?, require_certificate=?, has_shelf_life=?, shelf_life_days=? WHERE id=?');
   const doImport = db.transaction(rows => {
-    let n = 0;
+    let inserted = 0, updated = 0, skipped = 0;
     for (const r of rows) {
+      if (r.status === 'skip') { skipped++; continue; }
       const d = r._data;
-      const res2 = ins.run(d.code, d.name, d.doc?1:0, d.lot?1:0, d.exp?1:0, d.cert?1:0);
-      db.auditLog('product_groups', res2.lastInsertRowid, 'CREATE', null, { name: d.name, source: 'excel_import' }, req.user.id, req.ip);
-      n++;
+      if (r.status === 'update') {
+        const old = existingGroups.find(g => g.id === d.id);
+        upd.run(d.code, d.name, d.doc?1:0, d.lot?1:0, d.exp?1:0, d.cert?1:0, d.shelf?1:0, d.shelfDays, d.id);
+        db.auditLog('product_groups', d.id, 'UPDATE', old, { name: d.name, source: 'excel_import' }, req.user.id, req.ip);
+        updated++;
+      } else {
+        const res2 = ins.run(d.code, d.name, d.doc?1:0, d.lot?1:0, d.exp?1:0, d.cert?1:0, d.shelf?1:0, d.shelfDays);
+        db.auditLog('product_groups', res2.lastInsertRowid, 'CREATE', null, { name: d.name, source: 'excel_import' }, req.user.id, req.ip);
+        inserted++;
+      }
     }
-    return n;
+    return { inserted, updated, skipped };
   });
-  try { res.json({ success: true, imported: doImport(results) }); }
+  try {
+    const { inserted, updated, skipped } = doImport(results);
+    res.json({ success: true, imported: inserted, updated, skipped });
+  }
   catch (e) { res.status(e.message?.includes('UNIQUE') ? 400 : 500).json({ error: e.message?.includes('UNIQUE') ? 'รหัสหรือชื่อซ้ำ' : e.message }); }
 });
 
@@ -494,8 +670,9 @@ router.get('/units/export', ...adminOnly, async (req, res) => {
     { header: 'ตัวย่อ',          key: 'abbr', width: 14 },
   ];
   styleExcelHeader(ws, 2);
-  db.prepare('SELECT name, abbreviation FROM units ORDER BY name').all()
-    .forEach(r => ws.addRow([r.name, r.abbreviation||'']));
+  const rows = db.prepare('SELECT name, abbreviation FROM units ORDER BY name').all();
+  rows.forEach(r => ws.addRow([r.name, r.abbreviation||'']));
+  applyZebraStripes(ws, 2, rows.length + 1, 2);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', "attachment; filename*=UTF-8''units_template.xlsx");
   await wb.xlsx.write(res); res.end();
@@ -510,7 +687,9 @@ router.post('/units/import', ...adminOnly, excelMemUpload.single('file'), async 
   const hErr = checkHeaders(ws, ['ชื่อหน่วยนับ *', 'ตัวย่อ']);
   if (hErr.length) return res.status(400).json({ error: 'Header ไม่ตรงกับ template — กรุณาใช้ไฟล์ที่ดาวน์โหลดจากระบบ', headerErrors: hErr });
 
-  const existingNames = new Set(db.prepare('SELECT LOWER(name) as n FROM units').all().map(r => r.n));
+  // S129 — diff-aware: ไม่มี code column ให้ Units จึง match ด้วยชื่อ (case-insensitive) เท่านั้น
+  const existingUnits = db.prepare('SELECT * FROM units').all();
+  const byName = new Map(existingUnits.map(u => [u.name.toLowerCase(), u]));
   const seenNames = new Set(), results = [];
 
   ws.eachRow({ includeEmpty: false }, (row, rowNum) => {
@@ -518,10 +697,23 @@ router.post('/units/import', ...adminOnly, excelMemUpload.single('file'), async 
     const name = cellStr(row,1), abbr = cellStr(row,2);
     if (!name) return;
     const errors = [], warnings = [];
-    if (existingNames.has(name.toLowerCase()))  warnings.push(`"${name}" มีอยู่แล้ว`);
-    else if (seenNames.has(name.toLowerCase()))  warnings.push(`"${name}" ซ้ำในไฟล์`);
+    if (seenNames.has(name.toLowerCase())) errors.push(`"${name}" ซ้ำในไฟล์`);
     else seenNames.add(name.toLowerCase());
-    results.push({ ...makeResult(rowNum, { ชื่อหน่วยนับ: name, ตัวย่อ: abbr||'-' }, errors, warnings), _data: { name, abbr:abbr||null } });
+
+    const display = { ชื่อหน่วยนับ: name, ตัวย่อ: abbr||'-' };
+    const _data = { name, abbr: abbr||null };
+    if (errors.length) { results.push({ row: rowNum, display, errors, warnings, status: 'error', _data }); return; }
+
+    const existing = byName.get(name.toLowerCase());
+    if (existing) {
+      _data.id = existing.id;
+      const changes = [];
+      if (normVal(existing.abbreviation) !== normVal(abbr)) changes.push(`ตัวย่อ: "${existing.abbreviation||'-'}" → "${abbr||'-'}"`);
+      if (!changes.length) results.push({ row: rowNum, display, errors: [], warnings, status: 'skip', changes: [], _data });
+      else results.push({ row: rowNum, display, errors: [], warnings, status: 'update', changes, _data });
+    } else {
+      results.push({ row: rowNum, display, errors: [], warnings, status: warnings.length ? 'warning' : 'ok', _data });
+    }
   });
 
   if (!results.length) return res.status(400).json({ error: 'ไม่พบข้อมูลในไฟล์' });
@@ -529,16 +721,29 @@ router.post('/units/import', ...adminOnly, excelMemUpload.single('file'), async 
   if (results.some(r => r.errors.length)) return res.status(400).json({ error: 'มีข้อมูลที่ไม่ถูกต้อง' });
 
   const ins = db.prepare('INSERT INTO units (name, abbreviation) VALUES (?, ?)');
+  const upd = db.prepare('UPDATE units SET name=?, abbreviation=? WHERE id=?');
   const doImport = db.transaction(rows => {
-    let n = 0;
+    let inserted = 0, updated = 0, skipped = 0;
     for (const r of rows) {
-      const res2 = ins.run(r._data.name, r._data.abbr);
-      db.auditLog('units', res2.lastInsertRowid, 'CREATE', null, { name: r._data.name, source: 'excel_import' }, req.user.id, req.ip);
-      n++;
+      if (r.status === 'skip') { skipped++; continue; }
+      const d = r._data;
+      if (r.status === 'update') {
+        const old = existingUnits.find(u => u.id === d.id);
+        upd.run(d.name, d.abbr, d.id);
+        db.auditLog('units', d.id, 'UPDATE', old, { name: d.name, source: 'excel_import' }, req.user.id, req.ip);
+        updated++;
+        continue;
+      }
+      const res2 = ins.run(d.name, d.abbr);
+      db.auditLog('units', res2.lastInsertRowid, 'CREATE', null, { name: d.name, source: 'excel_import' }, req.user.id, req.ip);
+      inserted++;
     }
-    return n;
+    return { inserted, updated, skipped };
   });
-  try { res.json({ success: true, imported: doImport(results) }); }
+  try {
+    const { inserted, updated, skipped } = doImport(results);
+    res.json({ success: true, imported: inserted, updated, skipped });
+  }
   catch (e) { res.status(e.message?.includes('UNIQUE') ? 400 : 500).json({ error: e.message?.includes('UNIQUE') ? 'ชื่อหน่วยซ้ำ' : e.message }); }
 });
 
@@ -593,13 +798,15 @@ router.get('/defect-categories/export', ...adminOnly, async (req, res) => {
     { header: 'หมายเหตุ',          key: 'notes', width: 36 },
   ];
   styleExcelHeader(ws, 3);
-  db.prepare('SELECT code, name, notes FROM defect_categories ORDER BY name').all()
-    .forEach(r => ws.addRow([r.code||'', r.name, r.notes||'']));
+  const rows = db.prepare('SELECT code, name, notes FROM defect_categories ORDER BY name').all();
+  rows.forEach(r => ws.addRow([r.code||'', r.name, r.notes||'']));
+  applyZebraStripes(ws, 2, rows.length + 1, 3);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', "attachment; filename*=UTF-8''defect_categories_template.xlsx");
   await wb.xlsx.write(res); res.end();
 });
 
+// S129 — diff-aware: เหมือนกัน 100% → skip, ต่าง → update จริง
 router.post('/defect-categories/import', ...adminOnly, excelMemUpload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'กรุณาอัปโหลดไฟล์ .xlsx' });
   let wb; try { wb = await parseImportFile(req.file.buffer); } catch { return res.status(400).json({ error: 'ไฟล์ไม่ถูกต้อง' }); }
@@ -609,8 +816,12 @@ router.post('/defect-categories/import', ...adminOnly, excelMemUpload.single('fi
   const hErr = checkHeaders(ws, ['รหัส', 'ชื่อกลุ่มปัญหา *', 'หมายเหตุ']);
   if (hErr.length) return res.status(400).json({ error: 'Header ไม่ตรงกับ template — กรุณาใช้ไฟล์ที่ดาวน์โหลดจากระบบ', headerErrors: hErr });
 
-  const existingNames = new Set(db.prepare('SELECT LOWER(name) as n FROM defect_categories').all().map(r => r.n));
-  const existingCodes = new Set(db.prepare('SELECT code FROM defect_categories WHERE code IS NOT NULL').all().map(r => r.code.toLowerCase()));
+  const existingCats = db.prepare('SELECT * FROM defect_categories').all();
+  const byCode = new Map(), byName = new Map();
+  for (const c of existingCats) {
+    if (c.code) byCode.set(c.code.toLowerCase(), c);
+    byName.set(c.name.toLowerCase(), c);
+  }
   const seenNames = new Set(), seenCodes = new Set(), results = [];
 
   ws.eachRow({ includeEmpty: false }, (row, rowNum) => {
@@ -620,16 +831,29 @@ router.post('/defect-categories/import', ...adminOnly, excelMemUpload.single('fi
     const errors = [], warnings = [];
     if (!name) errors.push('ชื่อกลุ่มปัญหาห้ามว่าง');
     if (code) {
-      if (existingCodes.has(code.toLowerCase()))  errors.push(`รหัส "${code}" มีอยู่แล้ว`);
-      else if (seenCodes.has(code.toLowerCase()))  errors.push(`รหัส "${code}" ซ้ำในไฟล์`);
+      if (seenCodes.has(code.toLowerCase())) errors.push(`รหัส "${code}" ซ้ำในไฟล์`);
       else seenCodes.add(code.toLowerCase());
     }
     if (name) {
-      if (existingNames.has(name.toLowerCase()))   warnings.push(`ชื่อ "${name}" มีอยู่แล้ว`);
-      else if (seenNames.has(name.toLowerCase()))  warnings.push(`ชื่อ "${name}" ซ้ำในไฟล์`);
+      if (seenNames.has(name.toLowerCase())) warnings.push(`ชื่อ "${name}" ซ้ำในไฟล์`);
       else seenNames.add(name.toLowerCase());
     }
-    results.push({ ...makeResult(rowNum, { รหัส: code||'-', ชื่อกลุ่มปัญหา: name, หมายเหตุ: notes||'-' }, errors, warnings), _data: { code:code||null, name, notes:notes||null } });
+
+    const display = { รหัส: code||'-', ชื่อกลุ่มปัญหา: name, หมายเหตุ: notes||'-' };
+    const _data = { code:code||null, name, notes:notes||null };
+    if (errors.length) { results.push({ row: rowNum, display, errors, warnings, status: 'error', _data }); return; }
+
+    const existing = (code && byCode.get(code.toLowerCase())) || (name && byName.get(name.toLowerCase())) || null;
+    if (existing) {
+      _data.id = existing.id;
+      const changes = [];
+      if (normVal(existing.name)  !== normVal(name))  changes.push(`ชื่อ: "${existing.name}" → "${name}"`);
+      if (normVal(existing.notes) !== normVal(notes)) changes.push(`หมายเหตุ: "${existing.notes||'-'}" → "${notes||'-'}"`);
+      if (!changes.length) results.push({ row: rowNum, display, errors: [], warnings, status: 'skip', changes: [], _data });
+      else results.push({ row: rowNum, display, errors: [], warnings, status: 'update', changes, _data });
+    } else {
+      results.push({ row: rowNum, display, errors: [], warnings, status: warnings.length ? 'warning' : 'ok', _data });
+    }
   });
 
   if (!results.length) return res.status(400).json({ error: 'ไม่พบข้อมูลในไฟล์' });
@@ -637,16 +861,29 @@ router.post('/defect-categories/import', ...adminOnly, excelMemUpload.single('fi
   if (results.some(r => r.errors.length)) return res.status(400).json({ error: 'มีข้อมูลที่ไม่ถูกต้อง' });
 
   const ins = db.prepare('INSERT INTO defect_categories (code, name, notes) VALUES (?, ?, ?)');
+  const upd = db.prepare('UPDATE defect_categories SET code=?, name=?, notes=? WHERE id=?');
   const doImport = db.transaction(rows => {
-    let n = 0;
+    let inserted = 0, updated = 0, skipped = 0;
     for (const r of rows) {
-      const res2 = ins.run(r._data.code, r._data.name, r._data.notes);
-      db.auditLog('defect_categories', res2.lastInsertRowid, 'CREATE', null, { name: r._data.name, source: 'excel_import' }, req.user.id, req.ip);
-      n++;
+      if (r.status === 'skip') { skipped++; continue; }
+      const d = r._data;
+      if (r.status === 'update') {
+        const old = existingCats.find(c => c.id === d.id);
+        upd.run(d.code, d.name, d.notes, d.id);
+        db.auditLog('defect_categories', d.id, 'UPDATE', old, { name: d.name, source: 'excel_import' }, req.user.id, req.ip);
+        updated++;
+        continue;
+      }
+      const res2 = ins.run(d.code, d.name, d.notes);
+      db.auditLog('defect_categories', res2.lastInsertRowid, 'CREATE', null, { name: d.name, source: 'excel_import' }, req.user.id, req.ip);
+      inserted++;
     }
-    return n;
+    return { inserted, updated, skipped };
   });
-  try { res.json({ success: true, imported: doImport(results) }); }
+  try {
+    const { inserted, updated, skipped } = doImport(results);
+    res.json({ success: true, imported: inserted, updated, skipped });
+  }
   catch (e) { res.status(e.message?.includes('UNIQUE') ? 400 : 500).json({ error: e.message?.includes('UNIQUE') ? 'รหัสหรือชื่อซ้ำ' : e.message }); }
 });
 
@@ -711,13 +948,15 @@ router.get('/colors/export', ...adminOnly, async (req, res) => {
     { header: 'Hex Code', key: 'hex',     width: 14 },
   ];
   styleExcelHeader(ws, 3);
-  db.prepare('SELECT code, name, hex_code FROM colors ORDER BY name').all()
-    .forEach(r => ws.addRow([r.code||'', r.name, r.hex_code||'']));
+  const rows = db.prepare('SELECT code, name, hex_code FROM colors ORDER BY name').all();
+  rows.forEach(r => ws.addRow([r.code||'', r.name, r.hex_code||'']));
+  applyZebraStripes(ws, 2, rows.length + 1, 3);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', "attachment; filename*=UTF-8''colors_template.xlsx");
   await wb.xlsx.write(res); res.end();
 });
 
+// S129 — diff-aware: เหมือนกัน 100% → skip, ต่าง → update จริง
 router.post('/colors/import', ...adminOnly, excelMemUpload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'กรุณาอัปโหลดไฟล์ .xlsx' });
   let wb; try { wb = await parseImportFile(req.file.buffer); } catch { return res.status(400).json({ error: 'ไฟล์ไม่ถูกต้อง' }); }
@@ -727,8 +966,12 @@ router.post('/colors/import', ...adminOnly, excelMemUpload.single('file'), async
   const hErr = checkHeaders(ws, ['รหัสสี', 'ชื่อสี *', 'Hex Code']);
   if (hErr.length) return res.status(400).json({ error: 'Header ไม่ตรงกับ template — กรุณาใช้ไฟล์ที่ดาวน์โหลดจากระบบ', headerErrors: hErr });
 
-  const existingNames = new Set(db.prepare('SELECT LOWER(name) as n FROM colors').all().map(r => r.n));
-  const existingCodes = new Set(db.prepare('SELECT code FROM colors WHERE code IS NOT NULL').all().map(r => r.code.toLowerCase()));
+  const existingColors = db.prepare('SELECT * FROM colors').all();
+  const byCode = new Map(), byName = new Map();
+  for (const c of existingColors) {
+    if (c.code) byCode.set(c.code.toLowerCase(), c);
+    byName.set(c.name.toLowerCase(), c);
+  }
   const seenNames = new Set(), seenCodes = new Set(), results = [];
   const hexRE = /^#[0-9A-Fa-f]{6}$/;
 
@@ -740,16 +983,29 @@ router.post('/colors/import', ...adminOnly, excelMemUpload.single('file'), async
     if (!name) errors.push('ชื่อสีห้ามว่าง');
     if (hex && !hexRE.test(hex)) errors.push(`Hex Code "${hex}" ต้องอยู่ในรูปแบบ #RRGGBB`);
     if (code) {
-      if (existingCodes.has(code.toLowerCase()))  errors.push(`รหัส "${code}" มีอยู่แล้ว`);
-      else if (seenCodes.has(code.toLowerCase()))  errors.push(`รหัส "${code}" ซ้ำในไฟล์`);
+      if (seenCodes.has(code.toLowerCase())) errors.push(`รหัส "${code}" ซ้ำในไฟล์`);
       else seenCodes.add(code.toLowerCase());
     }
     if (name) {
-      if (existingNames.has(name.toLowerCase()))   warnings.push(`ชื่อสี "${name}" มีอยู่แล้ว`);
-      else if (seenNames.has(name.toLowerCase()))  warnings.push(`ชื่อสี "${name}" ซ้ำในไฟล์`);
+      if (seenNames.has(name.toLowerCase())) warnings.push(`ชื่อสี "${name}" ซ้ำในไฟล์`);
       else seenNames.add(name.toLowerCase());
     }
-    results.push({ ...makeResult(rowNum, { รหัสสี: code||'-', ชื่อสี: name, 'Hex Code': hex||'-' }, errors, warnings), _data: { code:code||null, name, hex:hex||null } });
+
+    const display = { รหัสสี: code||'-', ชื่อสี: name, 'Hex Code': hex||'-' };
+    const _data = { code:code||null, name, hex:hex||null };
+    if (errors.length) { results.push({ row: rowNum, display, errors, warnings, status: 'error', _data }); return; }
+
+    const existing = (code && byCode.get(code.toLowerCase())) || (name && byName.get(name.toLowerCase())) || null;
+    if (existing) {
+      _data.id = existing.id;
+      const changes = [];
+      if (normVal(existing.name)     !== normVal(name)) changes.push(`ชื่อสี: "${existing.name}" → "${name}"`);
+      if (normVal(existing.hex_code) !== normVal(hex))  changes.push(`Hex Code: "${existing.hex_code||'-'}" → "${hex||'-'}"`);
+      if (!changes.length) results.push({ row: rowNum, display, errors: [], warnings, status: 'skip', changes: [], _data });
+      else results.push({ row: rowNum, display, errors: [], warnings, status: 'update', changes, _data });
+    } else {
+      results.push({ row: rowNum, display, errors: [], warnings, status: warnings.length ? 'warning' : 'ok', _data });
+    }
   });
 
   if (!results.length) return res.status(400).json({ error: 'ไม่พบข้อมูลในไฟล์' });
@@ -757,16 +1013,29 @@ router.post('/colors/import', ...adminOnly, excelMemUpload.single('file'), async
   if (results.some(r => r.errors.length)) return res.status(400).json({ error: 'มีข้อมูลที่ไม่ถูกต้อง' });
 
   const ins = db.prepare('INSERT INTO colors (code, name, hex_code) VALUES (?, ?, ?)');
+  const upd = db.prepare('UPDATE colors SET code=?, name=?, hex_code=? WHERE id=?');
   const doImport = db.transaction(rows => {
-    let n = 0;
+    let inserted = 0, updated = 0, skipped = 0;
     for (const r of rows) {
-      const res2 = ins.run(r._data.code, r._data.name, r._data.hex);
-      db.auditLog('colors', res2.lastInsertRowid, 'CREATE', null, { name: r._data.name, source: 'excel_import' }, req.user.id, req.ip);
-      n++;
+      if (r.status === 'skip') { skipped++; continue; }
+      const d = r._data;
+      if (r.status === 'update') {
+        const old = existingColors.find(c => c.id === d.id);
+        upd.run(d.code, d.name, d.hex, d.id);
+        db.auditLog('colors', d.id, 'UPDATE', old, { name: d.name, source: 'excel_import' }, req.user.id, req.ip);
+        updated++;
+        continue;
+      }
+      const res2 = ins.run(d.code, d.name, d.hex);
+      db.auditLog('colors', res2.lastInsertRowid, 'CREATE', null, { name: d.name, source: 'excel_import' }, req.user.id, req.ip);
+      inserted++;
     }
-    return n;
+    return { inserted, updated, skipped };
   });
-  try { res.json({ success: true, imported: doImport(results) }); }
+  try {
+    const { inserted, updated, skipped } = doImport(results);
+    res.json({ success: true, imported: inserted, updated, skipped });
+  }
   catch (e) { res.status(e.message?.includes('UNIQUE') ? 400 : 500).json({ error: e.message?.includes('UNIQUE') ? 'รหัสหรือชื่อซ้ำ' : e.message }); }
 });
 
@@ -931,6 +1200,11 @@ const suppliersOfProduct = db.prepare(`
   WHERE ps.product_id = ? ORDER BY s.name
 `);
 
+// S129 — เพิ่มคอลัมน์ รุ่น/Model + สี (มีอยู่ในตารางจริง/ใช้ใน POST-PATCH JSON API แล้ว แต่ export/import Excel เดิม
+// ไม่เคยมีเลย) + เปลี่ยนช่อง Supplier จากชื่อเดียว (legacy products.supplier_id) เป็นชื่อทั้งหมดคั่นด้วย comma
+// (จาก product_suppliers m:n — หน้าฟอร์มจริงรองรับเลือกได้มากกว่า 1 คนอยู่แล้ว "Supplier * (เลือกได้มากกว่า 1)")
+// — ไม่ใช้ตาราง Y/N ต่อ 1 supplier แบบผู้ดูแลจัดซื้อ เพราะระบบมี supplier active ถึง 131 ราย (ยืนยันกับ user แล้ว
+// ว่าคอลัมน์เดียวคั่นด้วย comma + dropdown ช่วยอ้างอิงชื่อเหมาะกว่า)
 router.get('/products/export', ...adminOnly, async (req, res) => {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'IQC System';
@@ -939,9 +1213,11 @@ router.get('/products/export', ...adminOnly, async (req, res) => {
   const suppliers = db.prepare('SELECT name FROM suppliers WHERE is_active=1 ORDER BY name').all();
   const groups    = db.prepare('SELECT name FROM product_groups ORDER BY name').all();
   const units     = db.prepare('SELECT name, abbreviation FROM units WHERE is_active=1 ORDER BY name').all();
+  const models    = db.prepare('SELECT name FROM models WHERE is_active=1 ORDER BY name').all();
+  const colorsRef = db.prepare('SELECT name FROM colors WHERE is_active=1 ORDER BY name').all();
 
   // ── Sheet 2: Reference (columnar — แต่ละ column = 1 ประเภท dropdown) ──
-  // Supplier=A, กลุ่ม=B, หน่วย=C, InspLevel=D, AQL=E
+  // Supplier=A, กลุ่ม=B, หน่วย=C, InspLevel=D→E, AQL=G, Model=I, สี=J
   const wsRef = wb.addWorksheet('Reference');
   wsRef.columns = [
     { header: 'ชื่อ Supplier',   key: 'sup',  width: 30 },
@@ -952,6 +1228,8 @@ router.get('/products/export', ...adminOnly, async (req, res) => {
     { header: 'คำอธิบาย Insp',   key: 'idesc',width: 30 },
     { header: 'AQL Value',       key: 'aql',  width: 12 },
     { header: 'คำอธิบาย AQL',    key: 'adesc',width: 25 },
+    { header: 'รุ่น/Model',      key: 'model',width: 20 },
+    { header: 'สี',              key: 'color',width: 18 },
   ];
   wsRef.getRow(1).eachCell(cell => {
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2E6DA4' } };
@@ -979,7 +1257,7 @@ router.get('/products/export', ...adminOnly, async (req, res) => {
     ['6.5',  'ผ่อนปรน'],
   ];
 
-  const maxRef = Math.max(suppliers.length, groups.length, units.length, INSP.length, AQL_REF.length);
+  const maxRef = Math.max(suppliers.length, groups.length, units.length, INSP.length, AQL_REF.length, models.length, colorsRef.length);
   for (let i = 0; i < maxRef; i++) {
     wsRef.addRow([
       suppliers[i]?.name  ?? '',
@@ -990,20 +1268,25 @@ router.get('/products/export', ...adminOnly, async (req, res) => {
       INSP[i]?.[1]        ?? '',
       AQL_REF[i]?.[0]     ?? '',
       AQL_REF[i]?.[1]     ?? '',
+      models[i]?.name     ?? '',
+      colorsRef[i]?.name  ?? '',
     ]);
   }
+  applyZebraStripes(wsRef, 2, maxRef + 1, 10);
 
   // ── Sheet 1: สินค้า ───────────────────────────────────────────────────────
   const ws = wb.addWorksheet('สินค้า');
   ws.columns = [
     { header: 'รหัสสินค้า',       key: 'code',  width: 16 },
     { header: 'ชื่อสินค้า *',     key: 'name',  width: 32 },
-    { header: 'ชื่อ Supplier *',  key: 'sup',   width: 26 },
+    { header: 'ชื่อ Supplier * (คั่นด้วย , ถ้ามากกว่า 1)', key: 'sup', width: 40 },
     { header: 'กลุ่มสินค้า *',    key: 'grp',   width: 22 },
     { header: 'หน่วยนับ *',       key: 'unt',   width: 16 },
     { header: 'Inspection Level', key: 'insp',  width: 20 },
     { header: 'AQL Value',        key: 'aql',   width: 12 },
     { header: 'หมายเหตุ',         key: 'notes', width: 32 },
+    { header: 'รุ่น/Model',       key: 'model', width: 20 },
+    { header: 'สี',               key: 'color', width: 18 },
   ];
   const hRow = ws.getRow(1);
   hRow.height = 28;
@@ -1013,35 +1296,48 @@ router.get('/products/export', ...adminOnly, async (req, res) => {
     cell.alignment = { horizontal: 'center', vertical: 'middle' };
   });
 
-  // เติมข้อมูลสินค้าที่มีอยู่
+  // เติมข้อมูลสินค้าที่มีอยู่ — Supplier ดึงจาก product_suppliers ทั้งหมด (ไม่ใช่แค่ legacy supplier_id ตัวเดียว)
   const products = db.prepare(`
-    SELECT p.code, p.name, p.inspection_level, p.aql_value, p.notes,
-           s.name as supplier_name, pg.name as product_group_name, u.name as unit_name
+    SELECT p.id, p.code, p.name, p.inspection_level, p.aql_value, p.notes,
+           pg.name as product_group_name, u.name as unit_name, m.name as model_name
     FROM products p
-    LEFT JOIN suppliers s ON s.id = p.supplier_id
     LEFT JOIN product_groups pg ON pg.id = p.product_group_id
     LEFT JOIN units u ON u.id = p.unit_id
+    LEFT JOIN models m ON m.id = p.model_id
     ORDER BY p.name
   `).all();
+  const supplierNamesByProduct = db.prepare('SELECT product_id, supplier_id FROM product_suppliers').all()
+    .reduce((acc, r) => { (acc[r.product_id] = acc[r.product_id] || []).push(r.supplier_id); return acc; }, {});
+  const supplierNameById = new Map(db.prepare('SELECT id, name FROM suppliers').all().map(s => [s.id, s.name]));
+  const colorNameByProduct = new Map(
+    db.prepare('SELECT pc.product_id, c.name FROM product_colors pc JOIN colors c ON c.id = pc.color_id').all()
+      .map(r => [r.product_id, r.name])
+  );
   for (const p of products) {
+    const supplierNames = (supplierNamesByProduct[p.id] || []).map(id => supplierNameById.get(id)).filter(Boolean).sort().join(', ');
     ws.addRow([
       p.code||'', p.name,
-      p.supplier_name||'', p.product_group_name||'', p.unit_name||'',
+      supplierNames, p.product_group_name||'', p.unit_name||'',
       p.inspection_level||'GEN_II', p.aql_value||'2.5', p.notes||'',
+      p.model_name||'', colorNameByProduct.get(p.id) || '',
     ]);
   }
+  applyZebraStripes(ws, 2, products.length + 1, 10);
 
   // ── Dropdown validation (rows 2–500) ─────────────────────────────────────
   const MAX_ROWS = 500;
-  const supEnd  = suppliers.length + 1;  // row 1 = header ใน Reference
-  const grpEnd  = groups.length + 1;
-  const untEnd  = units.length + 1;
-  const inspEnd = INSP.length + 1;
-  const aqlEnd  = AQL_REF.length + 1;
+  const supEnd   = suppliers.length + 1;  // row 1 = header ใน Reference
+  const grpEnd   = groups.length + 1;
+  const untEnd   = units.length + 1;
+  const inspEnd  = INSP.length + 1;
+  const aqlEnd   = AQL_REF.length + 1;
+  const modelEnd = models.length + 1;
+  const colorEnd = colorsRef.length + 1;
 
-  // formula สำหรับ cross-sheet reference (ไม่ใส่ quote รอบ range)
+  // formula สำหรับ cross-sheet reference (ไม่ใส่ quote รอบ range) — errorStyle:'warning' เสมอ (ไม่ block) เพราะ
+  // ช่อง Supplier ต้องแก้เป็นหลายชื่อคั่น comma เอง dropdown ช่วยแค่เลือกชื่อ "ล่าสุด" มาต่อท้ายเท่านั้น
   const dvSup  = { type: 'list', allowBlank: true, showErrorMessage: true, errorStyle: 'warning',
-                   errorTitle: 'ชื่อ Supplier', error: 'กรุณาเลือกจากรายการใน Reference',
+                   errorTitle: 'ชื่อ Supplier', error: 'กรุณาเลือกจากรายการใน Reference (คั่นด้วย , ถ้าเลือกหลายคน)',
                    formulae: [`Reference!$A$2:$A$${supEnd}`] };
   const dvGrp  = { type: 'list', allowBlank: true, showErrorMessage: true, errorStyle: 'warning',
                    errorTitle: 'กลุ่มสินค้า',  error: 'กรุณาเลือกจากรายการใน Reference',
@@ -1055,6 +1351,12 @@ router.get('/products/export', ...adminOnly, async (req, res) => {
   const dvAql  = { type: 'list', allowBlank: true, showErrorMessage: true, errorStyle: 'warning',
                    errorTitle: 'AQL Value',    error: 'กรุณาเลือกจากรายการใน Reference',
                    formulae: [`Reference!$G$2:$G$${aqlEnd}`] };
+  const dvModel = { type: 'list', allowBlank: true, showErrorMessage: true, errorStyle: 'warning',
+                   errorTitle: 'รุ่น/Model', error: 'กรุณาเลือกจากรายการใน Reference',
+                   formulae: [`Reference!$I$2:$I$${modelEnd}`] };
+  const dvColor = { type: 'list', allowBlank: true, showErrorMessage: true, errorStyle: 'warning',
+                   errorTitle: 'สี', error: 'กรุณาเลือกจากรายการใน Reference',
+                   formulae: [`Reference!$J$2:$J$${colorEnd}`] };
 
   for (let r = 2; r <= MAX_ROWS; r++) {
     ws.getCell(r, 3).dataValidation = dvSup;
@@ -1062,6 +1364,8 @@ router.get('/products/export', ...adminOnly, async (req, res) => {
     ws.getCell(r, 5).dataValidation = dvUnt;
     ws.getCell(r, 6).dataValidation = dvInsp;
     ws.getCell(r, 7).dataValidation = dvAql;
+    ws.getCell(r, 9).dataValidation = dvModel;
+    ws.getCell(r, 10).dataValidation = dvColor;
   }
 
   // เปิด sheet สินค้าเป็น default (ย้ายมาก่อน Reference)
@@ -1073,6 +1377,8 @@ router.get('/products/export', ...adminOnly, async (req, res) => {
   res.end();
 });
 
+// S129 — diff-aware (match by code||name, เทียบทุก field รวม supplier id set) + parse Supplier แบบ comma-separated
+// (หลายคน) + Model/Color เป็น field เสริม (ไม่บังคับ, ชื่อไม่รู้จัก = warning ไม่ error)
 router.post('/products/import', ...adminOnly, excelMemUpload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'กรุณาอัปโหลดไฟล์ .xlsx' });
 
@@ -1083,29 +1389,35 @@ router.post('/products/import', ...adminOnly, excelMemUpload.single('file'), asy
   const ws = wb.getWorksheet('สินค้า') || wb.worksheets[0];
   if (!ws) return res.status(400).json({ error: 'ไม่พบ Sheet ในไฟล์' });
 
-  const hErr = checkHeaders(ws, ['รหัสสินค้า', 'ชื่อสินค้า *', 'ชื่อ Supplier *', 'กลุ่มสินค้า *', 'หน่วยนับ *', 'Inspection Level', 'AQL Value', 'หมายเหตุ']);
+  const hErr = checkHeaders(ws, ['รหัสสินค้า', 'ชื่อสินค้า *', 'ชื่อ Supplier * (คั่นด้วย , ถ้ามากกว่า 1)', 'กลุ่มสินค้า *', 'หน่วยนับ *', 'Inspection Level', 'AQL Value', 'หมายเหตุ', 'รุ่น/Model', 'สี']);
   if (hErr.length) return res.status(400).json({ error: 'Header ไม่ตรงกับ template — กรุณาใช้ไฟล์ที่ดาวน์โหลดจากระบบ', headerErrors: hErr });
 
   // Build lookup maps (case-insensitive)
-  const supplierMap = Object.fromEntries(
-    db.prepare('SELECT name, id FROM suppliers WHERE is_active=1').all()
-      .map(s => [s.name.trim().toLowerCase(), s.id])
+  const supplierMap = Object.fromEntries(db.prepare('SELECT name, id FROM suppliers WHERE is_active=1').all().map(s => [s.name.trim().toLowerCase(), s.id]));
+  const groupMap    = Object.fromEntries(db.prepare('SELECT name, id FROM product_groups').all().map(g => [g.name.trim().toLowerCase(), g.id]));
+  const unitMap     = Object.fromEntries(db.prepare('SELECT name, id FROM units WHERE is_active=1').all().map(u => [u.name.trim().toLowerCase(), u.id]));
+  const modelMap    = Object.fromEntries(db.prepare('SELECT name, id FROM models WHERE is_active=1').all().map(m => [m.name.trim().toLowerCase(), m.id]));
+  const colorMap    = Object.fromEntries(db.prepare('SELECT name, id FROM colors WHERE is_active=1').all().map(c => [c.name.trim().toLowerCase(), c.id]));
+
+  const existingProducts = db.prepare('SELECT * FROM products').all();
+  const byCode = new Map(), byName = new Map();
+  for (const p of existingProducts) {
+    if (p.code) byCode.set(p.code.toLowerCase(), p);
+    byName.set(p.name.toLowerCase(), p);
+  }
+  const existingProductIds = existingProducts.map(p => p.id);
+  const currentSuppliersByProduct = new Map(); // productId -> Set(supplierId)
+  if (existingProductIds.length) {
+    const ph = existingProductIds.map(() => '?').join(',');
+    for (const row of db.prepare(`SELECT product_id, supplier_id FROM product_suppliers WHERE product_id IN (${ph})`).all(...existingProductIds)) {
+      if (!currentSuppliersByProduct.has(row.product_id)) currentSuppliersByProduct.set(row.product_id, new Set());
+      currentSuppliersByProduct.get(row.product_id).add(row.supplier_id);
+    }
+  }
+  const currentColorByProduct = new Map(
+    db.prepare('SELECT product_id, color_id FROM product_colors').all().map(r => [r.product_id, r.color_id])
   );
-  const groupMap = Object.fromEntries(
-    db.prepare('SELECT name, id FROM product_groups').all()
-      .map(g => [g.name.trim().toLowerCase(), g.id])
-  );
-  const unitMap = Object.fromEntries(
-    db.prepare('SELECT name, id FROM units WHERE is_active=1').all()
-      .map(u => [u.name.trim().toLowerCase(), u.id])
-  );
-  const existingCodes = new Set(
-    db.prepare('SELECT code FROM products WHERE code IS NOT NULL').all()
-      .map(p => p.code.trim().toLowerCase())
-  );
-  const existingNames = new Set(
-    db.prepare('SELECT LOWER(name) as n FROM products').all().map(p => p.n)
-  );
+  const supplierNameById = new Map(db.prepare('SELECT id, name FROM suppliers').all().map(s => [s.id, s.name]));
 
   const results = [];
   const seenCodes = new Set();
@@ -1113,27 +1425,34 @@ router.post('/products/import', ...adminOnly, excelMemUpload.single('file'), asy
 
   ws.eachRow({ includeEmpty: false }, (row, rowNum) => {
     if (rowNum === 1) return; // skip header
-    const cellStr = n => String(row.getCell(n).value ?? '').trim();
-    const code        = cellStr(1);
-    const name        = cellStr(2);
-    const supplierName = cellStr(3);
-    const groupName   = cellStr(4);
-    const unitName    = cellStr(5);
-    let   inspLevel   = cellStr(6) || 'GEN_II';
-    let   aqlValue    = cellStr(7) || '2.5';
-    const notes       = cellStr(8);
+    const localCellStr = n => String(row.getCell(n).value ?? '').trim();
+    const code          = localCellStr(1);
+    const name          = localCellStr(2);
+    const supplierCell  = localCellStr(3);
+    const groupName     = localCellStr(4);
+    const unitName      = localCellStr(5);
+    let   inspLevel     = localCellStr(6) || 'GEN_II';
+    let   aqlValue      = localCellStr(7) || '2.5';
+    const notes         = localCellStr(8);
+    const modelName     = localCellStr(9);
+    const colorName     = localCellStr(10);
 
-    if (!name && !supplierName && !groupName && !code) return; // blank row
+    if (!name && !supplierCell && !groupName && !code) return; // blank row
 
     const errors = [], warnings = [];
 
     if (!name) errors.push('ชื่อสินค้าห้ามว่าง');
 
-    let supplierId = null;
-    if (!supplierName) errors.push('ชื่อ Supplier ห้ามว่าง');
+    // Supplier — คั่นด้วย comma รองรับหลายคน (หน้าฟอร์มจริงเลือกได้มากกว่า 1)
+    const supplierNames = supplierCell.split(',').map(s => s.trim()).filter(Boolean);
+    const supplierIds = [];
+    if (!supplierNames.length) errors.push('ชื่อ Supplier ห้ามว่าง');
     else {
-      supplierId = supplierMap[supplierName.toLowerCase()];
-      if (!supplierId) errors.push(`ไม่พบ Supplier "${supplierName}" ในระบบ`);
+      for (const sName of supplierNames) {
+        const sid = supplierMap[sName.toLowerCase()];
+        if (!sid) errors.push(`ไม่พบ Supplier "${sName}" ในระบบ`);
+        else supplierIds.push(sid);
+      }
     }
 
     let groupId = null;
@@ -1159,62 +1478,114 @@ router.post('/products/import', ...adminOnly, excelMemUpload.single('file'), asy
       aqlValue = '2.5';
     }
 
+    // Model/Color — ไม่บังคับ ชื่อไม่รู้จัก = warning เฉยๆ ปล่อยว่าง ไม่ error/block
+    let modelId = null;
+    if (modelName) {
+      modelId = modelMap[modelName.toLowerCase()];
+      if (!modelId) warnings.push(`ไม่พบรุ่น/Model "${modelName}" ในระบบ — ข้ามไว้ก่อน`);
+    }
+    let colorId = null;
+    if (colorName) {
+      colorId = colorMap[colorName.toLowerCase()];
+      if (!colorId) warnings.push(`ไม่พบสี "${colorName}" ในระบบ — ข้ามไว้ก่อน`);
+    }
+
     if (code) {
-      if (existingCodes.has(code.toLowerCase()))    errors.push(`รหัส "${code}" มีอยู่ในระบบแล้ว`);
-      else if (seenCodes.has(code.toLowerCase()))   errors.push(`รหัส "${code}" ซ้ำกันในไฟล์`);
+      if (seenCodes.has(code.toLowerCase()))  errors.push(`รหัส "${code}" ซ้ำกันในไฟล์`);
       else seenCodes.add(code.toLowerCase());
     }
     if (name) {
-      if (existingNames.has(name.toLowerCase()))    warnings.push(`ชื่อ "${name}" มีอยู่ในระบบแล้ว (อาจซ้ำ)`);
-      else if (seenNames.has(name.toLowerCase()))   warnings.push(`ชื่อ "${name}" ซ้ำกันในไฟล์`);
+      if (seenNames.has(name.toLowerCase())) warnings.push(`ชื่อ "${name}" ซ้ำกันในไฟล์`);
       else seenNames.add(name.toLowerCase());
     }
 
-    results.push({
-      row: rowNum, code: code||null, name, supplierName, groupName, unitName,
-      inspLevel, aqlValue, notes: notes||null,
-      supplierId, groupId, unitId, errors, warnings,
-      status: errors.length > 0 ? 'error' : warnings.length > 0 ? 'warning' : 'ok',
-    });
+    const display = { รหัส: code||'-', ชื่อสินค้า: name, Supplier: supplierNames.join(', ')||'-', กลุ่ม: groupName||'-', หน่วย: unitName||'-' };
+    const _data = { code: code||null, name, supplierIds, groupId, unitId, inspLevel, aqlValue, notes: notes||null, modelId, colorId };
+
+    if (errors.length) { results.push({ row: rowNum, display, errors, warnings, status: 'error', _data }); return; }
+
+    const existing = (code && byCode.get(code.toLowerCase())) || (name && byName.get(name.toLowerCase())) || null;
+    if (existing) {
+      _data.id = existing.id;
+      const changes = [];
+      if (normVal(existing.name) !== normVal(name)) changes.push(`ชื่อ: "${existing.name}" → "${name}"`);
+      if ((existing.product_group_id || null) !== groupId) changes.push(`กลุ่มสินค้า: → "${groupName}"`);
+      if ((existing.unit_id || null) !== unitId) changes.push(`หน่วยนับ: → "${unitName}"`);
+      if (normVal(existing.inspection_level || 'GEN_II') !== normVal(inspLevel)) changes.push(`Inspection Level: "${existing.inspection_level||'GEN_II'}" → "${inspLevel}"`);
+      if (normVal(existing.aql_value || '2.5') !== normVal(aqlValue)) changes.push(`AQL Value: "${existing.aql_value||'2.5'}" → "${aqlValue}"`);
+      if (normVal(existing.notes) !== normVal(notes)) changes.push(`หมายเหตุ: "${existing.notes||'-'}" → "${notes||'-'}"`);
+      if ((existing.model_id || null) !== modelId) changes.push(`รุ่น/Model: → "${modelName||'-'}"`);
+      if ((currentColorByProduct.get(existing.id) || null) !== colorId) changes.push(`สี: → "${colorName||'-'}"`);
+      const currentSupplierIds = currentSuppliersByProduct.get(existing.id) || new Set();
+      const newSupplierIds = new Set(supplierIds);
+      const added   = supplierIds.filter(id => !currentSupplierIds.has(id));
+      const removed = [...currentSupplierIds].filter(id => !newSupplierIds.has(id));
+      if (added.length || removed.length) {
+        const parts = [];
+        if (added.length)   parts.push(`+${added.map(id => supplierNameById.get(id)).join(', ')}`);
+        if (removed.length) parts.push(`-${removed.map(id => supplierNameById.get(id)).join(', ')}`);
+        changes.push(`Supplier: ${parts.join(' ')}`);
+      }
+      if (!changes.length) results.push({ row: rowNum, display, errors: [], warnings, status: 'skip', changes: [], _data });
+      else results.push({ row: rowNum, display, errors: [], warnings, status: 'update', changes, _data });
+    } else {
+      results.push({ row: rowNum, display, errors: [], warnings, status: warnings.length ? 'warning' : 'ok', _data });
+    }
   });
 
   if (results.length === 0) {
     return res.status(400).json({ error: 'ไม่พบข้อมูลในไฟล์ — ตรวจสอบว่า Sheet ชื่อ "สินค้า" และมีข้อมูลแถวที่ 2 เป็นต้นไป' });
   }
 
-  // Preview mode — return validation results without importing
-  if (req.query.preview === '1') {
-    return res.json({
-      results,
-      total:        results.length,
-      errorCount:   results.filter(r => r.status === 'error').length,
-      warningCount: results.filter(r => r.status === 'warning').length,
-    });
-  }
+  if (req.query.preview === '1') return res.json(importResponse(results));
 
   const hasErrors = results.some(r => r.errors.length > 0);
   if (hasErrors) return res.status(400).json({ error: 'มีข้อมูลที่ไม่ถูกต้อง กรุณาแก้ไขก่อน Import' });
 
   const insertProduct = db.prepare(`
-    INSERT INTO products (code, name, supplier_id, product_group_id, unit_id, inspection_level, aql_value, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO products (code, name, supplier_id, product_group_id, unit_id, model_id, inspection_level, aql_value, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const updateProduct = db.prepare(`
+    UPDATE products SET code=?, name=?, supplier_id=?, product_group_id=?, unit_id=?, model_id=?, inspection_level=?, aql_value=?, notes=? WHERE id=?
   `);
   const insertPS = db.prepare('INSERT OR IGNORE INTO product_suppliers (product_id, supplier_id) VALUES (?, ?)');
+  const delPS    = db.prepare('DELETE FROM product_suppliers WHERE product_id = ?');
+  const insertPC = db.prepare('INSERT OR IGNORE INTO product_colors (product_id, color_id) VALUES (?, ?)');
+  const delPC    = db.prepare('DELETE FROM product_colors WHERE product_id = ?');
+
+  function syncRelations(productId, supplierIds, colorId) {
+    delPS.run(productId);
+    for (const sid of supplierIds) insertPS.run(productId, sid);
+    delPC.run(productId);
+    if (colorId) insertPC.run(productId, colorId);
+  }
 
   const doImport = db.transaction((rows) => {
-    let count = 0;
+    let inserted = 0, updated = 0, skipped = 0;
     for (const r of rows) {
-      const ins = insertProduct.run(r.code, r.name, r.supplierId, r.groupId, r.unitId, r.inspLevel, r.aqlValue, r.notes);
-      insertPS.run(ins.lastInsertRowid, r.supplierId);
-      db.auditLog('products', ins.lastInsertRowid, 'CREATE', null, { code: r.code, name: r.name, source: 'excel_import' }, req.user.id, req.ip);
-      count++;
+      if (r.status === 'skip') { skipped++; continue; }
+      const d = r._data;
+      const primarySupplierId = d.supplierIds[0] || null;
+      if (r.status === 'update') {
+        const old = existingProducts.find(p => p.id === d.id);
+        updateProduct.run(d.code, d.name, primarySupplierId, d.groupId, d.unitId, d.modelId, d.inspLevel, d.aqlValue, d.notes, d.id);
+        syncRelations(d.id, d.supplierIds, d.colorId);
+        db.auditLog('products', d.id, 'UPDATE', old, { code: d.code, name: d.name, source: 'excel_import' }, req.user.id, req.ip);
+        updated++;
+      } else {
+        const ins = insertProduct.run(d.code, d.name, primarySupplierId, d.groupId, d.unitId, d.modelId, d.inspLevel, d.aqlValue, d.notes);
+        syncRelations(ins.lastInsertRowid, d.supplierIds, d.colorId);
+        db.auditLog('products', ins.lastInsertRowid, 'CREATE', null, { code: d.code, name: d.name, source: 'excel_import' }, req.user.id, req.ip);
+        inserted++;
+      }
     }
-    return count;
+    return { inserted, updated, skipped };
   });
 
   try {
-    const imported = doImport(results);
-    res.json({ success: true, imported });
+    const { inserted, updated, skipped } = doImport(results);
+    res.json({ success: true, imported: inserted, updated, skipped });
   } catch (e) {
     if (e.message?.includes('UNIQUE')) return res.status(400).json({ error: 'รหัสสินค้าซ้ำ — กรุณาตรวจสอบอีกครั้ง' });
     res.status(500).json({ error: e.message });

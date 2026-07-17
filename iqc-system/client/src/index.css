@@ -31,6 +31,29 @@
   --color-warning: 234 179 8;    /* #EAB308 — ตรงกับ accent-yellow เดิม */
 }
 
+/* S128j — หน้า Supplier Response (public, external ผู้ผลิตเห็น) ต้องสว่างเสมอ ไม่ตามธีมของผู้ใช้ภายใน
+   (ผู้ผลิตไม่มี preference ของตัวเอง และไม่ควรได้รับผลจากการตั้งค่า dark mode ของพนักงานที่ copy link ให้) —
+   override ตัวแปรสีกลับเป็นค่า light เสมอสำหรับ subtree นี้ (custom property ที่ตั้งใหม่ตรงนี้ชนะค่าจาก .dark
+   ของ <html> ที่อยู่สูงกว่า) ใช้คู่กับการตัด dark: utility class ตรงๆ ออกจาก NCRResponse.jsx (ตัวแปรนี้แก้ไม่ได้
+   เพราะเป็นคนละกลไกกัน) */
+.theme-light-only {
+  --color-primary: 18 58 107;
+  --color-accent: 29 111 201;
+  --color-bg: 245 246 248;
+  --color-surface: 255 255 255;
+  --color-border: 209 213 219;
+  --color-text: 31 41 55;
+  --color-muted: 107 114 128;
+  --color-success: 22 163 74;
+  --color-danger: 220 38 38;
+  --color-warning: 217 119 6;
+  /* `color` เป็น inherited property — ค่าที่ <body> (@apply text-text) resolve ไว้แล้วจาก .dark ของ <html>
+     (ตอน .dark ยังอยู่สูงกว่า) จะสว่างเกือบขาว แล้วสืบทอดลงมาเป็นค่าคงที่ ไม่ผูกกับตัวแปรอีกต่อไป — element ที่
+     ไม่มี text-* class ของตัวเอง (เช่น <div className="font-mono font-medium">) จะจางจนมองไม่เห็นถ้าไม่ set
+     `color` ตรงนี้ซ้ำให้ชัดเจน (แค่ override ตัวแปรด้านบนไม่พอ) */
+  color: rgb(31 41 55);
+}
+
 /* ป้องกัน iOS/Android auto-zoom เมื่อ focus input (font-size < 16px trigger zoom) */
 @media (max-width: 640px) {
   .input,

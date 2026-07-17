@@ -44,7 +44,7 @@ export default function NCRResponse() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-muted">
+      <div className="theme-light-only min-h-screen flex items-center justify-center text-muted">
         Loading... / กำลังโหลด...
       </div>
     );
@@ -52,7 +52,7 @@ export default function NCRResponse() {
 
   if (!ncr) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4">
+      <div className="theme-light-only min-h-screen flex items-center justify-center p-4">
         <div className="card max-w-md text-center">
           <div className="text-danger font-bold text-h3 mb-2">Document Not Found / ไม่พบเอกสาร</div>
           <div className="text-muted text-small">The link may have expired. Please contact Purchasing. / ลิ้งค์อาจหมดอายุแล้ว กรุณาติดต่อฝ่ายจัดซื้อ</div>
@@ -63,7 +63,7 @@ export default function NCRResponse() {
 
   if (submitted || ncr.already_responded) {
     return (
-      <div className="min-h-screen bg-bg flex items-center justify-center p-4">
+      <div className="theme-light-only min-h-screen bg-bg flex items-center justify-center p-4">
         <div className="card max-w-md text-center">
           <div className="text-success text-h2 font-bold mb-2">Response Submitted / ส่งคำตอบเรียบร้อยแล้ว</div>
           <div className="text-body text-muted">Thank you for your response. The QC team will follow up. / ขอบคุณสำหรับการตอบกลับ ทีม QC จะดำเนินการต่อไป</div>
@@ -73,7 +73,7 @@ export default function NCRResponse() {
   }
 
   return (
-    <div className="min-h-screen bg-bg py-8 px-4">
+    <div className="theme-light-only min-h-screen bg-bg py-8 px-4">
       <div className="max-w-2xl mx-auto space-y-4">
 
         {/* Header */}
@@ -126,9 +126,9 @@ export default function NCRResponse() {
 
           <div className="space-y-3">
             {ncr.items?.map((item, i) => (
-              <div key={i} className="border border-red-200 dark:border-red-700 rounded-lg overflow-hidden">
+              <div key={i} className="border border-red-200 rounded-lg overflow-hidden">
                 {/* Item header */}
-                <div className="bg-red-50 dark:bg-red-900 px-4 py-3">
+                <div className="bg-red-50 px-4 py-3">
                   <div className="font-semibold text-body text-primary">
                     {item.item_name_en || item.item_name}
                     {item.product_code && <span className="text-muted font-mono text-small ml-1">({item.product_code})</span>}
@@ -147,8 +147,8 @@ export default function NCRResponse() {
                       <div className="text-small text-muted leading-tight">Qty Sampled<br /><span className="text-xs">จำนวนสุ่มตรวจ</span></div>
                       <div className="font-mono font-bold text-h3 mt-0.5">{item.qty_sampled}</div>
                     </div>
-                    <div className="bg-red-100 dark:bg-red-900 rounded px-2 py-1.5 text-center">
-                      <div className="text-small text-red-600 dark:text-red-200 leading-tight">Qty Failed<br /><span className="text-xs">จำนวนของเสีย</span></div>
+                    <div className="bg-red-100 rounded px-2 py-1.5 text-center">
+                      <div className="text-small text-red-600 leading-tight">Qty Failed<br /><span className="text-xs">จำนวนของเสีย</span></div>
                       <div className="font-mono font-bold text-h3 text-danger mt-0.5">{item.qty_failed}</div>
                     </div>
                   </div>
@@ -167,7 +167,7 @@ export default function NCRResponse() {
                   )}
 
                   {ncr.disposition === 'return' && (
-                    <div className="mt-3 border border-danger bg-red-100 dark:bg-red-950 rounded px-3 py-2">
+                    <div className="mt-3 border border-danger bg-red-100 rounded px-3 py-2">
                       <div className="text-small font-semibold text-danger">100% product return — failed the sampling inspection standard</div>
                       <div className="text-small font-semibold text-danger">ตีกลับสินค้า 100% เนื่องจากไม่ผ่านมาตรฐานการสุ่มตรวจ</div>
                     </div>
@@ -176,7 +176,7 @@ export default function NCRResponse() {
 
                 {/* Problem images */}
                 {item.bill_item_images?.length > 0 && (
-                  <div className="px-4 py-3 bg-surface border-t border-red-200 dark:border-red-700">
+                  <div className="px-4 py-3 bg-surface border-t border-red-200">
                     <div className="text-small text-muted mb-2 font-medium">
                       Problem Photos / รูปภาพปัญหา ({item.bill_item_images.length})
                     </div>
@@ -186,7 +186,7 @@ export default function NCRResponse() {
                           <img
                             src={`/uploads/bill-items/${img.file_path}`}
                             alt=""
-                            className="h-28 w-28 object-cover rounded border border-red-200 dark:border-red-700 hover:opacity-80"
+                            className="h-28 w-28 object-cover rounded border border-red-200 hover:opacity-80"
                           />
                         </a>
                       ))}
@@ -218,7 +218,7 @@ export default function NCRResponse() {
           <div className="text-small text-muted mb-4">Please respond in English or Thai / กรุณาตอบเป็นภาษาอังกฤษหรือภาษาไทย</div>
 
           <div className="space-y-4">
-            {error && <div className="text-danger text-small bg-red-50 dark:bg-red-900 px-3 py-2 rounded">{error}</div>}
+            {error && <div className="text-danger text-small bg-red-50 px-3 py-2 rounded">{error}</div>}
 
             <div>
               <label className="label">

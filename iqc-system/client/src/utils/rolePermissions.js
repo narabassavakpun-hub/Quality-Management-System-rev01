@@ -123,7 +123,10 @@ export const STATUS_LABELS = {
   pending_qmr_open: { label: 'รอ QMR เปิด', color: 'bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200' },
   pending_purchasing_review: { label: 'รอจัดซื้อ Review', color: 'bg-cyan-100 dark:bg-cyan-900 text-cyan-800 dark:text-cyan-200' },
   pending_purchasing_manager_review: { label: 'รอผู้จัดการจัดซื้อตรวจสอบ', color: 'bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-200' },
-  pending_supplier: { label: 'รอ Supplier', color: 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200' },
+  // S128i — status จริงยังเป็น pending_supplier เหมือนเดิมทั้งคู่ (ไม่มี status ใหม่ใน DB) แค่แยก label ตาม
+  // link_copied_at ว่ายังไม่ได้ copy link (ใช้ key เสมือนนี้ ดู ncrDisplayStatusKey ด้านล่าง) หรือ copy แล้ว
+  pending_supplier_link: { label: 'รอส่ง Link ให้ Supplier', color: 'bg-cyan-100 dark:bg-cyan-900 text-cyan-800 dark:text-cyan-200' },
+  pending_supplier: { label: 'รอ Supplier ตอบ', color: 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200' },
   pending_manager_review: { label: 'รอ Manager ตรวจ', color: 'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200' },
   pending_supplier_resubmit: { label: 'ถูกส่งกลับ — รอ Supplier ตอบใหม่', color: 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-200' },
   pending_qmr_close: { label: 'รอ QMR ปิด', color: 'bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200' },
@@ -192,3 +195,11 @@ export const STATUS_LABELS = {
   kpi_approved: { label: 'อนุมัติแล้ว', color: 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' },
   kpi_rejected: { label: 'ถูกปฏิเสธ', color: 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200' },
 };
+
+// NCR: status จริงใน DB ยังเป็น pending_supplier เหมือนเดิมตลอดทั้ง 2 ช่วง (ไม่มี status ใหม่) — ใช้ฟังก์ชันนี้
+// ก่อนส่งเข้า <Badge status={...} /> เพื่อแยกป้าย "รอส่ง Link ให้ Supplier" (ยังไม่ copy link) ออกจาก
+// "รอ Supplier ตอบ" (copy link แล้ว) ตาม link_copied_at (S128i)
+export function ncrDisplayStatusKey(ncr) {
+  if (ncr?.status === 'pending_supplier' && !ncr?.link_copied_at) return 'pending_supplier_link';
+  return ncr?.status;
+}

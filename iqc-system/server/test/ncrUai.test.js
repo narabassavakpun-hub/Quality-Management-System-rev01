@@ -7,6 +7,7 @@ const fs = require('node:fs');
 process.env.IQC_DB_PATH = path.join(os.tmpdir(), `iqc-ncruai-${process.pid}-${Date.now()}.db`);
 process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET = 'test-secret-ncruai';
+process.env.SETTINGS_ENCRYPTION_KEY = 'a'.repeat(64); // ต้องมีไว้ก่อน setSecretSetting('smtp_password', ...) ใน CV-11
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -403,4 +404,39 @@ test('CV-10 GET /api/supplier/ncr/:token — เห็น product_code + disposi
   assert.equal(r.body.items[0].product_code, 'HW-0166-00000');
   assert.equal(r.body.items[0].claim_value_thb, undefined);
   assert.equal(r.body.items[0].claim_value_usd, undefined);
+});
+
+// S128f — บั๊กจริงที่ user เจอ: อีเมล COO หัวเรื่อง/เนื้อหาโชว์ชื่อผู้ผลิตเป็น "undefined" เพราะ `ncr` ที่ approveNcr()
+// รับมาจาก routes/ncr.js's POST /:id/approve มาจาก `SELECT * FROM ncrs` เปล่าๆ ไม่มี supplier_name เลย — ก่อนหน้านี้
+// ไม่มีเทสจับได้เพราะ cco1 (seed user) ไม่มี email ตั้งไว้ เงื่อนไข `if (coo.email)` เลยข้ามไปเงียบๆ ทุกที
+test('CV-11 COO email: subject/body มีชื่อผู้ผลิตจริง ไม่ใช่ "undefined" (regression test S128f)', async () => {
+  db.prepare("UPDATE users SET email=? WHERE username='cco1'").run('cco-test@example.com');
+  db.setSetting('smtp_host', 'smtp.test.local');
+  db.setSetting('smtp_user', 'test@example.com');
+  db.setSecretSetting('smtp_password', 'x');
+
+  const nodemailer = require('nodemailer');
+  let captured = null;
+  const originalCreateTransport = nodemailer.createTransport;
+  nodemailer.createTransport = () => ({ sendMail: (opts) => { captured = opts; return Promise.resolve(); } });
+
+  try {
+    const itemF = db.prepare(`INSERT INTO bill_items (bill_id,product_id,item_name,qty_received,qty_sampled,qty_passed,qty_failed,defect_category_id)
+      VALUES (?,?,'สินค้าทดสอบ F',100,10,7,3,?)`).run(bill, prod, dcat).lastInsertRowid;
+    const c = await api('POST', '/api/ncr', { cookie: C.staff, body: { bill_id: bill, severity: 'major', items: ncrItems(itemF) } });
+    const ncrF = c.body.id, ncrFItemId = c.body.items[0].id;
+    await api('POST', `/api/ncr/${ncrF}/approve`, { cookie: C.sup, body: {} });
+    await api('POST', `/api/ncr/${ncrF}/approve`, { cookie: C.mgr, body: { disposition: 'rework', disposition_note: 'x' } });
+    await api('POST', `/api/ncr/${ncrF}/approve`, { cookie: C.qmr, body: {} });
+    await api('PATCH', `/api/ncr/${ncrF}/purchasing-review`, { cookie: C.pur, body: { items: [{ id: ncrFItemId, item_name_en: 'x', claim_value_thb: '1', claim_value_usd: '1' }] } });
+    await api('POST', `/api/ncr/${ncrF}/approve`, { cookie: C.purMgr, body: {} });
+  } finally {
+    nodemailer.createTransport = originalCreateTransport;
+  }
+
+  assert.ok(captured, 'ควรมีการเรียก sendMail ให้ COO');
+  assert.doesNotMatch(captured.subject, /undefined/);
+  assert.match(captured.subject, /ผู้ผลิตทดสอบ/);
+  assert.doesNotMatch(captured.html, /undefined/);
+  assert.match(captured.html, /ผู้ผลิตทดสอบ/);
 });

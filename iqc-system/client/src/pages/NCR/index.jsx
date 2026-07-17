@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import api from '../../utils/api';
 import Badge from '../../components/UI/Badge';
 import Button from '../../components/UI/Button';
+import { ncrDisplayStatusKey } from '../../utils/rolePermissions';
 
 export default function NCRList() {
   const { user } = useAuth();
@@ -72,7 +73,7 @@ export default function NCRList() {
           >
             <div className="flex items-start justify-between gap-2 mb-1">
               <span className="font-mono font-semibold text-primary text-body">{n.ncr_code}</span>
-              <Badge status={n.status} />
+              <Badge status={ncrDisplayStatusKey(n)} />
             </div>
             <div className="text-small font-medium text-text mb-0.5">{n.supplier_name}</div>
             <div className="text-small text-muted mb-1">
@@ -117,7 +118,7 @@ export default function NCRList() {
                   </span>
                 </td>
                 <td>{n.created_at?.slice(0, 10)}</td>
-                <td><Badge status={n.status} /></td>
+                <td><Badge status={ncrDisplayStatusKey(n)} /></td>
               </tr>
             ))}
           </tbody>
