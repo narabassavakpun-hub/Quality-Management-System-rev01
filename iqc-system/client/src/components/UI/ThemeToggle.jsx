@@ -11,7 +11,7 @@ const OPTIONS = [
     icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg>,
   },
   {
-    value: 'auto', label: 'อัตโนมัติ (ตามเวลา)',
+    value: 'auto', label: 'อัตโนมัติ (ตามเวลา — มือถือเท่านั้น)',
     icon: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
   },
 ];

@@ -8,7 +8,8 @@ const svc = require('../services/purchasingDashboardService');
 
 const purchasingRoles = [auth, requireRole(['purchasing', 'purchasing_manager', 'admin'])];
 // Team Summary/Members/Member Detail (Req 3) — เห็นข้อมูลเพื่อนร่วมทีมคนอื่นได้ ต้องเป็น manager/admin เท่านั้น
-const managerOnly = [auth, requireRole(['purchasing_manager', 'admin'])];
+// + cco (read-only — ขอเห็นภาพรวมจัดซื้อทั้งหมดในหน้า Dashboard ของตัวเอง ไม่มี endpoint เขียนใดๆ ในไฟล์นี้เลย)
+const managerOnly = [auth, requireRole(['purchasing_manager', 'admin', 'cco'])];
 
 router.get('/summary', ...purchasingRoles, (req, res) => {
   res.json(svc.getSummary(req.user));

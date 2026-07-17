@@ -24,9 +24,10 @@ db.prepare("UPDATE users SET qc_station='incoming' WHERE username='qc_staff1'").
 
 db.prepare("INSERT INTO users (username, password_hash, full_name, role, is_active) VALUES ('purchasing2','x','สมชาย จัดซื้อ','purchasing',1)").run();
 db.prepare("INSERT INTO users (username, password_hash, full_name, role, is_active) VALUES ('pur_mgr','x','ผู้จัดการจัดซื้อ','purchasing_manager',1)").run();
+// cco1 ('วิชัย COO') seed มาให้แล้ว (database.js) — ไม่ต้องสร้างเพิ่ม
 
 const C = {};
-for (const [k, un] of [['staff', 'qc_staff1'], ['pur1', 'purchasing1'], ['pur2', 'purchasing2'], ['purMgr', 'pur_mgr']]) {
+for (const [k, un] of [['staff', 'qc_staff1'], ['pur1', 'purchasing1'], ['pur2', 'purchasing2'], ['purMgr', 'pur_mgr'], ['coo', 'cco1']]) {
   setSess(un, k);
   C[k] = 'token=' + jwt.sign({ id: uid(un), sessionToken: k }, process.env.JWT_SECRET);
 }
@@ -171,4 +172,30 @@ test('DASH-10 ncrs list: pagination limit/page ทำงานถูกต้อ
   assert.equal(r1.status, 200);
   assert.equal(r1.body.data.length, 2);
   assert.equal(r1.body.total, 9); // ทุก NCR/NCP ที่สร้างไว้
+});
+
+// COO dashboard (read-only) — เพิ่มสิทธิ์ cco เข้า /team + /team/:memberId เพื่อเห็นสรุปจัดซื้อทั้งบริษัท
+test('DASH-11 permission: qc_staff เข้า /team ไม่ได้ → 403 (cco เท่านั้นที่เพิ่มสิทธิ์ใหม่)', async () => {
+  const r = await api('GET', '/api/purchasing/dashboard/team', { cookie: C.staff });
+  assert.equal(r.status, 403);
+});
+
+test('DASH-12 permission: purchasing (ธรรมดา) เข้า /team ไม่ได้ → 403 (ยังคง manager/admin/cco เท่านั้น)', async () => {
+  const r = await api('GET', '/api/purchasing/dashboard/team', { cookie: C.pur1 });
+  assert.equal(r.status, 403);
+});
+
+test('DASH-13 cco เข้า /team ได้ เห็นทุก supplier ไม่ถูกกรอง (เหมือน purchasing_manager)', async () => {
+  const r = await api('GET', '/api/purchasing/dashboard/team', { cookie: C.coo });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.summary.supplier_count, 3);
+  assert.equal(r.body.summary.ncr_waiting_review, 3);
+  assert.equal(r.body.summary.team_member_count, 2); // purchasing1 + purchasing2
+  assert.equal(r.body.members.length, 2);
+});
+
+test('DASH-14 cco เข้า /team/:memberId ได้ (read-only member detail)', async () => {
+  const r = await api('GET', `/api/purchasing/dashboard/team/${purchasing1Id}`, { cookie: C.coo });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.member.id, purchasing1Id);
 });

@@ -7,6 +7,7 @@ import QMRDash from './QMRDash';
 import PurchasingDash from './PurchasingDash';
 import ManagerPurchasingDash from './ManagerPurchasingDash';
 import ExecutiveDash from './ExecutiveDash';
+import COODash from './COODash';
 import ProductionDash from './ProductionDash';
 import AdminDash from './AdminDash';
 import WarehouseDash from './WarehouseDash';
@@ -22,7 +23,7 @@ export default function Dashboard() {
     qmr: <QMRDash navigate={navigate} />,
     purchasing: <PurchasingDash navigate={navigate} />,
     purchasing_manager: <ManagerPurchasingDash navigate={navigate} />,
-    cco: <ExecutiveDash navigate={navigate} />,
+    cco: <COODash navigate={navigate} />,
     cmo: <ExecutiveDash navigate={navigate} />,
     cpo: <ExecutiveDash navigate={navigate} />,
     production_manager: <ProductionDash navigate={navigate} />,

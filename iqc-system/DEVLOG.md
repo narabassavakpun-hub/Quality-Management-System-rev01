@@ -4,7 +4,7 @@
 
 ## 📌 Current State (2026-07-17)
 
-**Version:** rev01 · Production · **Latest code:** Session 130 (2026-07-17)
+**Version:** rev01 · Production · **Latest code:** Session 132 (2026-07-17)
 
 **Architecture Summary**
 - Backend: Express 4.18 + better-sqlite3 (WAL, FK ON), **102 ตาราง** (+`environment_presets`, S118; +`supplier_purchasing_assignees`, S125), ~33 route files, SSE + Telegram + **Email/SMTP (S128, `lib/mailer.js`)**, port 3001
@@ -670,6 +670,84 @@ model + color ในไฟล์เดียว)
 | `client/src/pages/Master/Products.jsx` | import modal (hand-rolled, ไม่ใช้ shared component) เพิ่ม status `update`/`skip`, `changes` display, done-screen breakdown |
 | `server/test/masterDiffImport.test.js` | ใหม่ทั้งหมด — 15 เคส (ProductGroups/Units/DefectCategories/Colors) |
 | `server/test/productsImportExport.test.js` | ใหม่ทั้งหมด — 9 เคส |
+
+---
+
+## 2026-07-17 | Session 131 — COO Dashboard: เพิ่มสรุปข้อมูลจัดซื้อทั้งบริษัท
+
+**คำขอ:** ปรับหน้า dashboard ของ ID COO ให้เห็นข้อมูลสรุปของจัดซื้อทั้งหมด
+
+**สิ่งที่พบ:** `cco` เดิม map ไปที่ `ExecutiveDash.jsx` ใช้ร่วมกับ `cmo`/`cpo` (แสดงแค่ UAI รอลงนาม + KPI พื้นฐาน 4
+ตัว) — ข้อมูลสรุปจัดซื้อทั้งบริษัทที่ต้องการ (สถานะ NCR/NCP ทั้งทีม, closing rate, รายชื่อพนักงานจัดซื้อ) มีอยู่แล้ว
+จริงที่ endpoint `GET /api/purchasing/dashboard/team` (ใช้โดย `ManagerPurchasingDash.jsx` ของผู้จัดการจัดซื้อ) แต่
+route เดิม gate ไว้เฉพาะ `purchasing_manager`/`admin` เท่านั้น (`managerOnly` ใน `routes/purchasingDashboard.js`)
+
+**การแก้:**
+- แก้เฉพาะ `cco` — ไม่แตะ `cmo`/`cpo` เพราะ user ระบุเจาะจง "ID COO" เท่านั้น จึงสร้าง `COODash.jsx` แยกใหม่แทนที่
+  จะแก้ `ExecutiveDash.jsx` ตรงๆ (ซึ่งจะกระทบ cmo/cpo ไปด้วยโดยไม่ได้ขอ)
+- `routes/purchasingDashboard.js`: เพิ่ม `'cco'` เข้า `managerOnly` role list (คุม `/team` + `/team/:memberId`
+  ทั้งคู่) — endpoint ทั้งไฟล์นี้เป็น read-only ล้วน (ไม่มี POST/PATCH/DELETE เลย) จึงเป็นการเปิด "เห็นได้" ไม่ใช่
+  "แก้ได้" — `getSummary()`/`scopeClause()` เดิม (`server/services/purchasingDashboardService.js`) already คืน
+  scope `1=1` (เห็นทุก supplier ไม่ถูกกรอง) ให้ role ใดๆ ที่ไม่ใช่ `'purchasing'` อยู่แล้ว — ไม่ต้องแก้ service เลย
+- `client/src/pages/Dashboard/COODash.jsx` (ใหม่): ครึ่งบนเหมือน `ExecutiveDash.jsx` เดิม (UAI รอลงนามของคุณ + 4
+  SummaryCard) เพราะ COO ยังต้องเซ็น UAI เหมือน cmo/cpo (role matrix เดิม CLAUDE.md §11) ครึ่งล่างเพิ่มส่วน "สรุป
+  ข้อมูลจัดซื้อทั้งหมด" — ดึงจาก `/purchasing/dashboard/team` เดียวกับที่ `ManagerPurchasingDash.jsx` ใช้ (HeroStat
+  5 ตัว, bar chart แยก bucket สถานะ NCR/NCP, donut อัตราปิดงาน, ตารางทีมจัดซื้อคลิกดู detail ต่อคนได้) — ต่างจาก
+  ผู้จัดการจัดซื้อตรงที่ไม่มีส่วน "งานเกินกำหนด — ต้องติดตามด่วน" (การ์ดเตือนสำหรับ manager ใช้ตามงาน ไม่ใช่ executive
+  view) และไม่มีปุ่มจัดการทีมใดๆ (pure read-only)
+- `App.jsx`: เพิ่ม `'cco'` เข้า roles ของ route `/purchasing/team/:memberId` (`PurchasingMemberDetail.jsx`) — ไม่งั้น
+  คลิกแถวพนักงานจากตาราง COODash แล้วเจอ ProtectedRoute บล็อก 403 ทันที (หน้านี้ read-only เหมือนกัน ไม่มีปุ่มแก้ไข)
+- `client/src/pages/Dashboard/index.jsx`: `cco: <COODash navigate={navigate} />` (เดิมชี้ `ExecutiveDash`)
+
+**Test:** เพิ่ม 4 เคสใน `server/test/purchasingDashboard.test.js` (DASH-11..14) — qc_staff/purchasing (ธรรมดา) ยัง
+เข้า `/team` ไม่ได้ (403, ไม่มี privilege escalation เกินตั้งใจ), cco เข้า `/team` ได้เห็นทุก supplier ไม่ถูกกรอง
+(เหมือน purchasing_manager เป๊ะ), cco เข้า `/team/:memberId` ได้ — `node --test` → **328/328 เขียว** (324 baseline +
+4 เคสใหม่), `npm run build` (client) ผ่าน
+
+**Verify:** ยังไม่ได้ verify ผ่าน Playwright/มือจริง — แนะนำให้ user login ด้วย user role `cco` แล้วดูหน้าแรกจริง
+อีกครั้งก่อนใช้งาน
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/routes/purchasingDashboard.js` | `managerOnly` เพิ่ม `'cco'` (คุม `/team`, `/team/:memberId`) |
+| `client/src/pages/Dashboard/COODash.jsx` | ใหม่ — UAI รอลงนาม (เหมือน ExecutiveDash) + สรุปจัดซื้อทั้งบริษัท (เหมือน ManagerPurchasingDash แบบ read-only) |
+| `client/src/pages/Dashboard/index.jsx` | `cco` ชี้ไป `COODash` แทน `ExecutiveDash` (cmo/cpo ไม่เปลี่ยน) |
+| `client/src/App.jsx` | route `/purchasing/team/:memberId` เพิ่ม role `cco` |
+| `server/test/purchasingDashboard.test.js` | + DASH-11..14 (4 เคสใหม่) |
+
+---
+
+## 2026-07-17 | Session 132 — Dark Mode Auto: จำกัดเฉพาะมือถือ, คอมให้เป็นกลางวันเสมอ
+
+**คำขอ:** โหมด "อัตโนมัติ (ตามเวลา)" ให้ทำงานเฉพาะตอนดูในมือถือเท่านั้น ถ้าเปิดในคอมให้เป็นโหมดกลางวันเสมอ แต่ยังกด
+เปลี่ยนเป็น Light/Dark เองได้ตามปกติ (ไม่แตะ manual override)
+
+**การแก้:** ตรวจจับ "มือถือ" ด้วย `window.matchMedia('(pointer: coarse) and (hover: none)')` (สัมผัส+ไม่มี hover)
+แทน user-agent sniffing หรือความกว้างหน้าจอ — เหตุผลที่ไม่ใช้ความกว้างหน้าจอ: ย่อหน้าต่างคอมให้แคบไม่ควรถูกนับว่า
+เป็นมือถือ ส่วน user-agent string ปลอมง่ายและไม่จำเป็นเมื่อมี media query ที่ตรงจุดกว่าอยู่แล้ว
+- `ThemeContext.jsx`: เพิ่ม `isMobileDevice()`, `computeEffective()` ใน branch `auto` เช็คก่อนว่าเป็นมือถือไหม —
+  ถ้าไม่ใช่ (คอม/โน้ตบุ๊ค มี hover) คืน `'light'` ทันที ไม่คำนวณช่วงเวลาเลย ถ้าใช่ค่อยคำนวณตามชั่วโมงเหมือนเดิม —
+  `preference === 'dark'`/`'light'` (manual) ไม่ถูกแตะเลย ยังคืนตามที่ user เลือกเสมอไม่ว่าอุปกรณ์ไหน
+- `index.html` (inline script กัน flash-of-wrong-theme ก่อน React โหลด) — sync logic เดียวกันเป๊ะ (คอมเมนต์เดิม
+  เตือนไว้แล้วว่าต้องแก้คู่กันเสมอ)
+- `ThemeToggle.jsx`: label ตัวเลือก auto เปลี่ยนเป็น "อัตโนมัติ (ตามเวลา — มือถือเท่านั้น)" ให้ user เข้าใจ scope
+  ชัดเจนตอนเลือก ไม่ใช่มาเจอเอาว่าทำไมเปิดคอมไม่มืดตามเวลา
+
+**Test:** ไม่มี server test เกี่ยวข้อง (frontend-only, localStorage-based, ไม่มี backend endpoint) — verify ผ่าน
+`npm run build` (client) ผ่านเท่านั้น, `node --test` เดิมไม่กระทบ (328/328 เขียวเหมือนเดิม)
+
+**Verify:** ยังไม่ได้ verify ผ่านมือจริงทั้งมือถือ/คอม — แนะนำให้ user ทดสอบเปิดหน้าเว็บบนมือถือจริงช่วงกลางคืน
+(ควรเห็นมืดถ้าตั้ง auto) เทียบกับเปิดคอมช่วงเวลาเดียวกัน (ควรเห็นสว่างเสมอถ้าตั้ง auto)
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `client/src/contexts/ThemeContext.jsx` | + `isMobileDevice()`, `computeEffective()` auto branch เช็คก่อนคำนวณเวลา |
+| `client/index.html` | inline script sync logic เดียวกัน |
+| `client/src/components/UI/ThemeToggle.jsx` | label auto option ชัดเจนขึ้น |
 
 ---
 

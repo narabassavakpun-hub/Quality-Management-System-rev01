@@ -118,7 +118,7 @@ function AppRoutes() {
         <Route path="qc-attendance/checkin" element={<ProtectedRoute roles={['qc_staff','qc_supervisor']}><QCCheckIn /></ProtectedRoute>} />
         <Route path="qc-attendance/employee/:userId" element={<ProtectedRoute roles={['qc_staff','qc_supervisor','qc_manager','admin']}><QCEmployeeHistory /></ProtectedRoute>} />
         <Route path="qc-attendance/stats" element={<ProtectedRoute roles={['qc_supervisor','qc_manager','admin']}><QCAttendanceStats /></ProtectedRoute>} />
-        <Route path="purchasing/team/:memberId" element={<ProtectedRoute roles={['purchasing_manager','admin']}><PurchasingMemberDetail /></ProtectedRoute>} />
+        <Route path="purchasing/team/:memberId" element={<ProtectedRoute roles={['purchasing_manager','admin','cco']}><PurchasingMemberDetail /></ProtectedRoute>} />
         <Route path="admin" element={<ProtectedRoute roles={['admin']}><Outlet /></ProtectedRoute>}>
           <Route path="users" element={<AdminUsers />} />
           <Route path="settings" element={<AdminSettings />} />

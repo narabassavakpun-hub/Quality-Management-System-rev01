@@ -16,6 +16,17 @@ function isDarkHour(hour, start, end) {
   return start < end ? (hour >= start && hour < end) : (hour >= start || hour < end);
 }
 
+// โหมด auto (ตามเวลา) ใช้เฉพาะอุปกรณ์มือถือ/แท็บเล็ตแบบสัมผัส — เปิดจากคอม/โน้ตบุ๊ค (มีเมาส์/hover) ให้เป็นกลางวันเสมอ
+// (คำขอ user) เช็คด้วย pointer/hover แทน user-agent หรือความกว้างหน้าจอ เพราะทนต่อการย่อ/ขยายหน้าต่างบนคอมได้
+// (ไม่นับว่าเป็นมือถือแค่เพราะหน้าต่างแคบ) — ต้อง sync logic เดียวกันกับ index.html
+function isMobileDevice() {
+  try {
+    return window.matchMedia('(pointer: coarse) and (hover: none)').matches;
+  } catch {
+    return false;
+  }
+}
+
 function readStorage(key, fallback) {
   try {
     const v = localStorage.getItem(key);
@@ -33,6 +44,7 @@ export function ThemeProvider({ children }) {
   const computeEffective = useCallback(() => {
     if (preference === 'dark') return 'dark';
     if (preference === 'light') return 'light';
+    if (!isMobileDevice()) return 'light'; // auto บนคอม/โน้ตบุ๊ค → กลางวันเสมอ
     return isDarkHour(new Date().getHours(), autoStartHour, autoEndHour) ? 'dark' : 'light';
   }, [preference, autoStartHour, autoEndHour]);
 
