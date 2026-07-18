@@ -2,9 +2,9 @@
 
 ---
 
-## 📌 Current State (2026-07-17)
+## 📌 Current State (2026-07-18)
 
-**Version:** rev01 · Production · **Latest code:** Session 140 (2026-07-17)
+**Version:** rev01 · Production · **Latest code:** Session 141 (2026-07-18)
 
 **Architecture Summary**
 - Backend: Express 4.18 + better-sqlite3 (WAL, FK ON), **102 ตาราง** (+`environment_presets`, S118; +`supplier_purchasing_assignees`, S125), ~33 route files, SSE + Telegram + **Email/SMTP (S128, `lib/mailer.js`)**, port 3001
@@ -1056,6 +1056,65 @@ permission gate (403 ไม่ใช่ 404) ของ PDF route ใหม่ท
 | `client/src/utils/rolePermissions.js` | nav item `/reports` roles เพิ่ม 2 role เดียวกัน |
 | `client/src/App.jsx` | `ProtectedRoute` ของ route `reports` เพิ่ม 2 role เดียวกัน |
 | `server/test/reports.test.js` | + REP-01b, REP-01c |
+
+---
+
+## 2026-07-18 | Session 141 — Render Bandwidth Audit + Phase 1 Fix: Backup ข้าม R2 upload ถ้า DB ไม่เปลี่ยน
+
+**คำขอ:** Render ใช้ Outbound Bandwidth สูงผิดปกติ — ให้อ่านโค้ดทั้งโปรเจกต์วิเคราะห์หาสาเหตุ (ห้ามเดา ต้องอ้างอิง
+ไฟล์/บรรทัด) ครอบคลุม 18 หัวข้อ (API polling, React re-render, network payload, static files, Express
+middleware, logging, database, dashboard, file download, upload, socket, cron, Litestream, Render config,
+third-party API, memory leak, client cache, security) แล้วทำรายงาน + Optimization Plan เป็น Phase 1/2/3
+
+**การวิเคราะห์:** ใช้ 3 Explore agent คู่ขนานอ่านทั้ง client (React/Vite), ทั้ง server (Express/better-sqlite3),
+และ deploy config ทั้งหมด (Dockerfile, docker-compose, DEPLOYMENT.md, `.github/workflows`,
+`.env.production.example`, `vite.config.js`) แล้ว manual-verify ข้อค้นพบที่รุนแรงที่สุด 2-3 จุดตรงกับ source จริง
+ก่อนสรุปรายงาน (ไม่เชื่อ agent summary เฉยๆ) — รายงานเต็มอยู่ใน plan file ของ session นี้ (ผ่าน Plan Mode)
+
+**พบ 2 สาเหตุระดับ Critical:**
+1. `server/lib/backupService.js:116-129` (`runHotBackup`, เรียกทุก 10 นาทีจาก `server/index.js:664`) — VACUUM
+   snapshot DB (วัดจริง 2,998,272 bytes/~2.86MB) แล้วอัปโหลดทับ R2 **ทุกครั้งไม่มีเงื่อนไข** แม้ข้อมูลไม่เปลี่ยนเลย
+   ตั้งแต่รอบก่อน → ~144 ครั้ง/วัน (คงที่ตลอด 24 ชม. เพราะ keep-alive ping กันไม่ให้ Render Free sleep)
+2. **ไม่มี `compression()` middleware เลยในเส้นทาง deploy จริงบน Render** — nginx gzip (VPS-only) ไม่มีบน Render
+   (`DEPLOYMENT.md:154-156` ยืนยัน Render จัดการ proxy/TLS เอง ไม่ใช้ nginx) ทุก JSON response + JS bundle
+   (วัดจริง 1,893,828 bytes) ส่งแบบไม่บีบอัดเลย
+
+**ยืนยันด้วยข้อมูลจริงจาก user (Render dashboard, ระหว่าง session):** 4.31GB/5GB ใช้ไปแล้ว แบ่งเป็น
+**Service-Initiated 3.91GB (90.7%)** vs **HTTP Responses 412MB (9.5%)** — "Service-Initiated" = traffic ที่
+backend เป็นฝ่ายเรียกออกเอง (ไม่ใช่ตอบ request ผู้ใช้) ซึ่งในโค้ดทั้งระบบมีแค่ backup→R2 เท่านั้นที่มีขนาดระดับ MB
+(Telegram/SMTP เป็นข้อความสั้นระดับ KB) — **ยืนยันเด็ดขาดว่าข้อ 1 (backup re-upload) คือสาเหตุหลักของ bandwidth
+เกือบทั้งหมด ไม่ใช่แค่ผู้ต้องสงสัยอันดับ 1 เฉยๆ** — ส่วนข้อ 2 (compression) กระทบแค่ 412MB "HTTP Responses" เท่านั้น
+คนละช่องทางกับปัญหาหลัก
+
+**การแก้ (Phase 1, เฉพาะข้อ 1 ตามที่ user ขอ — ข้อ 2/3/6/11 ยังไม่แตะ รอ user สั่งต่อ):**
+`server/lib/backupService.js` — `runHotBackup()` เพิ่ม SHA-256 hash ของ snapshot ก่อนอัปโหลด เทียบกับ hash ของ
+รอบก่อนหน้า (`_lastHotBackupHash`, module-level in-memory — รีเซ็ตเป็น `null` ทุกครั้ง process restart ตั้งใจ
+เพราะ restart ควรอัปโหลดอย่างน้อย 1 ครั้งเพื่อความชัวร์) — hash ตรงกัน = ไม่มีอะไรเปลี่ยนเลยตั้งแต่รอบก่อน → ข้าม
+`r2.putObjectFromFile`/`putJson` ทั้งคู่ทันที (ลบ tmp snapshot ทิ้งใน `finally` เหมือนเดิม) — hash ต่างกัน (หรือ
+ครั้งแรกหลัง restart ที่ `_lastHotBackupHash` ยัง `null`) → อัปโหลดตามปกติ แล้วค่อยอัปเดต `_lastHotBackupHash`
+**หลัง**อัปโหลดสำเร็จเท่านั้น (ถ้า `putObjectFromFile` throw จะไม่อัปเดต hash — รอบถัดไปจะลองอัปโหลด content เดิม
+ซ้ำ ไม่ข้ามไปเงียบๆ ทั้งที่ยังไม่เคยอัปโหลดสำเร็จจริง) — คง 10 นาที/รอบเดิมไว้ (ไม่กระทบ RPO ตาม CLAUDE.md §27.3
+ที่ตั้งใจ 10 นาทีไว้อยู่แล้ว) แค่ข้าม network call ตอนไม่มีอะไรเปลี่ยน — `runDailyFifoBackup()`/`syncUploads()`
+ไม่แตะ (มี guard ของตัวเองอยู่แล้ว/incremental diff อยู่แล้ว ปริมาณเล็กเทียบกับ hot backup)
+
+**Test:** เพิ่ม `resetHotBackupDedup()` (export เฉพาะไว้ทดสอบ — จำลอง "process restart" ระหว่างเทสหลายเคสในไฟล์
+เดียวกัน) เรียกใน BACKUP-05/06 เดิม (กัน hash ค้างจากเทสก่อนหน้าทำให้ทดสอบ path ผิดไปเงียบๆ) + เพิ่ม 2 เคสใหม่:
+BACKUP-05b (เรียกซ้ำ 2 ครั้งติดกัน DB ไม่เปลี่ยน → ครั้งที่ 2 ไม่เรียก `putObjectFromFile` เลย) และ BACKUP-05c
+(insert แถวใหม่จริงเข้า DB ระหว่างรอบ → รอบถัดไปอัปโหลดใหม่เพราะ hash เปลี่ยนจริง) — `node --test` →
+**347/347 เขียว** (345 baseline + 2 เคสใหม่) — ไม่มีการเปลี่ยน client เลย รอบนี้ไม่ต้อง `npm run build`
+
+**Verify:** ยังไม่ได้ verify กับ Render bandwidth จริง (ต้อง deploy ก่อน) — แนะนำเช็ค Render dashboard เทียบ
+Service-Initiated bandwidth ก่อน/หลัง deploy ~24-48 ชม. เพื่อยืนยันตัวเลขจริง (รายงานเดิมประมาณจากขนาด DB วัดจริง
+คำนวณย้อนหลัง ไม่ใช่ traffic log จริง) — Phase 1 ที่เหลือ (compression, cache-control, Excel rate limit) ยังไม่ทำ
+ตามที่ user ขอให้ทำแค่ Patch 1 ก่อน
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/lib/backupService.js` | `runHotBackup()` เพิ่ม hash-check ข้าม R2 upload ถ้า snapshot ไม่เปลี่ยนจากรอบก่อน, + `resetHotBackupDedup()` (test-only export) |
+| `server/test/backupService.test.js` | BACKUP-05/06 เรียก `resetHotBackupDedup()` กันเทสเก่าพัง, + BACKUP-05b/05c (2 เคสใหม่) |
+| `C:\Users\Narabas.s\.claude\plans\squishy-purring-hammock.md` | Bandwidth Analysis Report เต็ม (นอก repo — plan file, ไม่ commit) |
 
 ---
 

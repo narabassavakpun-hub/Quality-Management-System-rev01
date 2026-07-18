@@ -6,6 +6,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const RawDatabase = require('better-sqlite3');
 const r2 = require('./r2Client');
 
@@ -112,15 +113,29 @@ async function readManifest() {
   }
 }
 
+// hash ของ snapshot ล่าสุดที่อัปโหลดสำเร็จ (in-memory, รีเซ็ตทุกครั้งที่ process restart — ตั้งใจ เพราะ restart
+// ควรอัปโหลดใหม่เสมออย่างน้อย 1 ครั้งเพื่อความชัวร์) — ใช้ข้าม upload รอบที่ DB ไม่มีอะไรเปลี่ยนเลยตั้งแต่รอบก่อน
+// (ลด outbound bandwidth — เดิม runHotBackup() อัปโหลดทับ R2 ทุก 10 นาทีไม่ว่าจะมีอะไรเปลี่ยนหรือไม่ วัดจาก
+// Render dashboard จริงพบว่า Service-Initiated bandwidth (การอัปโหลดของ backend เอง ไม่ใช่ traffic ผู้ใช้)
+// สูงถึง ~90% ของ bandwidth ทั้งหมด — ช่องทางนี้คือสาเหตุหลัก)
+let _lastHotBackupHash = null;
+
+// รีเซ็ต state ของ dedup — ใช้เฉพาะใน test เท่านั้น (จำลอง "process เพิ่ง restart" ระหว่างเทสหลายเคสในไฟล์เดียวกัน)
+function resetHotBackupDedup() { _lastHotBackupHash = null; }
+
 // อัปโหลด snapshot ไป backups/db/latest.db — รอบ ~10 นาที ใช้เป็น RPO หลักสำหรับ restore-on-boot
+// ข้าม upload ถ้า hash ของ snapshot เท่ากับรอบก่อนหน้าเป๊ะ (ไม่มีการเปลี่ยนแปลงข้อมูลเลยตั้งแต่รอบที่แล้ว)
 async function runHotBackup() {
   if (!r2.isConfigured()) { await warnNotConfigured(); return; }
   const snapshotPath = createVerifiedSnapshot();
   try {
+    const hash = crypto.createHash('sha256').update(fs.readFileSync(snapshotPath)).digest('hex');
+    if (hash === _lastHotBackupHash) return; // ไม่มีอะไรเปลี่ยน — ข้าม upload ทั้งหมด
     const { size } = await r2.putObjectFromFile('backups/db/latest.db', snapshotPath);
     const manifest = await readManifest();
     manifest.latest = { uploadedAt: new Date().toISOString(), sizeBytes: size };
     await r2.putJson(MANIFEST_KEY, manifest);
+    _lastHotBackupHash = hash; // อัปเดตหลังอัปโหลดสำเร็จเท่านั้น — ถ้า throw รอบหน้าจะลองอัปโหลด hash เดิมซ้ำ
   } catch (e) {
     await alertFailure('Hot backup (latest.db)', e);
   } finally {
@@ -207,4 +222,5 @@ async function runFullCycle() {
 module.exports = {
   runHotBackup, runDailyFifoBackup, syncUploads, runFullCycle,
   bangkokDateString, bangkokWeekdayIndex, walkFiles, sendEnvTelegram, // export ไว้ทดสอบ/ใช้ซ้ำ
+  resetHotBackupDedup, // export ไว้ทดสอบเท่านั้น
 };
