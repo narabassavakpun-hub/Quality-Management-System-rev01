@@ -262,8 +262,9 @@ const token = require('crypto').randomBytes(32).toString('hex')  // 64 char hex
 pending_supervisor          → QC Supervisor อนุมัติ
 pending_manager             → QC Manager อนุมัติ + disposition
 pending_qmr_open            → QMR อนุมัติเปิด
-pending_purchasing_review   → Purchasing รับทราบ + Review + Copy Link
-pending_supplier            → Supplier ตอบกลับ (respondent_name บังคับ)
+pending_purchasing_review   → Purchasing รับทราบ + Review (มูลค่าเคลม THB/USD + แปลอังกฤษ) — ยังคัดลอก Link ไม่ได้ (S128)
+pending_purchasing_manager_review → รอผู้จัดการจัดซื้ออนุมัติ (maker-checker gate, S128) ก่อนถึงจะคัดลอก Link ได้
+pending_supplier            → Supplier ตอบกลับ (respondent_name บังคับ) — Link คัดลอกได้จากสถานะนี้เป็นต้นไป
 pending_manager_review      → QC Manager ตรวจสอบคำตอบ
 pending_supplier_resubmit   → QC Manager ปฏิเสธ → Purchasing Reset
 pending_qmr_close           → QMR อนุมัติปิด
@@ -421,9 +422,15 @@ iqc-system/
 - ❌ ห้ามใช้ WebSocket — SSE เพียงพอ
 - ❌ ห้าม push ข้ามสิทธิ์ — ตรวจ role ก่อน push
 - Telegram: ส่งไม่ได้ → log แล้วไปต่อ ไม่ crash
+- Email (S128, `lib/mailer.js`): SMTP ยังไม่ได้ตั้งค่า → log แล้วไปต่อเหมือน Telegram (ไม่ crash) — settings
+  เก็บใน `settings` table เหมือน Telegram (`smtp_host`/`smtp_port`/`smtp_secure`/`smtp_user`/`smtp_from`),
+  `smtp_password` เข้ารหัสผ่าน `getSecretSetting`/`setSecretSetting` (ต่างจาก `telegram_bot_token` ที่เป็น
+  plain write-only) — ใช้ครั้งแรกกับ COO รับทราบ NCR หลัง purchasing_manager อนุมัติ (ดู §4)
 
 **Telegram กลุ่ม QC:** บิลใหม่, NCR ทุกขั้น, UAI QC steps, Delivery ทุก event  
-**Telegram กลุ่มจัดซื้อ:** NCR+link, UAI purchasing steps, QC acknowledge delivery
+**Telegram กลุ่มจัดซื้อ:** NCR+link, UAI purchasing steps, QC acknowledge delivery  
+**Email + Telegram ส่วนตัว COO (S128):** NCR ที่ purchasing_manager อนุมัติแล้ว (ก่อนส่ง Supplier) — แจ้งเตือนเฉยๆ
+ไม่มีปุ่ม/สถานะ acknowledge ในระบบ (ตัดสินใจแล้ว ดู session log)
 
 ---
 

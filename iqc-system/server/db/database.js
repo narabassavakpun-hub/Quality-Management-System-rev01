@@ -272,6 +272,14 @@ function runMigrations() {
     PRIMARY KEY (supplier_id, user_id)
   )`).run();
 
+  // supplier_product_groups: many-to-many junction (supplier ผลิต/ส่งได้มากกว่า 1 กลุ่มสินค้า) — คำขอ user
+  // (S146) ใช้กรอง Supplier ตามกลุ่มสินค้าในฟอร์มเพิ่มสินค้าใหม่
+  db.prepare(`CREATE TABLE IF NOT EXISTS supplier_product_groups (
+    supplier_id      INTEGER NOT NULL REFERENCES suppliers(id) ON DELETE CASCADE,
+    product_group_id INTEGER NOT NULL REFERENCES product_groups(id) ON DELETE CASCADE,
+    PRIMARY KEY (supplier_id, product_group_id)
+  )`).run();
+
   // product_images: image_type (product vs quality_issue)
   safeAddColumn('product_images', 'image_type', "TEXT DEFAULT 'product'");
 

@@ -116,6 +116,15 @@ function Form({ initial = {}, onSave, loading, error, onClose, onDone }) {
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
+  // กรอง Supplier ตามกลุ่มสินค้าที่เลือก (คำขอ user) — กรองเข้มงวด: โชว์เฉพาะ Supplier ที่ถูกตั้งกลุ่มนี้ไว้จริง
+  // ที่หน้า "ผู้ผลิต" เท่านั้น (S146 รอบแรกเคยมี fallback ให้ Supplier ที่ยังไม่ตั้งกลุ่มโชว์ทุกกลุ่ม แต่ user
+  // feedback ว่าเลือกกลุ่มแล้วดูเหมือนไม่กรองเลย เพราะ Supplier ส่วนใหญ่ยังไม่ถูกตั้งกลุ่ม — ตัดออกแล้ว)
+  const filteredSuppliers = form.product_group_id
+    ? suppliers.filter(s => (s.product_group_ids || []).map(String).includes(String(form.product_group_id)))
+    : suppliers;
+  const filteredSupplierIds = filteredSuppliers.map(s => String(s.id));
+  const allFilteredSuppliersSelected = filteredSupplierIds.length > 0 && filteredSupplierIds.every(id => form.supplier_ids.includes(id));
+
   function selectColor(cid) {
     const id = String(cid);
     setForm(p => ({ ...p, color_id: p.color_id === id ? '' : id }));
@@ -209,34 +218,13 @@ function Form({ initial = {}, onSave, loading, error, onClose, onDone }) {
           <div><label className="label">รหัสสินค้า</label><input className="input" value={form.code} onChange={e => set('code', e.target.value)} /></div>
           <div><label className="label">ชื่อสินค้า *</label><input className="input" value={form.name} onChange={e => set('name', e.target.value)} required /></div>
         </div>
-        <div className="mt-3">
-          <label className="label">
-            Supplier *
-            <span className="ml-1 text-[12px] text-muted font-normal">(เลือกได้มากกว่า 1)</span>
-          </label>
-          {suppliers.length === 0 ? (
-            <p className="text-small text-muted italic">ยังไม่มีข้อมูล Supplier</p>
-          ) : (
-            <SearchableSelect
-              multiple
-              wrap
-              options={suppliers.map(s => ({ value: String(s.id), label: s.name }))}
-              value={form.supplier_ids}
-              onChange={ids => set('supplier_ids', ids)}
-              placeholder="ค้นหา/เลือก Supplier..."
-            />
-          )}
-          {form.supplier_ids.length === 0 && (
-            <p className="text-[12px] text-danger mt-1">กรุณาเลือก Supplier อย่างน้อย 1</p>
-          )}
-        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
           <div>
             <label className="label">กลุ่มสินค้า *</label>
             <SearchableSelect
               options={groups.map(g => ({ value: g.id, label: g.name }))}
               value={form.product_group_id}
-              onChange={v => set('product_group_id', v)}
+              onChange={v => { set('product_group_id', v); set('supplier_ids', []); }}
               placeholder="ค้นหากลุ่มสินค้า..."
               required
             />
@@ -251,6 +239,45 @@ function Form({ initial = {}, onSave, loading, error, onClose, onDone }) {
               required
             />
           </div>
+        </div>
+        <div className="mt-3">
+          <div className="flex items-center justify-between flex-wrap gap-1">
+            <label className="label mb-0">
+              Supplier *
+              <span className="ml-1 text-[12px] text-muted font-normal">(เลือกได้มากกว่า 1)</span>
+              {form.product_group_id && (
+                <span className="ml-1 text-[12px] text-accent font-normal">
+                  — กรองตามกลุ่ม "{groups.find(g => String(g.id) === String(form.product_group_id))?.name}"
+                </span>
+              )}
+            </label>
+            {filteredSuppliers.length > 0 && (
+              <button
+                type="button"
+                onClick={() => set('supplier_ids', allFilteredSuppliersSelected ? [] : filteredSupplierIds)}
+                className="text-[12px] text-accent hover:underline"
+              >
+                {allFilteredSuppliersSelected ? 'ยกเลิก Supplier ทั้งหมด' : 'เลือก Supplier ทั้งหมด'}
+              </button>
+            )}
+          </div>
+          {suppliers.length === 0 ? (
+            <p className="text-small text-muted italic">ยังไม่มีข้อมูล Supplier</p>
+          ) : filteredSuppliers.length === 0 ? (
+            <p className="text-small text-muted italic mt-1">ไม่มี Supplier ในกลุ่มสินค้านี้ — ไปเพิ่มกลุ่มสินค้าให้ Supplier ที่หน้า "ผู้ผลิต" ก่อน</p>
+          ) : (
+            <SearchableSelect
+              multiple
+              wrap
+              options={filteredSuppliers.map(s => ({ value: String(s.id), label: s.name }))}
+              value={form.supplier_ids}
+              onChange={ids => set('supplier_ids', ids)}
+              placeholder="ค้นหา/เลือก Supplier..."
+            />
+          )}
+          {form.supplier_ids.length === 0 && (
+            <p className="text-[12px] text-danger mt-1">กรุณาเลือก Supplier อย่างน้อย 1</p>
+          )}
         </div>
         <div className="mt-3">
           <label className="label">หมายเหตุ</label>

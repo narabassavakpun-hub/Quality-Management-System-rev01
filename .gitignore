@@ -3,3 +3,8 @@
 ADAuthen.md
 AD_error.jpg
 AD_Success.jpg
+
+# โน้ตส่วนตัวของ user ที่มี credential จริง (Cloudflare R2 access key/secret/API token, Telegram bot token)
+# ถูก GitHub push protection บล็อกจริงเมื่อ 2026-07-20 (GH013, Cloudflare Account API Token) — ห้าม commit อีก
+"Setup Telegram QMS.txt"
+"setup cloud fare.txt"

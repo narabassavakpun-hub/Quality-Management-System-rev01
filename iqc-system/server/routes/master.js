@@ -96,9 +96,19 @@ function getActivePurchasingUsers() {
   return db.prepare("SELECT id, full_name FROM users WHERE role = 'purchasing' AND is_active = 1 ORDER BY full_name").all();
 }
 
+// ── Product groups (active) — ใช้ทั้ง export (สร้างคอลัมน์) และ import (จับคู่ header กับกลุ่ม) — S148 เพิ่ม
+// คอลัมน์ "กลุ่มสินค้า" ให้ export/import ของ Suppliers สัมพันธ์กับตารางจริง (มี multi-select กลุ่มสินค้าแล้วตั้งแต่ S146)
+function getActiveProductGroups() {
+  return db.prepare('SELECT id, name FROM product_groups WHERE is_active = 1 ORDER BY name').all();
+}
+
 // ===== SUPPLIERS =====
 // S128k — เพิ่มคอลัมน์ "ผู้ดูแลจัดซื้อ" แบบ 1 คอลัมน์ต่อ 1 คน (Y/ว่าง) แทน dropdown เดียว — Excel data validation
 // รองรับแค่ single-select ต่อเซลล์ (multi-select ต้องพึ่ง VBA macro ซึ่ง exceljs เขียนไม่ได้ ยืนยันกับ user แล้ว)
+// S148 เพิ่มคอลัมน์ "กลุ่มสินค้า" แบบ Y/N-matrix ต่อท้ายคอลัมน์ผู้ดูแลจัดซื้อ (เหตุผลตอนนั้น: กลุ่มสินค้ามีจำนวนน้อย) —
+// S149 กลับคำ: user feedback ว่าซับคอลัมน์เยอะดูยาก (จำนวนกลุ่มสินค้าจริงมากกว่าที่คาดตอน S148) → เปลี่ยนเป็นคอลัมน์
+// เดียวคั่นด้วย comma (เช่น "กลุ่ม A, กลุ่ม B") เหมือน Products.jsx's Supplier field (S129) — คอลัมน์ผู้ดูแลจัดซื้อ
+// (จำนวนน้อยจริง ~3 คน) ยังคงเป็น Y/N-matrix แบบเดิม ไม่เปลี่ยน
 router.get('/suppliers/export', ...adminOnly, async (req, res) => {
   const wb = new ExcelJS.Workbook(); wb.creator = 'IQC System';
   const ws = wb.addWorksheet('ผู้ผลิต');
@@ -109,46 +119,58 @@ router.get('/suppliers/export', ...adminOnly, async (req, res) => {
     { header: 'อีเมล',         key: 'email', width: 28 },
     { header: 'เบอร์โทร',      key: 'phone', width: 18 },
     { header: 'หมายเหตุ',      key: 'notes', width: 36 },
+    { header: 'กลุ่มสินค้า (คั่นด้วย , ถ้ามากกว่า 1)', key: 'groups', width: 36 },
     ...purchasingUsers.map(u => ({ header: u.full_name, key: `pu_${u.id}`, width: 14 })),
   ];
-  styleExcelHeader(ws, 5 + purchasingUsers.length);
+  styleExcelHeader(ws, 6 + purchasingUsers.length);
   const suppliers = db.prepare('SELECT id, code, name, email, phone, notes FROM suppliers ORDER BY name').all();
   attachSupplierPurchasingAssignees(suppliers);
+  attachSupplierProductGroups(suppliers);
   suppliers.forEach(r => {
     const assignedIds = new Set(r.purchasing_user_ids);
-    ws.addRow([r.code||'', r.name, r.email||'', r.phone||'', r.notes||'', ...purchasingUsers.map(u => assignedIds.has(u.id) ? 'Y' : '')]);
+    const groupNames = (r.product_groups || []).map(g => g.name).sort().join(', ');
+    ws.addRow([
+      r.code||'', r.name, r.email||'', r.phone||'', r.notes||'', groupNames,
+      ...purchasingUsers.map(u => assignedIds.has(u.id) ? 'Y' : ''),
+    ]);
   });
-  applyZebraStripes(ws, 2, suppliers.length + 1, 5 + purchasingUsers.length);
+  applyZebraStripes(ws, 2, suppliers.length + 1, 6 + purchasingUsers.length);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', "attachment; filename*=UTF-8''suppliers_template.xlsx");
   await wb.xlsx.write(res); res.end();
 });
 
 // S128k — diff-aware import: ถ้ารหัส/ชื่อตรงกับ supplier เดิม เช็คทีละ field แทนที่จะ error ทันที
-// เหมือนกัน 100% (รวมผู้ดูแลจัดซื้อที่คอลัมน์จำได้) → skip เงียบๆ ไม่แตะ DB, มีจุดต่างอย่างน้อย 1 จุด → update จริง
+// เหมือนกัน 100% (รวมผู้ดูแลจัดซื้อ+กลุ่มสินค้าที่คอลัมน์จำได้) → skip เงียบๆ ไม่แตะ DB, มีจุดต่างอย่างน้อย 1 จุด → update จริง
+// S149 — คอลัมน์ "กลุ่มสินค้า" เปลี่ยนจาก Y/N-matrix เป็น comma-separated เดียว (parse เหมือน Products.jsx's Supplier
+// field, S129) — ชื่อกลุ่มที่ไม่รู้จัก = warning เฉยๆ (ไม่ error ทั้งแถว เพราะกลุ่มสินค้าไม่ใช่ field บังคับของ supplier)
 router.post('/suppliers/import', ...adminOnly, excelMemUpload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'กรุณาอัปโหลดไฟล์ .xlsx' });
   let wb; try { wb = await parseImportFile(req.file.buffer); } catch { return res.status(400).json({ error: 'ไฟล์ไม่ถูกต้อง' }); }
   const ws = wb.getWorksheet('ผู้ผลิต') || wb.worksheets[0];
   if (!ws) return res.status(400).json({ error: 'ไม่พบ Sheet ในไฟล์' });
 
-  const hErr = checkHeaders(ws, ['รหัสผู้ผลิต', 'ชื่อผู้ผลิต *', 'อีเมล', 'เบอร์โทร', 'หมายเหตุ']);
+  const hErr = checkHeaders(ws, ['รหัสผู้ผลิต', 'ชื่อผู้ผลิต *', 'อีเมล', 'เบอร์โทร', 'หมายเหตุ', 'กลุ่มสินค้า (คั่นด้วย , ถ้ามากกว่า 1)']);
   if (hErr.length) return res.status(400).json({ error: 'Header ไม่ตรงกับ template — กรุณาใช้ไฟล์ที่ดาวน์โหลดจากระบบ', headerErrors: hErr });
 
-  // คอลัมน์ 6 เป็นต้นไป = ผู้ดูแลจัดซื้อ — จับคู่ header กับ purchasing user ที่ active อยู่ ณ ตอนนี้ (อาจต่างจาก
-  // ตอน export ถ้ามีคนเพิ่ม/ปิดใช้งานหลังจากนั้น — header ที่จำไม่ได้ = เตือนแล้วข้าม ไม่ error ทั้งไฟล์)
+  // คอลัมน์ 7 เป็นต้นไป = ผู้ดูแลจัดซื้อ (Y/N-matrix) — จับคู่ header กับชื่อจริง ณ ตอนนี้ (อาจต่างจากตอน export ถ้ามี
+  // คนเพิ่ม/ปิดใช้งานหลังจากนั้น — header ที่จำไม่ได้ = เตือนแล้วข้าม ไม่ error ทั้งไฟล์) ไม่อิงตำแหน่งคอลัมน์คงที่เลย
+  // (จับคู่ด้วยชื่อล้วนๆ) กันปัญหาลำดับคอลัมน์ขยับตอนจำนวนผู้ดูแลจัดซื้อเปลี่ยนระหว่าง export กับ import — คอลัมน์ 6
+  // (กลุ่มสินค้า) เป็นคอลัมน์คงที่ ไม่อยู่ใน loop นี้ (parse แยกแบบ comma-separated ด้านล่าง)
   const purchasingUsers = getActivePurchasingUsers();
+  const productGroups = getActiveProductGroups();
   const nameToId = new Map(purchasingUsers.map(u => [u.full_name.trim().toLowerCase(), u.id]));
+  const groupNameToId = new Map(productGroups.map(g => [g.name.trim().toLowerCase(), g.id]));
   const headerRow = ws.getRow(1);
-  const lastCol = Math.max(headerRow.cellCount, ws.columnCount || 0, 5);
+  const lastCol = Math.max(headerRow.cellCount, ws.columnCount || 0, 6);
   const assigneeColumns = []; // [{ col, userId }]
   const unrecognizedHeaders = [];
-  for (let c = 6; c <= lastCol; c++) {
+  for (let c = 7; c <= lastCol; c++) {
     const headerText = String(headerRow.getCell(c).value ?? '').trim();
     if (!headerText) continue;
     const uid = nameToId.get(headerText.toLowerCase());
-    if (uid) assigneeColumns.push({ col: c, userId: uid });
-    else unrecognizedHeaders.push(headerText);
+    if (uid) { assigneeColumns.push({ col: c, userId: uid }); continue; }
+    unrecognizedHeaders.push(headerText);
   }
   const recognizedUserIds = assigneeColumns.map(a => a.userId);
 
@@ -158,8 +180,9 @@ router.post('/suppliers/import', ...adminOnly, excelMemUpload.single('file'), as
     if (s.code) byCode.set(s.code.toLowerCase(), s);
     byName.set(s.name.toLowerCase(), s);
   }
-  // ผู้ดูแลปัจจุบันของแต่ละ supplier — จำกัดเฉพาะ user ที่คอลัมน์ในไฟล์นี้จำได้ (กันไม่ให้ import ไปล้างผู้ดูแลที่ถูก
-  // เพิ่มเข้าระบบทีหลัง ไม่มีคอลัมน์ในไฟล์เก่าเลย)
+  // ผู้ดูแลจัดซื้อปัจจุบันของแต่ละ supplier — จำกัดเฉพาะคอลัมน์ที่ไฟล์นี้จำได้ (กันไม่ให้ import ไปล้างผู้ดูแลที่ถูก
+  // เพิ่มเข้าระบบทีหลัง ไม่มีคอลัมน์ในไฟล์เก่าเลย) — กลุ่มสินค้าเป็นคอลัมน์เดียว comma-separated จึงไม่ต้อง scope
+  // (คอลัมน์เดียวแทนสมาชิกทั้งหมดเสมอ เหมือน Products.jsx's Supplier field)
   const currentAssigneesBySupplier = new Map(); // supplierId -> Set(userId)
   if (recognizedUserIds.length && existingSuppliers.length) {
     const ph1 = existingSuppliers.map(() => '?').join(',');
@@ -170,13 +193,24 @@ router.post('/suppliers/import', ...adminOnly, excelMemUpload.single('file'), as
       currentAssigneesBySupplier.get(row.supplier_id).add(row.user_id);
     }
   }
+  const currentGroupsBySupplier = new Map(); // supplierId -> Set(groupId)
+  if (existingSuppliers.length) {
+    const ph1 = existingSuppliers.map(() => '?').join(',');
+    for (const row of db.prepare(`SELECT supplier_id, product_group_id FROM supplier_product_groups WHERE supplier_id IN (${ph1})`)
+      .all(...existingSuppliers.map(s => s.id))) {
+      if (!currentGroupsBySupplier.has(row.supplier_id)) currentGroupsBySupplier.set(row.supplier_id, new Set());
+      currentGroupsBySupplier.get(row.supplier_id).add(row.product_group_id);
+    }
+  }
 
   const nameOfUser = id => purchasingUsers.find(u => u.id === id)?.full_name || String(id);
+  const nameOfGroup = id => productGroups.find(g => g.id === id)?.name || String(id);
   const seenCodes = new Set(), seenNames = new Set(), results = [];
 
   ws.eachRow({ includeEmpty: false }, (row, rowNum) => {
     if (rowNum === 1) return;
     const code = cellStr(row,1), name = cellStr(row,2), email = cellStr(row,3), phone = cellStr(row,4), notes = cellStr(row,5);
+    const groupCell = cellStr(row,6);
     if (!name && !code) return;
     const errors = [], warnings = [];
     if (!name) errors.push('ชื่อผู้ผลิตห้ามว่าง');
@@ -192,8 +226,15 @@ router.post('/suppliers/import', ...adminOnly, excelMemUpload.single('file'), as
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) warnings.push(`อีเมลรูปแบบไม่ถูกต้อง`);
 
     const rowAssigneeIds = new Set(assigneeColumns.filter(a => parseBool(cellStr(row, a.col))).map(a => a.userId));
+    // กลุ่มสินค้า — comma-separated, ไม่บังคับ (ไม่มี field นี้ = ไม่มีกลุ่มเลยก็ได้) ชื่อไม่รู้จัก = warning ข้ามไว้
+    const rowGroupIds = new Set();
+    for (const gName of groupCell.split(',').map(s => s.trim()).filter(Boolean)) {
+      const gid = groupNameToId.get(gName.toLowerCase());
+      if (gid) rowGroupIds.add(gid);
+      else warnings.push(`ไม่พบกลุ่มสินค้า "${gName}" ในระบบ — ข้ามไว้ก่อน`);
+    }
     const display = { รหัส: code||'-', ชื่อผู้ผลิต: name, อีเมล: email||'-', เบอร์โทร: phone||'-' };
-    const _data = { code:code||null, name, email:email||null, phone:phone||null, notes:notes||null, assigneeIds: [...rowAssigneeIds] };
+    const _data = { code:code||null, name, email:email||null, phone:phone||null, notes:notes||null, assigneeIds: [...rowAssigneeIds], groupIds: [...rowGroupIds] };
 
     if (errors.length) { results.push({ row: rowNum, display, errors, warnings, status: 'error', _data }); return; }
 
@@ -202,6 +243,7 @@ router.post('/suppliers/import', ...adminOnly, excelMemUpload.single('file'), as
     if (existing) {
       _data.id = existing.id;
       const currentIds = currentAssigneesBySupplier.get(existing.id) || new Set();
+      const currentGroupIds = currentGroupsBySupplier.get(existing.id) || new Set();
       const changes = [];
       if (normVal(existing.name)  !== normVal(name))  changes.push(`ชื่อ: "${existing.name}" → "${name}"`);
       if (normVal(existing.email) !== normVal(email)) changes.push(`อีเมล: "${existing.email||'-'}" → "${email||'-'}"`);
@@ -215,6 +257,14 @@ router.post('/suppliers/import', ...adminOnly, excelMemUpload.single('file'), as
         if (removed.length) parts.push(`-${removed.map(nameOfUser).join(', ')}`);
         changes.push(`ผู้ดูแลจัดซื้อ: ${parts.join(' ')}`);
       }
+      const addedG   = [...rowGroupIds].filter(id => !currentGroupIds.has(id));
+      const removedG = [...currentGroupIds].filter(id => !rowGroupIds.has(id));
+      if (addedG.length || removedG.length) {
+        const parts = [];
+        if (addedG.length)   parts.push(`+${addedG.map(nameOfGroup).join(', ')}`);
+        if (removedG.length) parts.push(`-${removedG.map(nameOfGroup).join(', ')}`);
+        changes.push(`กลุ่มสินค้า: ${parts.join(' ')}`);
+      }
       if (!changes.length) {
         results.push({ row: rowNum, display, errors: [], warnings, status: 'skip', changes: [], _data });
       } else {
@@ -227,7 +277,7 @@ router.post('/suppliers/import', ...adminOnly, excelMemUpload.single('file'), as
 
   if (!results.length) return res.status(400).json({ error: 'ไม่พบข้อมูลในไฟล์' });
   const headerWarnings = unrecognizedHeaders.length
-    ? [`ไม่รู้จักผู้ดูแลจัดซื้อคอลัมน์: ${unrecognizedHeaders.join(', ')} — ข้ามคอลัมน์นี้`]
+    ? [`ไม่รู้จักคอลัมน์: ${unrecognizedHeaders.join(', ')} — ข้ามคอลัมน์นี้ (ต้องตรงกับชื่อผู้ดูแลจัดซื้อที่ยัง active อยู่)`]
     : undefined;
   if (req.query.preview === '1') return res.json(importResponse(results, headerWarnings ? { headerWarnings } : {}));
   if (results.some(r => r.errors.length)) return res.status(400).json({ error: 'มีข้อมูลที่ไม่ถูกต้อง' });
@@ -242,6 +292,12 @@ router.post('/suppliers/import', ...adminOnly, excelMemUpload.single('file'), as
     if (delAssigneesScoped) delAssigneesScoped.run(supplierId, ...recognizedUserIds);
     for (const uid of assigneeIds) insAssignee.run(supplierId, uid);
   }
+  const insGroup = db.prepare('INSERT OR IGNORE INTO supplier_product_groups (supplier_id, product_group_id) VALUES (?, ?)');
+  const delGroups = db.prepare('DELETE FROM supplier_product_groups WHERE supplier_id = ?');
+  function syncGroups(supplierId, groupIds) {
+    delGroups.run(supplierId);
+    for (const gid of groupIds) insGroup.run(supplierId, gid);
+  }
 
   const doImport = db.transaction(rows => {
     let inserted = 0, updated = 0, skipped = 0;
@@ -252,11 +308,13 @@ router.post('/suppliers/import', ...adminOnly, excelMemUpload.single('file'), as
         const old = existingSuppliers.find(s => s.id === d.id);
         updSupplier.run(d.code, d.name, d.email, d.phone, d.notes, d.id);
         syncAssignees(d.id, d.assigneeIds);
+        syncGroups(d.id, d.groupIds);
         db.auditLog('suppliers', d.id, 'UPDATE', old, { name: d.name, email: d.email, phone: d.phone, notes: d.notes, source: 'excel_import' }, req.user.id, req.ip);
         updated++;
       } else {
         const res2 = insSupplier.run(d.code, d.name, d.email, d.phone, d.notes);
         if (d.assigneeIds.length) syncAssignees(res2.lastInsertRowid, d.assigneeIds);
+        if (d.groupIds.length) syncGroups(res2.lastInsertRowid, d.groupIds);
         db.auditLog('suppliers', res2.lastInsertRowid, 'CREATE', null, { name: d.name, source: 'excel_import' }, req.user.id, req.ip);
         inserted++;
       }
@@ -286,6 +344,26 @@ function attachSupplierPurchasingAssignees(rows) {
   for (const row of rows) {
     row.purchasing_assignees = byAssignee[row.id] || [];
     row.purchasing_user_ids = row.purchasing_assignees.map(a => a.user_id);
+  }
+}
+
+// กลุ่มสินค้าที่ supplier ผลิต/ส่งได้ต่อราย (many-to-many) — batch-attach เหมือน attachSupplierPurchasingAssignees
+// (S146) ใช้กรอง Supplier ตามกลุ่มสินค้าในฟอร์มเพิ่มสินค้าใหม่ (Products.jsx)
+function attachSupplierProductGroups(rows) {
+  if (!rows.length) return;
+  const ids = rows.map(r => r.id);
+  const ph = ids.map(() => '?').join(',');
+  const byGroup = {};
+  for (const r of db.prepare(`
+    SELECT spg.supplier_id, pg.id as group_id, pg.name
+    FROM supplier_product_groups spg JOIN product_groups pg ON pg.id = spg.product_group_id
+    WHERE spg.supplier_id IN (${ph}) ORDER BY pg.name
+  `).all(...ids)) {
+    (byGroup[r.supplier_id] = byGroup[r.supplier_id] || []).push({ group_id: r.group_id, name: r.name });
+  }
+  for (const row of rows) {
+    row.product_groups = byGroup[row.id] || [];
+    row.product_group_ids = row.product_groups.map(g => g.group_id);
   }
 }
 
@@ -319,17 +397,19 @@ router.get('/suppliers', auth, (req, res) => {
     const total = db.prepare(`SELECT COUNT(*) as c FROM suppliers WHERE 1=1 ${activeCl} ${searchCl} ${assignCl}`).get(...sp, ...assignParams);
     const rows = db.prepare(`SELECT * FROM suppliers WHERE 1=1 ${activeCl} ${searchCl} ${assignCl} ORDER BY name LIMIT ? OFFSET ?`).all(...sp, ...assignParams, perPage, offset);
     attachSupplierPurchasingAssignees(rows);
+    attachSupplierProductGroups(rows);
     return res.json({ data: rows, total: total.c, page: pg, limit: perPage });
   }
   const rows = includeInactive
     ? db.prepare('SELECT * FROM suppliers ORDER BY name').all()
     : db.prepare('SELECT * FROM suppliers WHERE is_active = 1 ORDER BY name').all();
   attachSupplierPurchasingAssignees(rows);
+  attachSupplierProductGroups(rows);
   res.json(rows);
 });
 
 router.post('/suppliers', ...purchasingOrAdmin, (req, res) => {
-  const { code, name, email, phone, notes, purchasing_user_ids } = req.body;
+  const { code, name, email, phone, notes, purchasing_user_ids, product_group_ids } = req.body;
   if (!name) return res.status(400).json({ error: 'กรุณากรอกชื่อผู้ผลิต' });
   try {
     const create = db.transaction(() => {
@@ -338,12 +418,17 @@ router.post('/suppliers', ...purchasingOrAdmin, (req, res) => {
         const insAssignee = db.prepare('INSERT OR IGNORE INTO supplier_purchasing_assignees (supplier_id, user_id) VALUES (?, ?)');
         for (const uid of purchasing_user_ids) insAssignee.run(result.lastInsertRowid, uid);
       }
-      db.auditLog('suppliers', result.lastInsertRowid, 'CREATE', null, { name, purchasing_user_ids }, req.user.id, req.ip);
+      if (Array.isArray(product_group_ids) && product_group_ids.length) {
+        const insGroup = db.prepare('INSERT OR IGNORE INTO supplier_product_groups (supplier_id, product_group_id) VALUES (?, ?)');
+        for (const gid of product_group_ids) insGroup.run(result.lastInsertRowid, gid);
+      }
+      db.auditLog('suppliers', result.lastInsertRowid, 'CREATE', null, { name, purchasing_user_ids, product_group_ids }, req.user.id, req.ip);
       return result.lastInsertRowid;
     });
     const id = create();
     const row = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(id);
     attachSupplierPurchasingAssignees([row]);
+    attachSupplierProductGroups([row]);
     res.json(row);
   } catch (e) {
     if (e.message.includes('UNIQUE')) return res.status(400).json({ error: 'รหัสผู้ผลิตซ้ำ' });
@@ -352,7 +437,7 @@ router.post('/suppliers', ...purchasingOrAdmin, (req, res) => {
 });
 
 router.patch('/suppliers/:id', ...purchasingOrAdmin, (req, res) => {
-  const { code, name, email, phone, notes, purchasing_user_ids } = req.body;
+  const { code, name, email, phone, notes, purchasing_user_ids, product_group_ids } = req.body;
   if (!name) return res.status(400).json({ error: 'กรุณากรอกชื่อผู้ผลิต' });
   try {
     const old = db.prepare('SELECT * FROM suppliers WHERE id=?').get(req.params.id);
@@ -363,11 +448,17 @@ router.patch('/suppliers/:id', ...purchasingOrAdmin, (req, res) => {
         const insAssignee = db.prepare('INSERT OR IGNORE INTO supplier_purchasing_assignees (supplier_id, user_id) VALUES (?, ?)');
         for (const uid of purchasing_user_ids) insAssignee.run(req.params.id, uid);
       }
-      db.auditLog('suppliers', req.params.id, 'UPDATE', old, { name, purchasing_user_ids }, req.user.id, req.ip);
+      if (Array.isArray(product_group_ids)) {
+        db.prepare('DELETE FROM supplier_product_groups WHERE supplier_id = ?').run(req.params.id);
+        const insGroup = db.prepare('INSERT OR IGNORE INTO supplier_product_groups (supplier_id, product_group_id) VALUES (?, ?)');
+        for (const gid of product_group_ids) insGroup.run(req.params.id, gid);
+      }
+      db.auditLog('suppliers', req.params.id, 'UPDATE', old, { name, purchasing_user_ids, product_group_ids }, req.user.id, req.ip);
     });
     upd();
     const row = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(req.params.id);
     attachSupplierPurchasingAssignees([row]);
+    attachSupplierProductGroups([row]);
     res.json(row);
   } catch (e) {
     if (e.message.includes('UNIQUE')) return res.status(400).json({ error: 'รหัสผู้ผลิตซ้ำ' });
