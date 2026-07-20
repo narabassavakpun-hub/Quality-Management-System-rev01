@@ -120,3 +120,78 @@ test('BILL-11 supervisor reject pending → back to draft', async () => {
   const detail = await api('GET', `/api/bills/${b.body.id}`, { cookie: C.staff });
   assert.equal(detail.body.status, 'draft');
 });
+
+// ===== Telegram กลุ่ม QC — ข้อความรูปแบบใหม่ตอน submit/approve (คำขอ user, S143) =====
+// mock 'node-fetch' ผ่าน require.cache (pattern เดียวกับ test/backupService.test.js's mockNodeFetch) กันยิง
+// network จริงไป Telegram API ระหว่างเทส — sendTelegram() ใน routes/notifications.js ไม่ await โดยผู้เรียก
+// (fire-and-forget) แต่ mock function เองไม่ใช่ async จึง set ตัวแปรจับค่า synchronous ทันทีตอนถูกเรียก ไม่ต้อง
+// รอ tick เพิ่ม
+const nodeFetchPath = require.resolve('node-fetch');
+function mockNodeFetch(impl) {
+  const orig = require.cache[nodeFetchPath];
+  require.cache[nodeFetchPath] = { id: nodeFetchPath, filename: nodeFetchPath, loaded: true, exports: impl };
+  return () => { if (orig) require.cache[nodeFetchPath] = orig; else delete require.cache[nodeFetchPath]; };
+}
+
+test('BILL-12 Telegram (submit): ข้อความมีรายละเอียดครบ + emoji สถานะรออนุมัติ', async () => {
+  db.setSetting('telegram_bot_token', 'test-token');
+  db.setSetting('telegram_group_qc', 'test-group-chat-id');
+  db.setSetting('app_url', 'https://qms-d5fm.onrender.com');
+
+  let calledUrl = null, calledText = null;
+  const restore = mockNodeFetch((url, opts) => {
+    calledUrl = url;
+    calledText = JSON.parse(opts.body).text;
+    return Promise.resolve({ ok: true });
+  });
+  try {
+    const b = await api('POST', '/api/bills', { cookie: C.staff, body: billBody({ po_no: 'PO-TG-1', invoice_no: 'INV-TG-1', received_date: '2026-01-10' }) });
+    await api('POST', `/api/bills/${b.body.id}/items`, { cookie: C.staff, body: cleanItem() });
+    const r = await api('POST', `/api/bills/${b.body.id}/submit`, { cookie: C.staff });
+    assert.equal(r.status, 200);
+
+    assert.equal(calledUrl, 'https://api.telegram.org/bottest-token/sendMessage');
+    assert.match(calledText, /^\[IQC\] 📥 มีบันทึกรับเข้าบิลใหม่/);
+    assert.match(calledText, /PO: PO-TG-1/);
+    assert.match(calledText, /Invoice: INV-TG-1/);
+    assert.match(calledText, /บริษัท: ผู้ผลิตดี/);
+    assert.match(calledText, /จำนวนรายการ 1 รายการ/);
+    assert.match(calledText, /วันที่บิล: 10\/01\/2569/); // BE year (2026+543)
+    assert.match(calledText, /ผู้รับเข้า: .+/);
+    assert.match(calledText, /สถานะ: ⏳ รออนุมัติ/);
+    assert.match(calledText, new RegExp(`Link: https://qms-d5fm\\.onrender\\.com/bills/${b.body.id}$`));
+  } finally {
+    restore();
+  }
+});
+
+test('BILL-13 Telegram (approve): ข้อความกรอบดาว + emoji ✅ อนุมัติแล้ว', async () => {
+  db.setSetting('telegram_bot_token', 'test-token');
+  db.setSetting('telegram_group_qc', 'test-group-chat-id');
+
+  const b = await api('POST', '/api/bills', { cookie: C.staff, body: billBody({ po_no: 'PO-TG-2', invoice_no: 'INV-TG-2' }) });
+  await api('POST', `/api/bills/${b.body.id}/items`, { cookie: C.staff, body: cleanItem() });
+  await api('POST', `/api/bills/${b.body.id}/submit`, { cookie: C.staff });
+
+  let calledText = null;
+  const restore = mockNodeFetch((url, opts) => {
+    calledText = JSON.parse(opts.body).text;
+    return Promise.resolve({ ok: true });
+  });
+  try {
+    const r = await api('POST', `/api/bills/${b.body.id}/approve`, { cookie: C.sup });
+    assert.equal(r.status, 200);
+
+    const lines = calledText.split('\n');
+    assert.equal(lines[0], '***************************');
+    assert.match(calledText, /PO: PO-TG-2/);
+    assert.match(calledText, /Invoice: INV-TG-2/);
+    assert.match(calledText, /บริษัท: ผู้ผลิตดี/);
+    assert.match(calledText, /จำนวนรายการ 1 รายการ/);
+    assert.match(calledText, /✅ ได้รับการอนุมัติแล้ว/);
+    // กรอบดาวคั่นก่อน/หลังบล็อกข้อมูล และปิดท้าย
+    assert.equal(lines.filter(l => l === '***************************').length, 3);
+  } finally {
+    restore();
+  }
+});

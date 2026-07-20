@@ -29,6 +29,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
+const compression = require('compression');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -43,6 +44,11 @@ const PORT = process.env.PORT || 3001;
 
 // อยู่หลัง reverse proxy ใน production → req.ip / secure cookie ถูกต้อง
 if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1);
+
+// ===== Compression (gzip/brotli) — เดิมไม่มีเลยทั้งระบบ (Render ไม่มี nginx อยู่หน้า ต่างจาก VPS ที่มี gzip
+// ใน nginx.conf) ทำให้ JSON response + SPA bundle (~1.8MB) ถูกส่งแบบไม่บีบอัดทุกครั้ง — วางไว้แถวบนสุดของ
+// middleware chain ให้ครอบคลุมทุก response ที่ตามมา (static files/API/SPA) =====
+app.use(compression());
 
 // ===== Security headers (helmet-equivalent, zero-dependency — DEVMORE H2/A05) =====
 app.use((req, res, next) => {
