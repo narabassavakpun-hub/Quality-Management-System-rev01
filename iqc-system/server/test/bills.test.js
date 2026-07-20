@@ -195,3 +195,26 @@ test('BILL-13 Telegram (approve): ข้อความกรอบดาว + e
     restore();
   }
 });
+
+// ===== No. (ลำดับบันทึก) — คำขอ user (S144): เดิม "No." ในตารางคำนวณจากตำแหน่งแถวในหน้า/ผลกรองปัจจุบันเท่านั้น
+// (reset ทุกครั้งที่เปลี่ยนหน้า/filter/ค้นหา) ไม่ใช่ลำดับจริงที่บิลถูกบันทึกเข้าระบบ — เปลี่ยนมาใช้ seq_no จาก
+// backend (ROW_NUMBER() OVER (ORDER BY created_at ASC) คำนวณจากบิลทั้งหมดก่อน filter) แทน — บิลแรกสุดของระบบ = 1
+// เสมอ ไม่ขึ้นกับ filter/search/pagination ที่ query ปัจจุบัน
+test('BILL-14 GET /bills: seq_no เรียงจากบิลแรกสุด=1 ตามลำดับบันทึกจริง ไม่ใช่ตำแหน่งในผลลัพธ์ที่กรอง', async () => {
+  const before = await api('GET', '/api/bills?limit=1000', { cookie: C.staff });
+  const maxSeqBefore = Math.max(0, ...before.body.data.map(b => b.seq_no));
+
+  const b1 = await api('POST', '/api/bills', { cookie: C.staff, body: billBody({ invoice_no: 'INV-SEQ-1' }) });
+  const b2 = await api('POST', '/api/bills', { cookie: C.staff, body: billBody({ invoice_no: 'INV-SEQ-2' }) });
+
+  const all = await api('GET', '/api/bills?limit=1000', { cookie: C.staff });
+  const seq1 = all.body.data.find(b => b.id === b1.body.id).seq_no;
+  const seq2 = all.body.data.find(b => b.id === b2.body.id).seq_no;
+  assert.equal(seq1, maxSeqBefore + 1); // บิลที่สร้างก่อน → seq_no น้อยกว่า
+  assert.equal(seq2, maxSeqBefore + 2);
+
+  // filter ด้วย search ให้เจอแค่ b2 → seq_no ต้องยังเป็นตัวเดิม ไม่ reset เป็น 1 เพราะเหลือแถวเดียวในผลลัพธ์
+  const filtered = await api('GET', `/api/bills?limit=1000&q=${encodeURIComponent('INV-SEQ-2')}`, { cookie: C.staff });
+  assert.equal(filtered.body.data.length, 1);
+  assert.equal(filtered.body.data[0].seq_no, seq2);
+});

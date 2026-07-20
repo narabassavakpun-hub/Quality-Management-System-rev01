@@ -50,6 +50,9 @@ router.get('/', auth, (req, res) => {
   if (q) { where += ' AND (b.invoice_no LIKE ? OR b.po_no LIKE ? OR b.container_no LIKE ? OR s.name LIKE ?)'; params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`); }
 
   const rows = db.prepare(`
+    WITH numbered_bills AS (
+      SELECT *, ROW_NUMBER() OVER (ORDER BY created_at ASC) as seq_no FROM bills
+    )
     SELECT b.*, s.name as supplier_name,
            COUNT(bi.id) as item_count,
            u.full_name as created_by_name,
@@ -71,7 +74,7 @@ router.get('/', auth, (req, res) => {
               WHERE n.status != 'cancelled'
             ) x
            ) as ncr_docs
-    FROM bills b
+    FROM numbered_bills b
     LEFT JOIN suppliers s ON s.id = b.supplier_id
     LEFT JOIN bill_items bi ON bi.bill_id = b.id
     LEFT JOIN users u ON u.id = b.created_by

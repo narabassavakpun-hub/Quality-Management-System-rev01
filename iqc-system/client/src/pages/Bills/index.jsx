@@ -6,6 +6,8 @@ import api, { downloadFile } from '../../utils/api';
 import Badge from '../../components/UI/Badge';
 import Button from '../../components/UI/Button';
 import SearchableSelect from '../../components/UI/SearchableSelect';
+import SortTh from '../../components/UI/SortTh';
+import { useSortable } from '../../hooks/useSortable';
 
 const NCR_STATUS_LABEL = {
   pending_supervisor: 'รอหัวหน้า QC',
@@ -233,9 +235,21 @@ export default function BillList() {
     return true;
   });
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  // เติมค่าที่ใช้ sort สำหรับคอลัมน์ derived (ขั้นตอนถัดไป/วันที่ปิดเอกสาร/สถานะ — เป็นเซลล์ที่ render จากหลาย
+  // NCR/NCP doc พร้อมกัน ไม่มี field ตรงตัวให้ sort อยู่แล้วใน bill object เดิม)
+  const sortableRows = filtered.map(b => {
+    const ncrDocs = parseNcrDocs(b.ncr_docs);
+    const { label } = getOverallStatus(b, ncrDocs);
+    const closeTs = ncrDocs.length
+      ? Math.max(...ncrDocs.map(d => new Date(d.closed_at || d.created_at || b.created_at).getTime()))
+      : new Date(b.created_at).getTime();
+    return { ...b, status_sort: label, next_step_sort: b.uncovered_failed_count || 0, close_date_sort: closeTs };
+  });
+  const { sorted, onSort, sortKey, sortDir } = useSortable(sortableRows, '');
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
-  const pageRows = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const pageRows = sorted.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   // reset หน้าเมื่อ filter เปลี่ยน
   useEffect(() => { setPage(1); }, [search, statusFilter, todayOnly, creatorId]);
@@ -389,27 +403,27 @@ export default function BillList() {
           <table className="table">
             <thead>
               <tr>
-                <th className="w-10 text-center">No.</th>
-                <th>Invoice No.</th>
-                <th>PO No.</th>
-                <th>Container No.</th>
-                <th>Supplier</th>
-                <th>วันที่รับ</th>
-                <th>รายการ</th>
-                <th>ผู้ออกเอกสาร</th>
-                <th>วันที่ออกเอกสาร</th>
-                <th>ขั้นตอนถัดไป</th>
-                <th>วันที่ปิดเอกสาร</th>
-                <th>สถานะ</th>
+                <SortTh col="seq_no" sortKey={sortKey} sortDir={sortDir} onSort={onSort} className="w-10 text-center">No.</SortTh>
+                <SortTh col="invoice_no" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>Invoice No.</SortTh>
+                <SortTh col="po_no" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>PO No.</SortTh>
+                <SortTh col="container_no" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>Container No.</SortTh>
+                <SortTh col="supplier_name" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>Supplier</SortTh>
+                <SortTh col="received_date" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>วันที่รับ</SortTh>
+                <SortTh col="item_count" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>รายการ</SortTh>
+                <SortTh col="created_by_name" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>ผู้ออกเอกสาร</SortTh>
+                <SortTh col="created_at" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>วันที่ออกเอกสาร</SortTh>
+                <SortTh col="next_step_sort" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>ขั้นตอนถัดไป</SortTh>
+                <SortTh col="close_date_sort" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>วันที่ปิดเอกสาร</SortTh>
+                <SortTh col="status_sort" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>สถานะ</SortTh>
                 {user?.role === 'qc_staff' && <th className="w-10"></th>}
               </tr>
             </thead>
             <tbody>
               {isLoading && <tr><td colSpan={user?.role === 'qc_staff' ? 13 : 12} className="text-center py-6 text-muted">กำลังโหลด...</td></tr>}
               {!isLoading && filtered.length === 0 && <tr><td colSpan={user?.role === 'qc_staff' ? 13 : 12} className="text-center py-6 text-muted">ไม่พบข้อมูล</td></tr>}
-              {pageRows.map((b, i) => (
+              {pageRows.map((b) => (
                 <tr key={b.id} onClick={() => navigate(`/bills/${b.id}`)}>
-                  <td className="text-center text-muted text-small">{(safePage - 1) * PAGE_SIZE + i + 1}</td>
+                  <td className="text-center text-muted text-small">{b.seq_no}</td>
                   <td className="font-mono text-small">{b.invoice_no}</td>
                   <td className="font-mono text-small">{b.po_no}</td>
                   <td className="font-mono text-small">{b.container_no || '-'}</td>
