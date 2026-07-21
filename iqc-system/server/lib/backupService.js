@@ -95,7 +95,7 @@ async function alertFailure(context, err) {
 
 // R2 ไม่ได้ตั้งค่าไว้เลย (env var ขาด/ผิด) — เงียบแบบเดิมอันตรายมาก เพราะแปลว่าไม่มี backup เกิดขึ้นจริง
 // สักครั้งเดียวโดยไม่มีสัญญาณอะไรเตือนเลย จนกว่าจะเสียข้อมูลจริง — เตือนดังๆ ทาง console + Telegram
-// (ครั้งเดียวต่อ process กัน spam ทุก 10 นาที แต่ log ทุกครั้งเพื่อเห็นใน live log ได้ตลอด)
+// (ครั้งเดียวต่อ process กัน spam ทุกรอบ scheduler (S150: ทุก 2 ชม.) แต่ log ทุกครั้งเพื่อเห็นใน live log ได้ตลอด)
 let notConfiguredWarned = false;
 async function warnNotConfigured() {
   console.error('[backupService] R2 ยังไม่ได้ตั้งค่า (R2_ACCOUNT_ID/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY/R2_BUCKET) — ข้าม backup รอบนี้');
@@ -123,7 +123,7 @@ let _lastHotBackupHash = null;
 // รีเซ็ต state ของ dedup — ใช้เฉพาะใน test เท่านั้น (จำลอง "process เพิ่ง restart" ระหว่างเทสหลายเคสในไฟล์เดียวกัน)
 function resetHotBackupDedup() { _lastHotBackupHash = null; }
 
-// อัปโหลด snapshot ไป backups/db/latest.db — รอบ ~10 นาที ใช้เป็น RPO หลักสำหรับ restore-on-boot
+// อัปโหลด snapshot ไป backups/db/latest.db — รอบ ~2 ชม. (S150, เดิม 10 นาที) ใช้เป็น RPO หลักสำหรับ restore-on-boot
 // ข้าม upload ถ้า hash ของ snapshot เท่ากับรอบก่อนหน้าเป๊ะ (ไม่มีการเปลี่ยนแปลงข้อมูลเลยตั้งแต่รอบที่แล้ว)
 async function runHotBackup() {
   if (!r2.isConfigured()) { await warnNotConfigured(); return; }
@@ -188,6 +188,17 @@ function saveSyncState(state) {
   }
 }
 
+// บันทึกว่าไฟล์นี้ตรงกับที่อยู่บน R2 อยู่แล้ว — ใช้จาก index.js's lazy fetch-through handler ทันทีหลัง
+// ดาวน์โหลดไฟล์แนบเก่ากลับมา cache local (cache miss หลัง restart บน ephemeral disk, restore-on-boot)
+// ไฟล์ที่เพิ่งเขียนใหม่ในเครื่องจะได้ mtime เป็น "ตอนนี้" เสมอ (getObjectToFile ไม่รักษา mtime เดิมจาก R2)
+// ถ้าไม่ mark ไว้ตรงนี้ syncUploads() รอบถัดไปจะเข้าใจผิดว่าเป็นไฟล์ใหม่/เปลี่ยน แล้วอัปโหลดกลับไป R2 คีย์
+// เดิมที่มันเพิ่งโหลดมา — content เหมือนเดิมทุกไบต์ เสีย bandwidth ทั้งขาลงและขาขึ้นโดยไม่มีประโยชน์เลย
+function markLocalFileSynced(rel, stat) {
+  const state = loadSyncState();
+  state[rel] = { size: stat.size, mtimeMs: stat.mtimeMs };
+  saveSyncState(state);
+}
+
 // sync ไฟล์แนบใหม่/เปลี่ยนแปลงไป R2 แบบ incremental (ไม่ tar ทั้งโฟลเดอร์ทุกรอบ — กันไฟล์ archive โตไม่จบ)
 // ไฟล์ที่อัปโหลดแล้วไม่เปลี่ยน (ปกติไฟล์แนบเป็น immutable หลัง upload) จะไม่ถูกส่งซ้ำ
 async function syncUploads() {
@@ -223,4 +234,5 @@ module.exports = {
   runHotBackup, runDailyFifoBackup, syncUploads, runFullCycle,
   bangkokDateString, bangkokWeekdayIndex, walkFiles, sendEnvTelegram, // export ไว้ทดสอบ/ใช้ซ้ำ
   resetHotBackupDedup, // export ไว้ทดสอบเท่านั้น
+  markLocalFileSynced, // ใช้จาก index.js's lazy fetch-through handler
 };

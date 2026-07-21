@@ -110,6 +110,9 @@ app.use('/uploads', (req, res, next) => {
     fs.mkdirSync(path.dirname(localPath), { recursive: true });
     await r2.getObjectToFile(`backups/uploads/${rel}`, tmpPath);
     fs.renameSync(tmpPath, localPath);
+    // ไฟล์นี้ตรงกับ R2 อยู่แล้ว (เพิ่งโหลดมาจากคีย์เดียวกันเป๊ะ) — mark ไว้กัน syncUploads() รอบถัดไป
+    // เข้าใจผิดว่าเป็นไฟล์ใหม่/เปลี่ยน (mtime ที่เพิ่งเขียนจะไม่ตรงกับ state เดิม) แล้วอัปโหลดกลับไปซ้ำโดยเปล่าประโยชน์
+    require('./lib/backupService').markLocalFileSynced(rel, fs.statSync(localPath));
     res.sendFile(localPath);
   } catch (e) {
     res.status(404).end();
@@ -662,12 +665,13 @@ runOverdueCheck();
 setInterval(runOverdueCheck, 60 * 60 * 1000).unref();
 
 // ===== Backup ไป Cloudflare R2 (optional — no-op ถ้าไม่ได้ตั้ง R2_* env, ดู DEPLOYMENT.md) =====
-// รอบถี่ (~10 นาที) แทนที่จะเป็นรอบเดียว/วัน เพราะ container ephemeral (เช่น Render free tier ที่ไม่มี
-// persistent disk) หายได้จาก sleep/wake, maintenance restart, OOM-kill — ไม่ใช่แค่ตอน redeploy เท่านั้น
+// รอบทุก 2 ชม. (S150 เดิม 10 นาที — ปรับตามคำขอ user เพื่อลด Service-Initiated bandwidth เพิ่มเติม จาก
+// runHotBackup()'s hash-dedup ที่ข้าม upload อยู่แล้วถ้าข้อมูลไม่เปลี่ยน — ยิ่งรอบห่างขึ้น ยิ่งลดจำนวนรอบที่ต้อง
+// เช็ค/อัปโหลดต่อวัน แลกกับ RPO ที่กว้างขึ้นเป็น ~2 ชม. แทน ~10 นาทีเดิม, ตกลงกับ user แล้ว) —
 // runFullCycle() กิน error ของทุกขั้นตอนย่อยเอง (ส่ง Telegram alert แทน) จึงไม่ทำให้ setInterval พัง
 const backupService = require('./lib/backupService');
 backupService.runFullCycle().catch(e => console.error('[backup] initial cycle error:', e.message));
-setInterval(() => backupService.runFullCycle().catch(e => console.error('[backup] cycle error:', e.message)), 10 * 60 * 1000).unref();
+setInterval(() => backupService.runFullCycle().catch(e => console.error('[backup] cycle error:', e.message)), 2 * 60 * 60 * 1000).unref();
 
 const server = app.listen(PORT, () => {
   console.log(`IQC Server running on port ${PORT}`);

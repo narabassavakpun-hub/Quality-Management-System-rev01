@@ -2,9 +2,9 @@
 
 ---
 
-## 📌 Current State (2026-07-20)
+## 📌 Current State (2026-07-21)
 
-**Version:** rev01 · Production · **Latest code:** Session 149 (2026-07-20)
+**Version:** rev01 · Production · **Latest code:** Session 150 (2026-07-21)
 
 **Architecture Summary**
 - Backend: Express 4.18 + better-sqlite3 (WAL, FK ON), **102 ตาราง** (+`environment_presets`, S118; +`supplier_purchasing_assignees`, S125), ~33 route files, SSE + Telegram + **Email/SMTP (S128, `lib/mailer.js`)**, port 3001
@@ -75,10 +75,101 @@
   Y/ว่าง ต่อ 1 กลุ่ม ให้สัมพันธ์กับตาราง, ทันทีหลังทำเสร็จ user feedback ว่าคอลัมน์เยอะดูยาก → S149 กลับคำเป็นคอลัมน์
   เดียว comma-separated เหมือน Products.jsx's Supplier field (S129) — คอลัมน์ผู้ดูแลจัดซื้อยังเป็น Y/N-matrix เดิม
   (จำนวนน้อยจริง ไม่ได้อยู่ในขอบเขต)
+- 🏁 **Render Bandwidth Audit รอบ 2: syncUploads() re-upload ไฟล์ lazy-fetch ซ้ำ (S150)** — bandwidth ยังสูงอยู่
+  (~1GB/วัน) หลัง S141's hot-backup dedup fix แล้ว 3 วัน (ยังไม่เคย verify กับ Render จริง) — พบสาเหตุใหม่ที่ S141
+  ไม่ครอบคลุม: deployment จริงใช้ Free tier + `RESTORE_ON_BOOT=true` (ephemeral disk, `DEPLOYMENT.md` §8.2) —
+  ไฟล์แนบเก่าที่ถูก lazy-fetch กลับจาก R2 หลัง restart (`index.js`'s `/uploads` cache-miss handler) ได้ mtime
+  ใหม่เป็น "ตอนนี้" เสมอ (`r2Client.js`'s `getObjectToFile` ไม่รักษา mtime เดิม) แต่ `upload-sync-state.json`
+  ไม่เคยถูก restore (`restoreService.js` restore เฉพาะ DB) → `syncUploads()` รอบถัดไป (≤10 นาที) เข้าใจผิดว่า
+  ไฟล์เปลี่ยน แล้วอัปโหลดกลับไป R2 คีย์เดิมที่เพิ่งโหลดมาโดยไม่มีประโยชน์เลย แก้ด้วย `markLocalFileSynced()`
+  (`backupService.js`) เรียกทันทีหลัง lazy-fetch สำเร็จ กัน false-positive นี้ — รายงานวิเคราะห์เต็ม (evidence/
+  ranking/priority) อยู่นอก repo (plan file ของ session นี้ผ่าน Plan Mode) — **รอบที่ 2 (คำขอเพิ่มเติม):** ยืด
+  รอบ scheduler ของ `runFullCycle()` จาก 10 นาที → **2 ชม.** (`server/index.js`) ลด bandwidth เพิ่มเติมโดยยอมรับ
+  RPO ที่กว้างขึ้น — เงื่อนไข "backup เฉพาะถ้าข้อมูลเปลี่ยนในช่วงนั้น" มีอยู่แล้วจาก hash-dedup ของ `runHotBackup()`
+  (S141) ไม่ต้องแก้ logic เพิ่ม แค่เปลี่ยนค่า interval — รายละเอียดแก้ไขดู session log ด้านล่าง
 
 **Technical Debt / Roadmap:** ดู [`../AUDIT.md`](../AUDIT.md) §12 (Refactor Roadmap) — **P0 ปิดครบแล้ว (S105)**; P1 ปิดครบ; P2 ปิดครบ (S103); เหลือ P3 (horizontal scale, TypeScript) + gap ใหม่ (ipqc_records removal decision, ipqc_inspections test coverage, fgqc reset-all FK gap) + restore-drill ยังไม่ automate ใน CI (ดู AUDIT.md D5) + CLAUDE.md §11 Role Matrix ต้องเพิ่ม purchasing_manager (S125) + purchasing_manager review step (S128)
 
 **เอกสารอ้างอิง:** [`../CLAUDE.md`](../CLAUDE.md) · [`../PRD.md`](../PRD.md) · [`../brand.md`](../brand.md) · [`../design-dashboard.md`](../design-dashboard.md) · [`../testcase.md`](../testcase.md) · [`../AUDIT.md`](../AUDIT.md)
+
+---
+
+## 2026-07-21 | Session 150 — Render Bandwidth Audit รอบ 2: syncUploads() re-upload ไฟล์ lazy-fetch ซ้ำ
+
+**คำขอ:** Service-Initiated Bandwidth บน Render ยังสูงอยู่ (~1GB ภายใน 1 วัน) ทั้งที่ activity จริงเบามาก (~16
+บิลรับเข้า) — ให้วิเคราะห์สาเหตุจากโค้ดจริงเท่านั้น ห้ามเดา (ครอบคลุม cron/scheduler, R2, SQLite backup,
+email, Telegram, upload API, external API calls, polling, ทุก endpoint, log) แล้วสรุปเป็นรายงาน + จัดอันดับ
+bandwidth + patch ที่พร้อมใช้งาน
+
+**บริบท:** Session 141 (2026-07-18) เคยวิเคราะห์เรื่องนี้มาแล้วครั้งหนึ่ง พบว่า `runHotBackup()` อัปโหลด DB
+snapshot เต็มไฟล์ทับ R2 ทุก 10 นาทีโดยไม่มีเงื่อนไข → แก้ด้วย SHA-256 hash-dedup (`4e82eb8`) deploy ไปแล้ว
+แต่ **ไม่เคย verify กับ Render bandwidth จริง** (DEVLOG เดิมบันทึกไว้ชัดว่า "ยังไม่ได้ verify") — รอบนี้ 3 วัน
+หลัง deploy fix เดิม bandwidth ยังสูงอยู่ แปลว่ามีสาเหตุอื่นที่ fix เดิมไม่ครอบคลุม
+
+**การวิเคราะห์:** ใช้ 3 Explore agent คู่ขนาน (backup/R2/scheduler, Telegram/email/HTTP ภายนอก, SSE/client
+polling) + ตรวจโค้ดจริงมือเองเพิ่มที่จุดสำคัญ (`backupService.js`, `r2Client.js`, `index.js`'s `/uploads`
+middleware, `restoreService.js`, `DEPLOYMENT.md` §8) ก่อนสรุป — Telegram/Email/SSE/client-polling ทั้งหมด
+ตัดออกจากสาเหตุ (ข้อความ/JSON เล็กระดับ KB, หรือเป็น "HTTP Responses" ไม่ใช่ "Service-Initiated" ตามนิยาม
+Render) พบสาเหตุใหม่ที่ยังไม่เคยถูกแก้:
+
+**Root cause:** deployment จริงที่ใช้งานคือ **Render Free tier + `RESTORE_ON_BOOT=true`**
+(`DEPLOYMENT.md:170-173` ยืนยันว่าเป็น "ทางเลือกที่เลือกใช้จริง") — ดิสก์เป็น ephemeral หายทุกครั้งที่
+container restart/redeploy DB ถูก restore จาก R2 ตอน boot แต่ **ไฟล์แนบ (uploads) ไม่ถูก restore ล่วงหน้า**
+ใช้ lazy fetch-through แทน (`restoreService.js:3-4`) — เมื่อไฟล์แนบเก่าถูกเปิดดู (cache miss หลัง restart)
+`index.js:100-117` ดาวน์โหลดจาก R2 มาเขียนไฟล์ local ใหม่ ซึ่ง `r2Client.js`'s `getObjectToFile()`
+(`fs.createWriteStream` ธรรมดา) **ไม่รักษา mtime เดิมจาก R2** → ไฟล์ได้ mtime เป็น "ตอนนี้" เสมอ ในขณะที่
+`upload-sync-state.json` (ใช้เทียบ `size`+`mtimeMs` ใน `syncUploads()`, `backupService.js:193-212`) **ก็ไม่
+เคยถูก restore เช่นกัน** (ไม่อยู่ใน `restoreService.js` เลย, restore เฉพาะ DB) → `syncUploads()` รอบถัดไป
+(≤10 นาที) มองไฟล์ที่เพิ่งเปิดดูนี้ว่า "ใหม่/เปลี่ยน" แล้ว **อัปโหลดกลับไป R2 คีย์เดิมที่เพิ่งโหลดมา — content
+เหมือนเดิมทุกไบต์ เสีย bandwidth ทั้งขาลง (fetch) และขาขึ้น (re-upload) โดยไม่มีประโยชน์เลย** ปริมาณจึงไม่ได้
+แปรผันตาม "บิลใหม่วันนี้" แต่แปรผันตาม "จำนวนไฟล์เก่าทุกยุคสมัยที่ถูกเปิดดูวันนี้" อธิบายได้ว่าทำไม activity เบา
+(16 บิล) ถึงกิน bandwidth เกินสัดส่วน — สาเหตุรอง (ยังไม่ปิดสนิทจาก S141): `runHotBackup()` มี dedup แล้วแต่
+ยังอัปโหลดเต็มไฟล์ทุกครั้งที่ DB เปลี่ยนจริง (audit_log/notification เขียนแทบทุก action) ซ้อนกับ
+`runDailyFifoBackup()` ที่อัปโหลดแยกอีก 1 ครั้ง/วันไม่มี dedup — ทั้งสองยังเป็น cost ที่มีอยู่จริง ไม่ใช่ bug
+เหมือนตัวแรก (RPO vs bandwidth tradeoff)
+
+**การแก้:** เพิ่ม `markLocalFileSynced(rel, stat)` ใน `backupService.js` (reuse `loadSyncState`/
+`saveSyncState` เดิม) บันทึกว่าไฟล์นี้ตรงกับ R2 อยู่แล้ว — เรียกจาก `index.js`'s lazy fetch-through handler
+ทันทีหลัง `fs.renameSync(tmpPath, localPath)` สำเร็จ กัน `syncUploads()` รอบถัดไปเข้าใจผิดว่าเป็นไฟล์ใหม่แล้ว
+อัปโหลดกลับไปซ้ำ — ไม่แตะ `runHotBackup()`/`runDailyFifoBackup()` เลยรอบนี้ (เป็น tradeoff ที่ต้องให้ user
+ตัดสินใจแยกต่างหาก ไม่ใช่สิ่งที่ควรแก้เงียบๆ)
+
+**Test:** เพิ่ม BACKUP-16 (`markLocalFileSynced` บันทึก `size`/`mtimeMs` ถูกต้องลง `upload-sync-state.json`
+จริง) และ BACKUP-17 (จำลอง lazy-fetch: mark ไฟล์แล้วเรียก `syncUploads()` → ไฟล์นั้นไม่ถูกอัปโหลดซ้ำ) ใน
+`server/test/backupService.test.js` — `UPLOADS_BASE`/`SYNC_STATE_PATH` เป็น path จริงของ repo (hardcode ไม่
+ผ่าน env var เหมือน `IQC_DB_PATH`) จึงสร้าง/ลบไฟล์ทดสอบจริงใน `iqc-system/uploads/_test-marklocal/` +
+backup/restore `upload-sync-state.json` เดิมใน `finally` เสมอ (ถ้าไฟล์ไม่มีอยู่ก่อนเทส ลบทิ้งแทนเขียน `{}`
+กัน fresh checkout โดนสร้างไฟล์ค้างไว้) — `node --test` → **366/366 เขียว** (364 baseline + 2 เคสใหม่)
+
+**Verify:** ยังไม่ได้ verify กับ Render bandwidth จริง (ต้อง deploy ก่อน) — แนะนำเปิดดูไฟล์บิล/NCR เก่าทันทีหลัง
+deploy ใหม่ (cache หายแน่นอน) แล้วเช็คว่า `syncUploads()` รอบถัดไปไม่พยายามอัปโหลดไฟล์นั้นซ้ำ + ติดตาม Service-
+Initiated bandwidth บน Render dashboard 24-48 ชม. เทียบ baseline ~1GB/วัน — รายงานวิเคราะห์เต็ม (evidence
+table ทุกไฟล์/บรรทัด, bandwidth ranking, priority, คำแนะนำเพิ่ม logging เพื่อวัดสัดส่วนจริง) อยู่ใน plan file
+ของ session นี้ (นอก repo, ผ่าน Plan Mode) — เจตนาไม่คัดลอกซ้ำที่นี่เพื่อกัน DEVLOG บวมเกินไป
+
+**รอบที่ 2 (คำขอเพิ่มเติมในวันเดียวกัน):** user ถามก่อนว่าถ้าข้อมูลเปลี่ยน 5 ครั้งในหน้าต่าง 15 นาที ระบบจะ backup
+กี่ครั้ง — ตอบตามกลไกจริง: ไม่ใช่ per-event แต่ผูกกับรอบ `setInterval` (ตอนนั้นทุก 10 นาที) ผ่าน hash-dedup ของ
+`runHotBackup()` (S141) ดังนั้นในหน้าต่าง 15 นาทีจะมี tick ตกแค่ 1-2 ครั้ง (ไม่ใช่ 5 ครั้งตามจำนวนการเปลี่ยนแปลง)
+— ตามด้วยคำขอเปลี่ยนรอบจริงเป็น **backup ทุก 2 ชม.** โดยยังคงเงื่อนไข "backup เฉพาะถ้ามีการเปลี่ยนแปลงข้อมูลใน
+ช่วงนั้น" (มีอยู่แล้วจาก hash-dedup เดิม ไม่ต้องเพิ่ม logic ใหม่) — แก้แค่ค่า interval เดียวที่
+`server/index.js`'s `setInterval(() => backupService.runFullCycle()..., 2 * 60 * 60 * 1000)` (เดิม
+`10 * 60 * 1000`) ซึ่งควบคุมทั้ง 3 sub-task ของ `runFullCycle()` (hot backup + daily FIFO + syncUploads)
+พร้อมกันเพราะเป็น scheduler เดียวใช้ร่วม — RPO หลักจึงขยับจาก ~10 นาที เป็น ~2 ชม. (ตกลงกับ user แล้วว่ายอมรับ
+tradeoff นี้เพื่อลด bandwidth เพิ่ม) — shutdown handler (`runHotBackup()` ใน SIGTERM) ยังทำงานเหมือนเดิม ช่วย
+ปิดช่องว่างตอน redeploy/graceful-restart ให้เกือบ real-time โดยไม่ต้องรอ 2 ชม. — อัปเดต comment ใน
+`backupService.js`, `DEPLOYMENT.md` §8.2, `CLAUDE.md` §27.2-27.4 ให้ตรงกับรอบใหม่ทั้งหมด (ของเดิมอ้างอิง
+"10 นาที" หลายจุด) — ไม่มีการแก้ logic/test เพิ่ม (ค่า interval ไม่มี unit test คลุมโดยตรงอยู่แล้ว) —
+`node --test` → ยังคง **366/366 เขียว** (ไม่กระทบ)
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/lib/backupService.js` | + `markLocalFileSynced(rel, stat)` (export ใหม่); อัปเดต comment cadence เป็น "ทุก 2 ชม." |
+| `server/index.js` | `/uploads` lazy fetch-through handler เรียก `markLocalFileSynced()` ทันทีหลังดาวน์โหลด+cache ไฟล์จาก R2 สำเร็จ; `runFullCycle()` scheduler interval 10 นาที → 2 ชม. |
+| `server/test/backupService.test.js` | + BACKUP-16/17 (คลุม `markLocalFileSynced` + `syncUploads` skip behavior) |
+| `iqc-system/DEPLOYMENT.md` | §8.2 อัปเดต RPO/cadence จาก ~10 นาที → ~2 ชม. + note `markLocalFileSynced()` fix |
+| `CLAUDE.md` | §27.2-27.4 อัปเดต RPO/cadence จาก ~10 นาที → ~2 ชม. + note `markLocalFileSynced()` fix |
 
 ---
 
