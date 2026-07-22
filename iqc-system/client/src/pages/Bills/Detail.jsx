@@ -150,18 +150,22 @@ export default function BillDetail() {
                   </div>
                 )}
                 <div className="flex items-center justify-between mt-2">
-                  {['qc_staff', 'qc_supervisor'].includes(user?.role) && bill.status === 'approved' && (
-                    item.in_ncr ? (
-                      <button
-                        onClick={() => navigate(`/ncr/${item.in_ncr.id}`)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-accent text-accent bg-blue-50 dark:bg-blue-900 hover:bg-blue-100 text-small font-mono font-semibold transition-colors"
-                      >
-                        <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        {item.in_ncr.ncr_code}
-                      </button>
-                    ) : (
+                  {/* ลิงก์ไปเอกสาร NCR/NCP ที่ออกไปแล้ว — แสดงให้ทุก role ที่เห็นหน้านี้ได้ (route นี้แค่ auth
+                      ไม่ได้ requireRole เจาะจง, ดู server/routes/bills.js's GET /:id) ไม่ใช่แค่ qc_staff/
+                      qc_supervisor — ปุ่ม "ออกเอกสาร NCR/NCP" (สร้างใหม่) เท่านั้นที่ยัง gate ด้วย role ตาม
+                      CLAUDE.md §11 role matrix (เปิด NCR/NCP ได้เฉพาะ qc_staff/qc_supervisor) */}
+                  {item.in_ncr ? (
+                    <button
+                      onClick={() => navigate(`/ncr/${item.in_ncr.id}`)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-accent text-accent bg-blue-50 dark:bg-blue-900 hover:bg-blue-100 text-small font-mono font-semibold transition-colors"
+                    >
+                      <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      {item.in_ncr.ncr_code}
+                    </button>
+                  ) : (
+                    ['qc_staff', 'qc_supervisor'].includes(user?.role) && bill.status === 'approved' && (
                       <Button variant="danger" size="sm" onClick={() => navigate(`/ncr/new?bill_id=${bill.id}&item_id=${item.id}`)}>
                         ออกเอกสาร NCR/NCP
                       </Button>

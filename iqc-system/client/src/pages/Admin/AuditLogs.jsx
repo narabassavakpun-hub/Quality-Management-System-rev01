@@ -123,27 +123,38 @@ function Avatar({ username }) {
 }
 
 // ─── filter bar ──────────────────────────────────────────────────────────────
-function FilterBar({ filters, setFilter, resetAll, allActions, allTables }) {
-  const { q, action, table, from, to } = filters;
+function FilterBar({ filters, setFilter, resetAll, allActions, allTables, allUsers }) {
+  const { q, action, table, user, from, to } = filters;
   return (
     <div className="bg-surface border border-border rounded-2xl shadow-sm p-4 mb-4">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3">
         {/* search */}
-        <div className="relative sm:col-span-2 lg:col-span-1">
+        <div className="relative min-w-0 sm:col-span-2 lg:col-span-2">
           <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z" />
           </svg>
           <input
             type="text" placeholder="ค้นหา username / ชื่อ..."
             value={q} onChange={e => setFilter('q', e.target.value)}
-            className="input-field pl-9 rounded-xl"
+            className="input-field pl-9 rounded-xl w-full min-w-0"
           />
         </div>
 
+        {/* user — filter แยกดูตาม user แต่ละคน (กด dropdown เลือกได้ตรงๆ ไม่ต้องพิมพ์ค้นหา) */}
+        <div className="min-w-0">
+          <label className="block text-[11px] font-medium text-muted mb-1 ml-1">ผู้ใช้</label>
+          <select value={user} onChange={e => setFilter('user', e.target.value)} className="input-field rounded-xl w-full min-w-0 truncate">
+            <option value="">ทั้งหมด</option>
+            {allUsers.map(u => (
+              <option key={u.username} value={u.username}>{u.full_name ? `${u.full_name} (${u.username})` : u.username}</option>
+            ))}
+          </select>
+        </div>
+
         {/* action */}
-        <div>
+        <div className="min-w-0">
           <label className="block text-[11px] font-medium text-muted mb-1 ml-1">ประเภท Action</label>
-          <select value={action} onChange={e => setFilter('action', e.target.value)} className="input-field rounded-xl">
+          <select value={action} onChange={e => setFilter('action', e.target.value)} className="input-field rounded-xl w-full min-w-0">
             <option value="">ทั้งหมด</option>
             {allActions.map(a => (
               <option key={a} value={a}>{ACTION_LABELS[a] ? `${ACTION_LABELS[a]} (${a})` : a}</option>
@@ -152,9 +163,9 @@ function FilterBar({ filters, setFilter, resetAll, allActions, allTables }) {
         </div>
 
         {/* table */}
-        <div>
+        <div className="min-w-0">
           <label className="block text-[11px] font-medium text-muted mb-1 ml-1">หมวดหมู่</label>
-          <select value={table} onChange={e => setFilter('table', e.target.value)} className="input-field rounded-xl">
+          <select value={table} onChange={e => setFilter('table', e.target.value)} className="input-field rounded-xl w-full min-w-0">
             <option value="">ทั้งหมด</option>
             {allTables.map(t => (
               <option key={t} value={t}>{TABLE_LABELS[t] || t}</option>
@@ -163,27 +174,27 @@ function FilterBar({ filters, setFilter, resetAll, allActions, allTables }) {
         </div>
 
         {/* from */}
-        <div>
+        <div className="min-w-0">
           <label className="block text-[11px] font-medium text-muted mb-1 ml-1">จากวันที่</label>
           <input
             type="date" value={from}
             onChange={e => setFilter('from', e.target.value)}
-            className="input-field rounded-xl w-full"
+            className="input-field rounded-xl w-full min-w-0"
           />
         </div>
 
         {/* to */}
-        <div>
+        <div className="min-w-0">
           <label className="block text-[11px] font-medium text-muted mb-1 ml-1">ถึงวันที่</label>
           <input
             type="date" value={to}
             onChange={e => setFilter('to', e.target.value)}
-            className="input-field rounded-xl w-full"
+            className="input-field rounded-xl w-full min-w-0"
           />
         </div>
       </div>
 
-      {(q || action || table || from || to) && (
+      {(q || action || table || user || from || to) && (
         <div className="mt-3 pt-3 border-t border-border flex items-center justify-between">
           <span className="text-[11px] text-muted">กรองข้อมูลอยู่</span>
           <button onClick={resetAll} className="inline-flex items-center gap-1.5 text-small text-danger hover:underline">
@@ -205,29 +216,30 @@ export default function AuditLogs() {
   const [q, setQ]           = useState('');
   const [action, setAction] = useState('');
   const [table, setTable]   = useState('');
+  const [user, setUser]     = useState('');
   const [from, setFrom]     = useState('');
   const [to, setTo]         = useState('');
   const [page, setPage]     = useState(1);
   const [showFilter, setShowFilter] = useState(false);
   const [expanded, setExpanded]     = useState(null);
 
-  const hasFilter = q || action || table || from || to;
+  const hasFilter = q || action || table || user || from || to;
 
   function setFilter(key, val) {
-    const setters = { q: setQ, action: setAction, table: setTable, from: setFrom, to: setTo };
+    const setters = { q: setQ, action: setAction, table: setTable, user: setUser, from: setFrom, to: setTo };
     setters[key](val);
     setPage(1);
   }
   function resetAll() {
-    setQ(''); setAction(''); setTable(''); setFrom(''); setTo('');
+    setQ(''); setAction(''); setTable(''); setUser(''); setFrom(''); setTo('');
     setPage(1);
   }
 
   const { data, isLoading } = useQuery({
-    queryKey: ['audit-logs', q, action, table, from, to, page],
+    queryKey: ['audit-logs', q, action, table, user, from, to, page],
     queryFn: () =>
       api.get('/admin/audit-logs', {
-        params: { q, action, table_name: table, from, to, page, limit: LIMIT },
+        params: { q, action, table_name: table, user, from, to, page, limit: LIMIT },
       }).then(r => r.data),
     staleTime: 15000,
   });
@@ -237,6 +249,7 @@ export default function AuditLogs() {
   const totalPages = Math.ceil(total / LIMIT);
   const allActions = data?.actions || [];
   const allTables  = data?.tables  || [];
+  const allUsers   = data?.users   || [];
 
   function toggleExpand(id) {
     setExpanded(prev => (prev === id ? null : id));
@@ -271,11 +284,12 @@ export default function AuditLogs() {
       {/* Filter (always visible on md+, toggleable on mobile) */}
       <div className={showFilter ? 'block' : 'hidden md:block'}>
         <FilterBar
-          filters={{ q, action, table, from, to }}
+          filters={{ q, action, table, user, from, to }}
           setFilter={setFilter}
           resetAll={resetAll}
           allActions={allActions}
           allTables={allTables}
+          allUsers={allUsers}
         />
       </div>
 
@@ -296,80 +310,54 @@ export default function AuditLogs() {
 
       {!isLoading && rows.length > 0 && (
         <>
-          {/* ── Desktop Table ── */}
-          <div className="hidden md:block table-container">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th className="w-[130px]">วันเวลา</th>
-                  <th className="w-[160px]">ผู้ใช้</th>
-                  <th className="w-[110px]">Action</th>
-                  <th>หมวด / ID</th>
-                  <th className="w-[130px]">IP Address</th>
-                  <th className="w-[70px]"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(row => (
-                  <React.Fragment key={row.id}>
-                    <tr className={expanded === row.id ? 'bg-blue-50/60 dark:bg-blue-900' : 'hover:bg-bg'}>
-                      {/* วันเวลา */}
-                      <td className="align-top">
-                        <p className="text-small text-text">{fmtDate(row.created_at)}</p>
-                        <p className="text-[11px] text-muted font-mono">{fmtTime(row.created_at)}</p>
-                      </td>
-                      {/* ผู้ใช้ */}
-                      <td className="align-top">
-                        <p className="text-small font-medium text-text truncate max-w-[140px]">
-                          {row.username || <span className="text-muted italic">ระบบ</span>}
-                        </p>
-                        {row.full_name && (
-                          <p className="text-[11px] text-muted truncate max-w-[140px]">{row.full_name}</p>
-                        )}
-                      </td>
-                      {/* Action */}
-                      <td className="align-top pt-[11px]">
-                        <ActionBadge act={row.action} />
-                      </td>
-                      {/* ตาราง/ID */}
-                      <td className="align-top">
-                        <p className="text-small text-text">
-                          <TableLabel name={row.table_name} />
-                        </p>
-                        {row.record_id > 0 && (
-                          <p className="text-[11px] text-muted font-mono">#{row.record_id}</p>
-                        )}
-                      </td>
-                      {/* IP */}
-                      <td className="align-top font-mono text-[11px] text-muted">
-                        {row.ip_address || '-'}
-                      </td>
-                      {/* ขยาย */}
-                      <td className="align-top">
-                        {(row.old_value || row.new_value) && (
-                          <button
-                            onClick={() => toggleExpand(row.id)}
-                            className="text-[11px] text-accent hover:underline whitespace-nowrap"
-                          >
-                            {expanded === row.id ? 'ซ่อน' : 'รายละเอียด'}
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                    {expanded === row.id && (
-                      <tr className="bg-blue-50/60 dark:bg-blue-900">
-                        <td colSpan={6} className="px-4 pb-3 pt-1">
-                          <div className={`grid gap-3 ${row.old_value && row.new_value ? 'grid-cols-2' : 'grid-cols-1 max-w-xl'}`}>
-                            <JsonDetail label="ก่อนหน้า" value={row.old_value} />
-                            <JsonDetail label="หลังแก้ไข" value={row.new_value} />
-                          </div>
-                        </td>
-                      </tr>
+          {/* ── Desktop: log stream (กลุ่มตามวัน, บรรทัดเดียวต่อรายการ สแกนไวเหมือน log viewer) ── */}
+          <div className="hidden md:block bg-surface border border-border rounded-xl overflow-hidden">
+            {rows.map((row, i) => {
+              const dateLabel = fmtDate(row.created_at);
+              const showDateHeader = i === 0 || fmtDate(rows[i - 1].created_at) !== dateLabel;
+              const isOpen = expanded === row.id;
+              const hasDetail = row.old_value || row.new_value;
+              return (
+                <React.Fragment key={row.id}>
+                  {showDateHeader && (
+                    <div className="px-4 pt-3 pb-1.5 bg-bg text-[11px] font-semibold text-muted">
+                      {dateLabel}
+                    </div>
+                  )}
+                  <div
+                    className={`flex items-center gap-3 px-4 py-2 border-t border-border text-small ${
+                      isOpen ? 'bg-blue-50/60 dark:bg-blue-900' : 'hover:bg-accent/5 dark:hover:bg-white/5'
+                    } ${hasDetail ? 'cursor-pointer' : ''}`}
+                    onClick={() => hasDetail && toggleExpand(row.id)}
+                  >
+                    <span className="font-mono text-[11px] text-muted w-[52px] shrink-0">{fmtTime(row.created_at)}</span>
+                    <span className="w-[100px] shrink-0"><ActionBadge act={row.action} /></span>
+                    <span className="w-[170px] shrink-0 truncate">
+                      <span className="text-text font-medium">{row.username || <span className="text-muted italic">ระบบ</span>}</span>
+                      {row.full_name && <span className="text-muted text-[11px] ml-1">({row.full_name})</span>}
+                    </span>
+                    <span className="flex-1 min-w-0 truncate text-text">
+                      <TableLabel name={row.table_name} />
+                      {row.record_id > 0 && <span className="font-mono text-[11px] text-muted ml-1.5">#{row.record_id}</span>}
+                    </span>
+                    <span className="font-mono text-[11px] text-muted w-[110px] shrink-0 text-right">{row.ip_address || '-'}</span>
+                    {hasDetail && (
+                      <svg className={`w-3.5 h-3.5 text-muted shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
                     )}
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
+                  </div>
+                  {isOpen && (
+                    <div className="px-4 pb-3 pt-1 bg-blue-50/60 dark:bg-blue-900 border-t border-border/50">
+                      <div className={`grid gap-3 ${row.old_value && row.new_value ? 'grid-cols-2' : 'grid-cols-1 max-w-xl'}`}>
+                        <JsonDetail label="ก่อนหน้า" value={row.old_value} />
+                        <JsonDetail label="หลังแก้ไข" value={row.new_value} />
+                      </div>
+                    </div>
+                  )}
+                </React.Fragment>
+              );
+            })}
           </div>
 
           {/* ── Mobile Cards ── */}

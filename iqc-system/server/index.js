@@ -588,7 +588,7 @@ app.patch('/api/admin/users/:id/toggle', ...adminOnly, (req, res) => {
 });
 
 app.get('/api/admin/audit-logs', ...adminOnly, (req, res) => {
-  const { q = '', action = '', table_name = '', from = '', to = '', page = 1, limit = 30 } = req.query;
+  const { q = '', action = '', table_name = '', user = '', from = '', to = '', page = 1, limit = 30 } = req.query;
   const offset = (Math.max(1, +page) - 1) * +limit;
 
   const conds = []; const params = [];
@@ -598,6 +598,7 @@ app.get('/api/admin/audit-logs', ...adminOnly, (req, res) => {
   }
   if (action)     { conds.push('al.action = ?');     params.push(action); }
   if (table_name) { conds.push('al.table_name = ?'); params.push(table_name); }
+  if (user)       { conds.push('u.username = ?');    params.push(user); }
   if (from)       { conds.push("al.created_at >= ?"); params.push(from + ' 00:00:00'); }
   if (to)         { conds.push("al.created_at <= ?"); params.push(to   + ' 23:59:59'); }
 
@@ -610,8 +611,12 @@ app.get('/api/admin/audit-logs', ...adminOnly, (req, res) => {
   // dropdown options สำหรับ filter
   const actions = db.prepare('SELECT DISTINCT action FROM audit_logs ORDER BY action').all().map(r => r.action);
   const tables  = db.prepare('SELECT DISTINCT table_name FROM audit_logs ORDER BY table_name').all().map(r => r.table_name);
+  const users   = db.prepare(`
+    SELECT DISTINCT u.username, u.full_name FROM audit_logs al
+    JOIN users u ON u.id = al.user_id ORDER BY u.username
+  `).all();
 
-  res.json({ data: rows, total, page: +page, limit: +limit, actions, tables });
+  res.json({ data: rows, total, page: +page, limit: +limit, actions, tables, users });
 });
 
 // ===== ROUTES =====

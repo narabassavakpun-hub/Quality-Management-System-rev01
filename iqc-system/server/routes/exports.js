@@ -1734,11 +1734,13 @@ function buildDailyReportData(date) {
            s.name as supplier_name,
            bi.id as item_id,
            COALESCE(p.name, bi.item_name) as item_name,
-           bi.qty_received, bi.qty_sampled, bi.qty_passed, bi.qty_failed
+           bi.qty_received, bi.qty_sampled, bi.qty_passed, bi.qty_failed,
+           dc.name as defect_category_name, bi.defect_detail
     FROM bills b
     LEFT JOIN suppliers s ON s.id = b.supplier_id
     LEFT JOIN bill_items bi ON bi.bill_id = b.id
     LEFT JOIN products p ON p.id = bi.product_id
+    LEFT JOIN defect_categories dc ON dc.id = bi.defect_category_id
     WHERE b.received_date = ? AND b.status != 'cancelled' AND bi.id IS NOT NULL
     ORDER BY b.id, bi.id
   `).all(date);
@@ -1767,15 +1769,27 @@ function rowVerdict(row) {
   return { fail, conditional };
 }
 
+// เหตุผลของเสียดิบจาก bill_items เอง (บันทึกตอน QC ตรวจพบของเสีย ก่อนจะออกเอกสาร NCR/NCP จริง) — ใช้แสดง
+// แทน "-" ในรายงาน กรณี qty_failed > 0 แต่ยังไม่มีใครออกเอกสาร NCR/NCP ให้รายการนี้เลย (คนละขั้นตอนกัน:
+// พบของเสีย → บันทึกสาเหตุตอนรับเข้า → (ภายหลัง) QC staff/Supervisor ค่อยออกเอกสาร NCR/NCP อีกที)
+function rawDefectCauseText(row) {
+  return [row.defect_category_name, row.defect_detail].filter(Boolean).join(' — ') || null;
+}
+
 // ===== ชิ้นส่วน HTML ตาราง รายงานสรุปการรับเข้า (ใช้ร่วม JPG + PDF) =====
 function receivingTablePieces(rows) {
   const dataRows = rows.map((row, i) => {
     const { fail, conditional } = rowVerdict(row);
-    const ncrHtml = row.ncr_docs.map(n => {
-      const cause = [n.defect_category, n.defect_detail].filter(Boolean).join(' — ');
-      const causeHtml = cause ? `<br/><span style="font-size:10px;color:#374151;">${esc(cause)}</span>` : '';
-      return `<span style="font-weight:700;color:${n.severity === 'major' ? '#DC2626' : '#D97706'};">${esc(n.ncr_code)}</span>${causeHtml}`;
-    }).join('<br/>');
+    const rawCause = rawDefectCauseText(row);
+    const ncrHtml = row.ncr_docs.length > 0
+      ? row.ncr_docs.map(n => {
+          const cause = [n.defect_category, n.defect_detail].filter(Boolean).join(' — ');
+          const causeHtml = cause ? `<br/><span style="font-size:10px;color:#374151;">${esc(cause)}</span>` : '';
+          return `<span style="font-weight:700;color:${n.severity === 'major' ? '#DC2626' : '#D97706'};">${esc(n.ncr_code)}</span>${causeHtml}`;
+        }).join('<br/>')
+      : (fail && rawCause
+          ? `<span style="font-size:10px;color:#374151;">${esc(rawCause)}</span><br/><span style="font-size:9px;color:#D97706;">(รอออกเอกสาร)</span>`
+          : '');
     const resultHtml = fail
       ? `<span style="color:#DC2626;font-weight:700;">ไม่ผ่าน</span>`
       : conditional
@@ -1859,10 +1873,13 @@ router.get('/reports/receiving/today/excel', auth, async (req, res) => {
 
     rows.forEach((row, i) => {
       const { fail, conditional } = rowVerdict(row);
-      const ncrCodes = row.ncr_docs.map(n => {
-        const cause = [n.defect_category, n.defect_detail].filter(Boolean).join(' — ');
-        return cause ? `${n.ncr_code} (${cause})` : n.ncr_code;
-      }).join('\n');
+      const rawCause = rawDefectCauseText(row);
+      const ncrCodes = row.ncr_docs.length > 0
+        ? row.ncr_docs.map(n => {
+            const cause = [n.defect_category, n.defect_detail].filter(Boolean).join(' — ');
+            return cause ? `${n.ncr_code} (${cause})` : n.ncr_code;
+          }).join('\n')
+        : (fail && rawCause ? `${rawCause} (รอออกเอกสาร)` : '');
       const exRow = ws.addRow({
         no: i + 1,
         supplier_name: row.supplier_name || '-',

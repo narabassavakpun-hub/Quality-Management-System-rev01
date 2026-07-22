@@ -4,7 +4,7 @@
 
 ## 📌 Current State (2026-07-22)
 
-**Version:** rev01 · Production · **Latest code:** Session 156 (2026-07-22)
+**Version:** rev01 · Production · **Latest code:** Session 159 (2026-07-22)
 
 **Architecture Summary**
 - Backend: Express 4.18 + better-sqlite3 (WAL, FK ON), **102 ตาราง** (+`environment_presets`, S118; +`supplier_purchasing_assignees`, S125), ~33 route files, SSE + Telegram + **Email/SMTP (S128, `lib/mailer.js`)**, port 3001
@@ -138,6 +138,127 @@
 **Technical Debt / Roadmap:** ดู [`../AUDIT.md`](../AUDIT.md) §12 (Refactor Roadmap) — **P0 ปิดครบแล้ว (S105)**; P1 ปิดครบ; P2 ปิดครบ (S103); เหลือ P3 (horizontal scale, TypeScript) + gap ใหม่ (ipqc_records removal decision, ipqc_inspections test coverage, fgqc reset-all FK gap) + restore-drill ยังไม่ automate ใน CI (ดู AUDIT.md D5) + CLAUDE.md §11 Role Matrix ต้องเพิ่ม purchasing_manager (S125) + purchasing_manager review step (S128)
 
 **เอกสารอ้างอิง:** [`../CLAUDE.md`](../CLAUDE.md) · [`../PRD.md`](../PRD.md) · [`../brand.md`](../brand.md) · [`../design-dashboard.md`](../design-dashboard.md) · [`../testcase.md`](../testcase.md) · [`../AUDIT.md`](../AUDIT.md)
+
+---
+
+## 2026-07-22 | Session 159 — Bug: รายงานสรุปการรับเข้าวันนี้ (PDF/JPEG/Excel) รายการ "ไม่ผ่าน" ที่ยังไม่มี NCR/NCP ช่องเอกสารว่างเป็น "-" ทั้งที่มีสาเหตุของเสียบันทึกไว้แล้ว
+
+**คำขอ:** user ส่งภาพหน้าจอ export "สรุปรับเข้าวันนี้" (ปุ่มบนหน้า qc_staff สถานีรับเข้า) — รายการที่ขึ้น
+"ไม่ผ่าน" หลายแถวช่อง "เอกสาร NCR/NCP" ว่างเปล่าเป็น "-" ทั้ง PDF และ JPEG ถามว่าทำไมไม่มีทั้งข้อมูลสาเหตุของเสีย
+และเลขที่เอกสาร NCR/NCP
+
+**Root cause:** `server/routes/exports.js`'s `buildDailyReportData()` (ใช้ร่วมทั้ง 3 format: PDF/JPG ผ่าน
+`receivingTablePieces()` + Excel) query `bill_items` โดย**ไม่เคย SELECT `defect_category_id`/`defect_detail`
+เลย** ทั้งที่ 2 field นี้มีอยู่แล้วบน `bill_items` ตั้งแต่ตอน QC บันทึกของเสียตอนรับเข้า (ก่อนจะมีใครออกเอกสาร
+NCR/NCP จริงๆ อีกที — คนละขั้นตอนกัน เหมือนที่ `Bills/Detail.jsx` แสดง "กลุ่มปัญหา/รายละเอียด" อยู่แล้วโดยไม่ต้อง
+รอ NCR) ช่อง "เอกสาร NCR/NCP" เดิมจึงสร้างจาก `row.ncr_docs` (ผูกกับ `ncr_items`) **เท่านั้น** — ถ้ายังไม่มีใคร
+ออกเอกสาร NCR/NCP ให้ item นั้น (ขั้นตอนที่ทำทีหลัง ไม่ได้ทำพร้อมกับตอนรับเข้าเสมอไป) `ncr_docs` จะว่าง แล้ว
+fallback ไปที่ "-" ทันที ทั้งที่ระบบมีข้อมูล "ทำไมถึงไม่ผ่าน" อยู่แล้วในมือ
+
+**การแก้:** เพิ่ม `dc.name as defect_category_name, bi.defect_detail` เข้า SELECT ของ `buildDailyReportData()`
+(join `defect_categories`) + เพิ่ม helper `rawDefectCauseText(row)` + แก้ทั้ง `receivingTablePieces()` (ใช้ร่วม
+PDF/JPG) และ Excel export: ถ้า `row.ncr_docs.length > 0` แสดงโค้ด NCR/NCP + สาเหตุเหมือนเดิม; ถ้าไม่มีเอกสารแต่
+`qty_failed > 0` (fail จากของเสียดิบ) แสดงสาเหตุของเสีย (`defect_category_name — defect_detail`) พร้อม label
+"(รอออกเอกสาร)" กำกับให้ชัดว่าเป็นสาเหตุเบื้องต้น ไม่ใช่เลขเอกสารจริง; ถ้าผ่านปกติยังแสดง "-" เหมือนเดิม —
+ไม่แตะ `rowVerdict()` (ตรรกะ fail/conditional/pass เดิมถูกต้องอยู่แล้ว ไม่ใช่ต้นตอปัญหา)
+
+**Test:** เพิ่ม fixture bill+item (received_date คงที่ผ่าน `?date=` กัน flaky) + **REP-11** ใน
+`test/reports.test.js` ยืนยันว่า item ที่ `qty_failed>0` ไม่มี NCR ผูกอยู่ แต่มี `defect_category_id`/
+`defect_detail` → Excel export column "เอกสาร NCR/NCP" มีทั้งชื่อกลุ่มปัญหา รายละเอียด และ "(รอออกเอกสาร)" —
+fixture สร้างสดในเทสเอง (ไม่ใช่ module-level) เพราะ REP-02/03/04 นับ `bill_items` ทั้ง DB แบบ global ถ้าเพิ่ม
+fixture ไว้ตั้งแต่ต้นไฟล์จะไปเปลี่ยนตัวเลขที่เทสก่อนหน้าคาดหวังไว้ (เจอจริงตอนรันเทสรอบแรก แก้แล้ว) —
+`node --test` → **393/393 เขียว**
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/routes/exports.js` | `buildDailyReportData()` เพิ่ม SELECT defect_category_name/defect_detail; เพิ่ม `rawDefectCauseText()`; `receivingTablePieces()` + Excel export แสดงสาเหตุของเสียดิบ+"(รอออกเอกสาร)" แทน "-" เมื่อ fail แต่ยังไม่มี NCR/NCP |
+| `server/test/reports.test.js` | เพิ่ม REP-11 (คลุม fix นี้โดยเฉพาะ) |
+
+---
+
+## 2026-07-22 | Session 158 — Bug: ลิงก์ NCR/NCP บนหน้า Bills/Detail.jsx เห็นเฉพาะ qc_staff/qc_supervisor — role อื่นไม่เห็นแม้ item มี NCR อยู่แล้ว
+
+**คำขอ:** user ส่งภาพหน้าจอบิลที่มีรายการออกเอกสาร NCP-2026-0001 แล้ว (มี badge ลิงก์คลิกไปเอกสารได้) — รายงาน
+ว่า role อื่นนอกจาก qc_staff (สถานีรับเข้า) เปิดหน้าเดียวกันแล้ว **ไม่เห็น badge นี้เลย** ทั้งที่ item มี NCR
+ผูกอยู่จริง ขอให้ทุก role เห็นเหมือนกับที่ qc_staff เห็น
+
+**Root cause:** `client/src/pages/Bills/Detail.jsx` เดิม (บรรทัด ~153) ห่อทั้ง 2 กรณี (badge ลิงก์เอกสารที่มีอยู่
+แล้ว **และ** ปุ่ม "ออกเอกสาร NCR/NCP" สำหรับสร้างใหม่) ไว้ใน condition เดียวกัน:
+`['qc_staff','qc_supervisor'].includes(user?.role) && bill.status==='approved'` — ทำให้ role อื่นทั้งหมด
+(qc_manager, qmr, purchasing, cco/cmo/cpo, production_manager ฯลฯ) ไม่เห็นทั้ง badge และปุ่มเลย แม้จะมีสิทธิ์
+เปิดดูหน้า Bill Detail นี้อยู่แล้ว (`GET /api/bills/:id` ฝั่ง server มีแค่ `auth` ไม่มี `requireRole` เจาะจง —
+ยืนยันว่า `item.in_ncr` ถูกส่งมาให้ทุก role ที่ authenticated แล้วอยู่แล้วจากเดิม ไม่ใช่ backend filter) — ตรง
+กับกฎ CLAUDE.md §15 "ห้าม hardcode role ใน component" ที่เจตนาป้องกันบั๊กแบบนี้ไว้อยู่แล้วแต่หลุดมาจุดนี้
+
+**การแก้:** แยก 2 กรณีออกจากกัน — badge ลิงก์เอกสารที่มีอยู่แล้ว (`item.in_ncr` truthy) แสดงให้**ทุก role**
+เห็นเสมอ (readonly, ไม่ต้อง gate เพราะแค่ลิงก์ไปเอกสารที่มีอยู่จริง) ส่วนปุ่ม "ออกเอกสาร NCR/NCP" (สร้างใหม่)
+ยัง gate ด้วย role เดิม (`qc_staff`/`qc_supervisor` เท่านั้น) ตรงตาม CLAUDE.md §11 role matrix ("เปิด NCR/NCP"
+เป็นสิทธิ์เฉพาะ 2 role นี้) — ไม่กระทบสิทธิ์การสร้างเอกสารเลย แก้แค่การมองเห็นลิงก์ readonly
+
+**Test:** `npm run build` (client) ผ่านสำเร็จ
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `client/src/pages/Bills/Detail.jsx` | แยก badge ลิงก์ NCR/NCP ที่มีอยู่แล้วออกจาก role gate (แสดงทุก role) ส่วนปุ่มสร้างใหม่ยัง gate `qc_staff`/`qc_supervisor` เหมือนเดิม |
+
+---
+
+## 2026-07-22 | Session 157 — Admin/AuditLogs.jsx: filter ผู้ใช้ (dropdown) + redesign มุมมอง desktop เป็น log stream แบบ Render
+
+**คำขอ:** user เห็นหน้า Application Logs ของ Render (log stream เรียบๆ, ขึ้นตามเวลา, มี tag สี, กรุ๊ปตามวัน)
+แล้วขอให้ปรับหน้า "Log การใช้งาน" (`Admin/AuditLogs.jsx`) ให้ดูคล้ายแบบนั้น + เพิ่ม dropdown กรองแยกตาม
+ผู้ใช้แต่ละคน — ระบุชัดว่า **มือถือ/iPad ให้คงดีไซน์เดิม (card list) ไว้ ปรับแค่ desktop** แต่ทั้งสอง breakpoint
+ต้องมี filter ผู้ใช้เพิ่มเข้ามา
+
+**การทำ:**
+- Backend (`server/index.js`'s `GET /api/admin/audit-logs`): เพิ่ม query param `user` (match ตรงกับ
+  `u.username`) + เพิ่ม `users` ใน response (`SELECT DISTINCT u.username, u.full_name FROM audit_logs al
+  JOIN users u ...`) สำหรับ populate dropdown — ตาม pattern เดิมที่มีอยู่แล้วสำหรับ `actions`/`tables`
+- Frontend `FilterBar`: เพิ่ม select "ผู้ใช้" (เดิมมีแค่ text search `q` ที่ค้นด้วย LIKE) — เพราะ `FilterBar`
+  เป็น component เดียวใช้ร่วมกันทั้ง desktop (แสดงตลอด) และ mobile (toggle ผ่านปุ่ม "ตัวกรอง") อยู่แล้ว
+  การเพิ่ม field ใหม่จุดเดียวจึงได้ทั้ง 2 breakpoint พร้อมกันโดยไม่ต้องแก้ mobile เลย
+- Desktop เดิมเป็น `.table`/`.table-container` (บรรทัดสูง มีเส้นแบ่งคอลัมน์ชัด ตามดีไซน์ §26) — เปลี่ยนเป็น
+  panel เดียว (`bg-surface border rounded-xl`) ที่แต่ละแถวเป็น flex-row บรรทัดเดียว (เวลา → ActionBadge →
+  ผู้ใช้ → หมวด/ID → IP → chevron ขยาย) คั่นด้วย `border-t` บางๆ + กรุ๊ปหัวข้อวันที่ (คำนวณจาก `fmtDate` ของ
+  แถวก่อนหน้าเทียบกับแถวปัจจุบัน, แถวเรียง DESC จาก backend อยู่แล้วจึงกรุ๊ปแบบ consecutive ได้เลยไม่ต้อง sort
+  ใหม่) ใกล้เคียงความหนาแน่นของ log viewer ที่ user อ้างอิง — คงพฤติกรรมคลิกขยายดู before/after JSON เดิมไว้ทั้งหมด
+  (state/logic `expanded`/`toggleExpand`/`JsonDetail` ไม่แตะเลย)
+- **Mobile card block (`md:hidden`) ไม่แตะแม้บรรทัดเดียว** ตามที่ user ระบุชัดว่าให้คงเดิม
+
+**Test:** `npm run build` (client) ผ่านสำเร็จ (มีแค่ pre-existing chunk-size warning เดิมไม่เกี่ยวกับรอบนี้) +
+`node -c index.js` (server) ผ่าน syntax check — ไม่มี unit test อัตโนมัติคลุมหน้า UI นี้โดยเฉพาะ (เป็น
+frontend page, pattern เดิมของโปรเจกต์ก็ไม่มี component test ให้หน้า admin listing ทั่วไปอยู่แล้ว)
+
+**รอบที่ 2 (bug หลัง deploy):** user ส่งภาพหน้าจอ dropdown "ผู้ใช้" ทับซ้อนกับ "ประเภท Action" ไม่สวย — root
+cause เป็น CSS Grid ปกติ: grid item มี `min-width: auto` โดย default ทำให้ `<select>` ที่มีข้อความยาว (เช่น
+"ผู้ดูแลระบบ (admin)") ปฏิเสธไม่ยอมหดเหลือความกว้างของ track (1fr) แล้วล้นทับคอลัมน์ถัดไป — select อื่น
+(action/table) ไม่เคยเจอปัญหานี้มาก่อนเพราะ option label สั้น (เช่น "ทั้งหมด") ไม่เคยยาวพอจะ trigger ให้เห็น
+บั๊กที่แฝงอยู่แล้ว — แก้ด้วย `min-w-0` บน grid item div ทุกตัวใน `FilterBar` (defensive กันเผื่อ label อื่นยาว
+ขึ้นในอนาคตด้วย ไม่ใช่แค่ตัว user) + `w-full min-w-0` บน `<select>`/`<input>` เอง — `npm run build` ผ่านซ้ำ
+
+**รอบที่ 3 (ยังไม่หายสนิท):** user รายงานช่องค้นหา (search) ยังเกินอยู่ — ตรวจพบว่า `.input-field` **ไม่มี
+นิยาม CSS จริงเลยในระบบ** (grep ทั้ง repo ไม่เจอ `.input-field {` ที่ไหน — เป็น class เปล่าที่ไม่ทำอะไร ต้องพึ่ง
+utility class อื่นที่ผูกมาด้วยเสมอ) และ `<input>` ของช่องค้นหา (ต่างจาก `from`/`to` ที่มี `w-full` เดิมอยู่แล้ว)
+ไม่เคยมี `w-full` เลยตั้งแต่แรก ประกอบกับ wrapper เดิมใช้ `sm:col-span-2 lg:col-span-1` (กว้าง 2 คอลัมน์ตอน
+`sm`, แคบเหลือ 1 คอลัมน์ตอน `lg`) เป็นความไม่สมมาตรที่เสี่ยงพังที่รอยต่อ breakpoint — แก้โดยเปลี่ยนเป็น
+`sm:col-span-2 lg:col-span-2` (กว้าง 2 คอลัมน์เสมอทั้ง 2 breakpoint, ไม่สลับขนาด) + เพิ่ม grid รวมจาก
+`lg:grid-cols-6` เป็น `lg:grid-cols-7` (2 ของ search + 5 ฟิลด์เดี่ยว = 7 พอดี) + เพิ่ม `w-full min-w-0` ให้
+input ค้นหาด้วย — **verify จริงด้วย Puppeteer screenshot** (ไม่ใช่แค่เดา) โดยสร้างหน้า static HTML จำลอง
+markup+class เดียวกับ `FilterBar` จริง โหลด CSS ที่ build แล้วจริง แล้ว screenshot ที่ 900px/1023px/1024px/
+1600px (คร่อมรอยต่อ `lg` breakpoint 1024px พอดี) — ไม่มี overlap ที่ความกว้างไหนเลย ทั้ง 2-column wrap
+(sm) และ 7-column แถวเดียว (lg) — เลือกวิธีนี้แทนการ login เข้า dev server จริงเพราะ port 3001 มี process
+เดิมที่ user ใช้งานจริงอยู่ (มี active connection จาก LAN) ไม่ต้องการรบกวน/เสี่ยง rate-limit login ของบัญชีจริง
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/index.js` | `GET /api/admin/audit-logs`: เพิ่ม `user` filter param + `users` distinct list ใน response |
+| `client/src/pages/Admin/AuditLogs.jsx` | เพิ่ม state/filter `user` ทั้งหน้า + dropdown "ผู้ใช้" ใน `FilterBar`; เปลี่ยนมุมมอง desktop จาก `.table` เป็น log-stream panel กรุ๊ปตามวัน; มุมมอง mobile ไม่เปลี่ยน |
 
 ---
 
