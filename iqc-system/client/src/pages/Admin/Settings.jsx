@@ -24,6 +24,9 @@ function TelegramTab() {
     telegram_group_qc: data.telegram_group_qc || '',
     telegram_group_purchasing: data.telegram_group_purchasing || '',
     app_url: data.app_url || '',
+    ncr_overdue_days: data.ncr_overdue_days || '7',
+    ncr_overdue_repeat_days: data.ncr_overdue_repeat_days || '3',
+    ncr_internal_reminder_days: data.ncr_internal_reminder_days || '3',
   };
   const set = (k, v) => setForm(p => ({ ...(p ?? current), [k]: v }));
 
@@ -101,6 +104,46 @@ function TelegramTab() {
           placeholder="-100xxxxxxxxxx"
         />
         <p className="text-[12px] text-muted mt-1">รับ: NCR ที่ต้องส่ง Supplier (พร้อม link), UAI ที่ต้องลงนาม</p>
+      </div>
+
+      {/* NCR Overdue — กลุ่มจัดซื้อ (หลัง QMR เปิดเอกสารแล้ว) */}
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="label">NCR เกินกำหนด (วัน หลัง QMR เปิดเอกสาร)</label>
+          <input
+            type="number" min={1} step={1} className="input"
+            value={current.ncr_overdue_days}
+            onChange={e => set('ncr_overdue_days', e.target.value)}
+            placeholder="7"
+          />
+        </div>
+        <div>
+          <label className="label">แจ้งซ้ำทุกกี่วัน (จนกว่าจะปิด)</label>
+          <input
+            type="number" min={1} step={1} className="input"
+            value={current.ncr_overdue_repeat_days}
+            onChange={e => set('ncr_overdue_repeat_days', e.target.value)}
+            placeholder="3"
+          />
+        </div>
+        <p className="text-[12px] text-muted col-span-2 -mt-2">
+          เริ่มนับหลัง QMR อนุมัติเปิด NCR แล้วเท่านั้น (เอกสารที่ยังไม่ผ่าน QMR จะไม่ถูกนับว่าเกินกำหนด) — แจ้งกลุ่มจัดซื้อ + เจ้าของ Supplier + ผู้จัดการจัดซื้อ พร้อม link เข้าดู แล้วแจ้งซ้ำทุก N วันจนกว่าจะปิดเอกสาร — เว้นว่างไว้ = ใช้ค่าเริ่มต้น 7/3 วัน
+        </p>
+      </div>
+
+      {/* NCR ค้างอนุมัติภายใน — ก่อนถึงจัดซื้อ (Supervisor/Manager/QMR) */}
+      <div>
+        <label className="label">แจ้งเตือนส่วนตัว: ค้างอนุมัติที่ Supervisor/Manager/QMR เกิน (วัน)</label>
+        <input
+          type="number" min={1} step={1} className="input"
+          value={current.ncr_internal_reminder_days}
+          onChange={e => set('ncr_internal_reminder_days', e.target.value)}
+          placeholder="3"
+        />
+        <p className="text-[12px] text-muted mt-1">
+          นับจากวันที่คนก่อนหน้าส่งต่อมาให้ขั้นนั้นๆ — ใช้ทั้งเป็นเกณฑ์แจ้งครั้งแรกและรอบแจ้งซ้ำ ส่งเข้า Telegram
+          ส่วนตัวของผู้รับผิดชอบขั้นนั้น (Supervisor/Manager/QMR) พร้อม link — เว้นว่างไว้ = ใช้ค่าเริ่มต้น 3 วัน
+        </p>
       </div>
 
       {/* APP URL */}

@@ -3,7 +3,7 @@
 // throw error พร้อม .status เพื่อให้ controller map เป็น HTTP status ที่ถูกต้อง
 const db = require('../db/database');
 const { getUsersByRole, getReceivingQCStaff, createNotification, sendTelegram } = require('../lib/notify');
-const { resolveNotifyTargetIds, getPurchasingManagerIds, getCooUsers } = require('../lib/purchasingScope');
+const { resolveNotifyTargetIds, getPurchasingManagerIds, getCooUsers, getSupplierAssigneeMentions } = require('../lib/purchasingScope');
 const { sendEmail } = require('../lib/mailer');
 const { buildNcrInfoHtml, buildNcrInfoText } = require('../lib/ncrEmailTemplate');
 
@@ -25,6 +25,14 @@ function getFullNcrItems(ncrId) {
 function purchasingTargetsForBill(billId) {
   const row = db.prepare('SELECT supplier_id FROM bills WHERE id = ?').get(billId);
   return resolveNotifyTargetIds(row ? row.supplier_id : null);
+}
+
+// S154 — บรรทัด @mention (ถ้ามี) ต่อหน้าข้อความกลุ่ม Telegram จัดซื้อ — @ เฉพาะผู้ดูแลจัดซื้อของ Supplier ของบิลนี้
+// ที่ตั้งค่า telegram_username ไว้แล้ว (getSupplierAssigneeMentions) คืน '' เปล่าถ้าไม่มีใคร mention ได้เลย
+function purchasingMentionsForBill(billId) {
+  const row = db.prepare('SELECT supplier_id FROM bills WHERE id = ?').get(billId);
+  const mentions = getSupplierAssigneeMentions(row ? row.supplier_id : null);
+  return mentions.length ? `${mentions.join(' ')}\n` : '';
 }
 
 // สร้าง NCR/NCP + items + images + status branch + notifications + audit (1 transaction) → คืน ncrId
@@ -147,9 +155,16 @@ function approveNcr({ ncr, actorId, actorRole, actorIp, comment, action, disposi
   const approve = db.transaction(() => {
     // Optimistic lock — atomic status check + update
     const isClosing = t.next === 'closed' || t.next === 'ncp_closed';
+    // S150 — QMR อนุมัติเปิดจริง (pending_qmr_open → pending_purchasing_review) บันทึกเวลาไว้เป็นจุดเริ่มนับวัน
+    // overdue (แทน disposition_due_date เดิมที่ QC Manager กรอกเองก่อน QMR จะอนุมัติด้วยซ้ำ — ดู overdueNotifier.js)
+    const isQmrOpening = t.next === 'pending_purchasing_review';
+    // S152 — ทุก transition ต้อง reset internal_reminder_last_sent_at เป็น NULL เสมอ (ขั้นใหม่ = เริ่มนับรอบ
+    // แจ้งเตือนค้างอนุมัติใหม่ ไม่สืบทอดรอบเก่าจากขั้นก่อนหน้า — ดู internalReminder.js)
     const changed = isClosing
-      ? db.prepare("UPDATE ncrs SET status=?, closed_at=datetime('now') WHERE id=? AND status=?").run(t.next, ncr.id, status)
-      : db.prepare('UPDATE ncrs SET status=? WHERE id=? AND status=?').run(t.next, ncr.id, status);
+      ? db.prepare("UPDATE ncrs SET status=?, closed_at=datetime('now'), internal_reminder_last_sent_at=NULL WHERE id=? AND status=?").run(t.next, ncr.id, status)
+      : isQmrOpening
+      ? db.prepare("UPDATE ncrs SET status=?, qmr_opened_at=datetime('now'), internal_reminder_last_sent_at=NULL WHERE id=? AND status=?").run(t.next, ncr.id, status)
+      : db.prepare("UPDATE ncrs SET status=?, internal_reminder_last_sent_at=NULL WHERE id=? AND status=?").run(t.next, ncr.id, status);
     if (changed.changes === 0) throw new Error('เอกสารถูกดำเนินการแล้ว กรุณารีเฟรชหน้า');
 
     if (status === 'pending_manager' && disposition) {
@@ -179,7 +194,7 @@ function approveNcr({ ncr, actorId, actorRole, actorIp, comment, action, disposi
       for (const u of getPurchasingManagerIds()) createNotification(u, 'NCR รอ Review จัดซื้อ', `${ncr.ncr_code} QMR อนุมัติแล้ว รอจัดซื้อ Review + แปลภาษาก่อนส่ง Supplier`, `/ncr/${ncr.id}`);
       sendTelegram(db.getSetting('telegram_group_qc'), `[IQC] ${ncr.ncr_code} QMR อนุมัติเปิด NCR แล้ว`);
       sendTelegram(db.getSetting('telegram_group_purchasing'),
-        `[IQC] ${ncr.ncr_code}\nQMR อนุมัติเปิดแล้ว — กรุณา Review NCR และแปลภาษาอังกฤษก่อนส่ง Link ให้ Supplier`
+        `${purchasingMentionsForBill(ncr.bill_id)}[IQC] ${ncr.ncr_code}\nQMR อนุมัติเปิดแล้ว — กรุณา Review NCR และแปลภาษาอังกฤษก่อนส่ง Link ให้ Supplier`
       );
     } else if (t.next === 'pending_qmr_close') {
       for (const u of getUsersByRole('qmr')) createNotification(u.id, 'NCR รอ QMR ปิด', `${ncr.ncr_code} QC Manager ลงชื่อแล้ว`, `/ncr/${ncr.id}`);
@@ -192,7 +207,7 @@ function approveNcr({ ncr, actorId, actorRole, actorIp, comment, action, disposi
         createNotification(uid, 'NCR พร้อมส่ง Supplier', `${ncr.ncr_code} — คัดลอก Link แล้วส่งให้ Supplier`, `/ncr/${ncr.id}`);
       }
       sendTelegram(db.getSetting('telegram_group_purchasing'),
-        `[IQC] ${ncr.ncr_code}\nผู้จัดการจัดซื้ออนุมัติแล้ว — พร้อมส่ง Supplier\n\nLink:\n${supplierLink}`
+        `${purchasingMentionsForBill(ncr.bill_id)}[IQC] ${ncr.ncr_code}\nผู้จัดการจัดซื้ออนุมัติแล้ว — พร้อมส่ง Supplier\n\nLink:\n${supplierLink}`
       );
 
       // COO รับทราบ NCR (email + Telegram ส่วนตัว) — แจ้งเตือนเฉยๆ ไม่มีปุ่ม/สถานะ acknowledge ในระบบ (ยืนยันกับ user แล้ว)
@@ -218,7 +233,7 @@ function approveNcr({ ncr, actorId, actorRole, actorIp, comment, action, disposi
       // Req 6 — "Closed" ต้องแจ้ง Purchasing Manager ด้วย
       for (const u of getPurchasingManagerIds()) createNotification(u, 'NCR ปิดแล้ว', `${ncr.ncr_code} QMR ปิดเอกสารแล้ว`, `/ncr/${ncr.id}`);
       sendTelegram(db.getSetting('telegram_group_qc'), `[IQC] ${ncr.ncr_code} ปิดแล้ว`);
-      sendTelegram(db.getSetting('telegram_group_purchasing'), `[IQC] ${ncr.ncr_code} ปิดแล้ว`);
+      sendTelegram(db.getSetting('telegram_group_purchasing'), `${purchasingMentionsForBill(ncr.bill_id)}[IQC] ${ncr.ncr_code} ปิดแล้ว`);
     } else if (t.next === 'ncp_closed') {
       createNotification(ncr.created_by, 'NCP อนุมัติแล้ว', `${ncr.ncr_code} ปิดเอกสาร NCP แล้ว`, `/ncr/${ncr.id}`);
       for (const u of getUsersByRole('qc_supervisor')) createNotification(u.id, 'NCP ปิดแล้ว', `${ncr.ncr_code} ปิดเอกสาร NCP แล้ว`, `/ncr/${ncr.id}`);
@@ -294,7 +309,7 @@ function purchasingReview({ ncr, items, actorId, actorIp }) {
       createNotification(u, 'NCR รอผู้จัดการจัดซื้อตรวจสอบ', `${ncr.ncr_code} — จัดซื้อ Review เสร็จแล้ว รอผู้จัดการจัดซื้อตรวจสอบก่อนส่งลิงก์ให้ Supplier`, `/ncr/${ncr.id}`);
     }
     sendTelegram(db.getSetting('telegram_group_purchasing'),
-      `[IQC] ${ncr.ncr_code}\nจัดซื้อ Review เสร็จแล้ว — รอผู้จัดการจัดซื้อตรวจสอบก่อนส่งลิงก์ให้ Supplier`
+      `${purchasingMentionsForBill(ncr.bill_id)}[IQC] ${ncr.ncr_code}\nจัดซื้อ Review เสร็จแล้ว — รอผู้จัดการจัดซื้อตรวจสอบก่อนส่งลิงก์ให้ Supplier`
     );
 
     db.auditLog('ncrs', ncr.id, 'PURCHASING_REVIEW', { status: 'pending_purchasing_review' }, { status: 'pending_purchasing_manager_review' }, actorId, actorIp);
@@ -315,7 +330,7 @@ function rejectPurchasingManagerReview({ ncr, comment, actorId, actorIp }) {
       createNotification(uid, 'NCR ถูกส่งกลับให้ Review ใหม่', `${ncr.ncr_code} ผู้จัดการจัดซื้อไม่อนุมัติ — กรุณา Review ใหม่อีกครั้ง`, `/ncr/${ncr.id}`);
     }
     sendTelegram(db.getSetting('telegram_group_purchasing'),
-      `[IQC] ${ncr.ncr_code}\nผู้จัดการจัดซื้อไม่อนุมัติ Review\nเหตุผล: ${comment}\nกรุณา Review ใหม่อีกครั้ง`
+      `${purchasingMentionsForBill(ncr.bill_id)}[IQC] ${ncr.ncr_code}\nผู้จัดการจัดซื้อไม่อนุมัติ Review\nเหตุผล: ${comment}\nกรุณา Review ใหม่อีกครั้ง`
     );
     db.auditLog('ncrs', ncr.id, 'REJECT_PURCHASING_REVIEW', { status: 'pending_purchasing_manager_review' }, { status: 'pending_purchasing_review', comment }, actorId, actorIp);
   });
@@ -334,7 +349,7 @@ function rejectSupplierResponse({ ncr, comment, actorId, actorIp }) {
       createNotification(uid, 'NCR ถูกส่งกลับ', `${ncr.ncr_code} QC Manager ไม่อนุมัติคำตอบ Supplier — รอจัดซื้อดำเนินการ`, `/ncr/${ncr.id}`);
     }
     sendTelegram(db.getSetting('telegram_group_purchasing'),
-      `[IQC] ${ncr.ncr_code}\nQC Manager ไม่อนุมัติคำตอบ Supplier\nเหตุผล: ${comment}\nรอจัดซื้อส่ง Supplier ตอบใหม่`
+      `${purchasingMentionsForBill(ncr.bill_id)}[IQC] ${ncr.ncr_code}\nQC Manager ไม่อนุมัติคำตอบ Supplier\nเหตุผล: ${comment}\nรอจัดซื้อส่ง Supplier ตอบใหม่`
     );
     db.auditLog('ncrs', ncr.id, 'REJECT_RESPONSE', { status: 'pending_manager_review' }, { status: 'pending_supplier_resubmit', comment }, actorId, actorIp);
   });
@@ -367,7 +382,7 @@ function resubmitToSupplier({ ncr, actorId, actorIp }) {
       createNotification(uid, 'NCR พร้อมส่ง Supplier (ตอบใหม่)', `${ncr.ncr_code} — คัดลอก Link แล้วส่งให้ Supplier ตอบใหม่`, `/ncr/${ncr.id}`);
     }
     sendTelegram(db.getSetting('telegram_group_purchasing'),
-      `[IQC] ${ncr.ncr_code}\nส่ง Supplier ตอบใหม่ (ข้าม Review)\n\nLink:\n${supplierLink}`
+      `${purchasingMentionsForBill(ncr.bill_id)}[IQC] ${ncr.ncr_code}\nส่ง Supplier ตอบใหม่ (ข้าม Review)\n\nLink:\n${supplierLink}`
     );
 
     db.auditLog('ncrs', ncr.id, 'RESUBMIT', { status: 'pending_supplier_resubmit' }, { status: 'pending_supplier' }, actorId, actorIp);

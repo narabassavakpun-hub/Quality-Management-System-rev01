@@ -186,17 +186,41 @@ app.get('/api/admin/settings/telegram', ...adminOnly, (req, res) => {
     telegram_group_qc: db.getSetting('telegram_group_qc') || '',
     telegram_group_purchasing: db.getSetting('telegram_group_purchasing') || '',
     app_url: db.getSetting('app_url') || '',
+    // S150 — จำนวนวันหลัง QMR อนุมัติเปิด NCR ก่อนแจ้งเตือน "เกินกำหนด" ไปกลุ่มจัดซื้อ (overdueNotifier.js)
+    ncr_overdue_days: db.getSetting('ncr_overdue_days') || '7',
+    // S152 — หลังเกินกำหนดแล้ว แจ้งซ้ำไปกลุ่มจัดซื้อทุกกี่วัน (overdueNotifier.js)
+    ncr_overdue_repeat_days: db.getSetting('ncr_overdue_repeat_days') || '3',
+    // S152 — จำนวนวันที่ค้างอยู่ที่ Supervisor/Manager/QMR (ก่อนถึงจัดซื้อ) ก่อนแจ้งเตือนส่วนตัว + แจ้งซ้ำทุกกี่วัน (internalReminder.js)
+    ncr_internal_reminder_days: db.getSetting('ncr_internal_reminder_days') || '3',
   });
 });
 
 app.post('/api/admin/settings/telegram', ...adminOnly, (req, res) => {
-  const { telegram_bot_token, telegram_group_qc, telegram_group_purchasing, app_url } = req.body;
+  const {
+    telegram_bot_token, telegram_group_qc, telegram_group_purchasing, app_url,
+    ncr_overdue_days, ncr_overdue_repeat_days, ncr_internal_reminder_days,
+  } = req.body;
   // อัปเดต token เฉพาะเมื่อกรอกค่ามาใหม่ (กัน save ฟิลด์อื่นแล้วลบ token ทิ้ง)
   if (telegram_bot_token) db.setSetting('telegram_bot_token', telegram_bot_token);
   if (telegram_group_qc !== undefined) db.setSetting('telegram_group_qc', telegram_group_qc);
   if (telegram_group_purchasing !== undefined) db.setSetting('telegram_group_purchasing', telegram_group_purchasing);
   if (app_url !== undefined) db.setSetting('app_url', app_url);
-  db.auditLog('settings', 0, 'UPDATE', null, { telegram_group_qc, telegram_group_purchasing, app_url }, req.user.id, req.ip);
+
+  // จำนวนวันทั้ง 3 ตัว — validate pattern เดียวกัน (จำนวนเต็มบวก) ก่อน setSetting
+  const positiveIntSettings = {
+    ncr_overdue_days, ncr_overdue_repeat_days, ncr_internal_reminder_days,
+  };
+  for (const [key, value] of Object.entries(positiveIntSettings)) {
+    if (value === undefined || value === '') continue;
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 1) return res.status(400).json({ error: 'จำนวนวันต้องเป็นจำนวนเต็มบวก' });
+    db.setSetting(key, String(n));
+  }
+
+  db.auditLog('settings', 0, 'UPDATE', null, {
+    telegram_group_qc, telegram_group_purchasing, app_url,
+    ncr_overdue_days, ncr_overdue_repeat_days, ncr_internal_reminder_days,
+  }, req.user.id, req.ip);
   res.json({ ok: true });
 });
 
@@ -298,8 +322,16 @@ app.delete('/api/admin/settings/logo', ...adminOnly, (req, res) => {
 });
 
 // ===== ADMIN USERS =====
+// S153 — telegram_username เก็บไม่มี '@' นำหน้าเสมอ (ตัดออกให้ถ้า user พิมพ์มา) ใช้ @mention ในข้อความกลุ่ม
+// (ดู purchasingScope.js's getSupplierAssigneeMentions) ต่างจาก telegram_chat_id ที่ใช้ส่ง DM ส่วนตัว
+function normalizeTelegramUsername(v) {
+  if (!v) return null;
+  const trimmed = String(v).trim().replace(/^@+/, '');
+  return trimmed || null;
+}
+
 app.get('/api/admin/users', ...adminOnly, (req, res) => {
-  const rows = db.prepare('SELECT id, username, full_name, role, qc_station, telegram_chat_id, email, auth_provider, is_active, created_at FROM users ORDER BY created_at').all();
+  const rows = db.prepare('SELECT id, username, full_name, role, qc_station, telegram_chat_id, telegram_username, email, auth_provider, is_active, created_at FROM users ORDER BY created_at').all();
   res.json(rows);
 });
 
@@ -307,7 +339,7 @@ const VALID_AUTH_PROVIDERS = new Set(['local', 'ad']);
 
 app.post('/api/admin/users', ...adminOnly, (req, res) => {
   const bcrypt = require('bcryptjs');
-  const { username, password, full_name, role, qc_station, telegram_chat_id, email, auth_provider } = req.body;
+  const { username, password, full_name, role, qc_station, telegram_chat_id, telegram_username, email, auth_provider } = req.body;
   if (!username || !password || !full_name || !role) return res.status(400).json({ error: 'กรุณากรอกข้อมูลครบ' });
   const minLength = parseInt(db.getSetting('password_min_length'), 10) || 8;
   if (password.length < minLength) return res.status(400).json({ error: `รหัสผ่านต้องยาวอย่างน้อย ${minLength} ตัว` });
@@ -316,9 +348,9 @@ app.post('/api/admin/users', ...adminOnly, (req, res) => {
   }
   try {
     const hash = bcrypt.hashSync(password, parseInt(process.env.BCRYPT_ROUNDS) || 12);
-    const result = db.prepare('INSERT INTO users (username, password_hash, full_name, role, qc_station, telegram_chat_id, email, auth_provider) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(username, hash, full_name, role, qc_station || null, telegram_chat_id ? String(telegram_chat_id).trim() : null, email ? String(email).trim() : null, auth_provider || 'local');
-    db.auditLog('users', result.lastInsertRowid, 'CREATE', null, { username, full_name, role, qc_station, telegram_chat_id, email, auth_provider }, req.user.id, req.ip);
-    res.json(db.prepare('SELECT id, username, full_name, role, qc_station, telegram_chat_id, email, auth_provider, is_active, created_at FROM users WHERE id = ?').get(result.lastInsertRowid));
+    const result = db.prepare('INSERT INTO users (username, password_hash, full_name, role, qc_station, telegram_chat_id, telegram_username, email, auth_provider) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(username, hash, full_name, role, qc_station || null, telegram_chat_id ? String(telegram_chat_id).trim() : null, normalizeTelegramUsername(telegram_username), email ? String(email).trim() : null, auth_provider || 'local');
+    db.auditLog('users', result.lastInsertRowid, 'CREATE', null, { username, full_name, role, qc_station, telegram_chat_id, telegram_username, email, auth_provider }, req.user.id, req.ip);
+    res.json(db.prepare('SELECT id, username, full_name, role, qc_station, telegram_chat_id, telegram_username, email, auth_provider, is_active, created_at FROM users WHERE id = ?').get(result.lastInsertRowid));
   } catch (e) {
     if (e.message.includes('UNIQUE')) return res.status(400).json({ error: 'username ซ้ำ' });
     res.status(500).json({ error: e.message });
@@ -326,7 +358,7 @@ app.post('/api/admin/users', ...adminOnly, (req, res) => {
 });
 
 app.patch('/api/admin/users/:id', ...adminOnly, (req, res) => {
-  const { username, full_name, role, qc_station, telegram_chat_id, email, auth_provider } = req.body;
+  const { username, full_name, role, qc_station, telegram_chat_id, telegram_username, email, auth_provider } = req.body;
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!user) return res.status(404).json({ error: 'ไม่พบ user' });
   if (username && username !== user.username) {
@@ -336,18 +368,19 @@ app.patch('/api/admin/users/:id', ...adminOnly, (req, res) => {
   if (auth_provider !== undefined && !VALID_AUTH_PROVIDERS.has(auth_provider)) {
     return res.status(400).json({ error: 'auth_provider ไม่ถูกต้อง' });
   }
-  db.prepare('UPDATE users SET username=?, full_name=?, role=?, qc_station=?, telegram_chat_id=?, email=?, auth_provider=? WHERE id=?').run(
+  db.prepare('UPDATE users SET username=?, full_name=?, role=?, qc_station=?, telegram_chat_id=?, telegram_username=?, email=?, auth_provider=? WHERE id=?').run(
     username || user.username,
     full_name || user.full_name,
     role || user.role,
     qc_station !== undefined ? (qc_station || null) : user.qc_station,
     telegram_chat_id !== undefined ? (telegram_chat_id ? String(telegram_chat_id).trim() : null) : user.telegram_chat_id,
+    telegram_username !== undefined ? normalizeTelegramUsername(telegram_username) : user.telegram_username,
     email !== undefined ? (email ? String(email).trim() : null) : user.email,
     auth_provider !== undefined ? auth_provider : user.auth_provider,
     req.params.id
   );
-  db.auditLog('users', req.params.id, 'UPDATE', user, { username, full_name, role, qc_station, telegram_chat_id, email, auth_provider }, req.user.id, req.ip);
-  res.json(db.prepare('SELECT id, username, full_name, role, qc_station, telegram_chat_id, email, auth_provider, is_active, created_at FROM users WHERE id = ?').get(req.params.id));
+  db.auditLog('users', req.params.id, 'UPDATE', user, { username, full_name, role, qc_station, telegram_chat_id, telegram_username, email, auth_provider }, req.user.id, req.ip);
+  res.json(db.prepare('SELECT id, username, full_name, role, qc_station, telegram_chat_id, telegram_username, email, auth_provider, is_active, created_at FROM users WHERE id = ?').get(req.params.id));
 });
 
 // ทดสอบส่งข้อความเข้า Telegram ส่วนตัวของ user คนนั้น — ให้ admin verify chat id ที่กรอก
@@ -651,14 +684,23 @@ archiveOldNotifications();
 setInterval(archiveOldNotifications, 24 * 60 * 60 * 1000).unref();
 
 // ===== Overdue NCR notification (Req 6 — Purchasing Dashboard) =====
-// แจ้ง Purchasing Owner + Purchasing Manager ครั้งเดียวต่อ NCR ที่เกินกำหนด — รันตอนบูต + ทุก 1 ชม.
+// แจ้ง Purchasing Owner + Purchasing Manager + กลุ่ม Telegram จัดซื้อ ซ้ำทุก N วันจนกว่าจะปิดเอกสาร (S152) —
+// รันตอนบูต + ทุก 1 ชม. — S152 เพิ่ม internalReminder (แจ้งเตือนส่วนตัวเมื่อค้างอนุมัติที่ Supervisor/Manager/QMR
+// ก่อนถึงจัดซื้อ) เข้ามาในรอบเดียวกัน (ไม่ต้องเพิ่ม setInterval ใหม่ — เช็คถี่พอกันอยู่แล้ว)
 const { checkOverdueNcrNotifications } = require('./lib/overdueNotifier');
+const { checkInternalApprovalReminders } = require('./lib/internalReminder');
 function runOverdueCheck() {
   try {
     const n = checkOverdueNcrNotifications();
     if (n > 0) console.log(`[overdue] แจ้งเตือน NCR เกินกำหนด ${n} รายการ`);
   } catch (e) {
     console.error('[overdue] check error:', e.message);
+  }
+  try {
+    const m = checkInternalApprovalReminders();
+    if (m > 0) console.log(`[overdue] แจ้งเตือน NCR ค้างอนุมัติภายใน ${m} รายการ`);
+  } catch (e) {
+    console.error('[internal-reminder] check error:', e.message);
   }
 }
 runOverdueCheck();

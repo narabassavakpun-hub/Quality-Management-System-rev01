@@ -18,6 +18,19 @@ function resolveNotifyTargetIds(supplierId) {
   return getUsersByRole('purchasing').map(u => u.id);
 }
 
+// S153 — Telegram @username ของผู้ดูแลจัดซื้อของ supplier นี้ (ที่ตั้งค่า telegram_username ไว้เท่านั้น — ข้าม
+// คนที่ยังไม่ได้ตั้งค่า ไม่ throw/error) ใช้แปะ @mention นำหน้าข้อความแจ้งเตือนกลุ่ม Telegram จัดซื้อ (ดู
+// overdueNotifier.js) — คืน [] เปล่าถ้า supplier ไม่มีผู้ดูแล specific คนไหนเลย (fallback แจ้งจัดซื้อทุกคนตาม
+// resolveNotifyTargetIds เดิม) เพราะ mention ทุกคนในกลุ่มไม่มีประโยชน์ ไม่ตรงเจตนา "@ คนที่ดูแล Sup นั้นๆ"
+function getSupplierAssigneeMentions(supplierId) {
+  if (!supplierId) return [];
+  return db.prepare(`
+    SELECT u.telegram_username FROM supplier_purchasing_assignees spa
+    JOIN users u ON u.id = spa.user_id
+    WHERE spa.supplier_id = ? AND u.is_active = 1 AND u.telegram_username IS NOT NULL AND u.telegram_username != ''
+  `).all(supplierId).map(r => `@${r.telegram_username}`);
+}
+
 // จัดซื้อ (role='purchasing') ทำ action กับเอกสารของ supplier นี้ได้ไหม — เรียกเฉพาะตอน req.user.role==='purchasing'
 // เท่านั้น (purchasing_manager/admin ไม่ต้องเช็ค ผ่านเสมอ, role อื่นมี guard ของตัวเองอยู่แล้วไม่เกี่ยวกับฟังก์ชันนี้)
 function canPurchasingActOnSupplier(userId, supplierId) {
@@ -63,4 +76,5 @@ function purchasingStrictAssignedSQL(supplierIdExpr) {
 module.exports = {
   getSupplierAssigneeIds, resolveNotifyTargetIds, canPurchasingActOnSupplier,
   purchasingVisibilitySQL, purchasingStrictAssignedSQL, getPurchasingManagerIds, getCooUsers,
+  getSupplierAssigneeMentions,
 };

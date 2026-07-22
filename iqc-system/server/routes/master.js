@@ -1370,7 +1370,7 @@ router.get('/products/export', ...adminOnly, async (req, res) => {
   ws.columns = [
     { header: 'รหัสสินค้า',       key: 'code',  width: 16 },
     { header: 'ชื่อสินค้า *',     key: 'name',  width: 32 },
-    { header: 'ชื่อ Supplier * (คั่นด้วย , ถ้ามากกว่า 1)', key: 'sup', width: 40 },
+    { header: 'ชื่อ Supplier * (คั่นด้วย ; ถ้ามากกว่า 1)', key: 'sup', width: 40 },
     { header: 'กลุ่มสินค้า *',    key: 'grp',   width: 22 },
     { header: 'หน่วยนับ *',       key: 'unt',   width: 16 },
     { header: 'Inspection Level', key: 'insp',  width: 20 },
@@ -1388,6 +1388,9 @@ router.get('/products/export', ...adminOnly, async (req, res) => {
   });
 
   // เติมข้อมูลสินค้าที่มีอยู่ — Supplier ดึงจาก product_suppliers ทั้งหมด (ไม่ใช่แค่ legacy supplier_id ตัวเดียว)
+  // S155 — เฉพาะสินค้าที่ยัง is_active=1 เท่านั้น (เดิมส่งออกทุกตัวรวมที่ปิดใช้งานไปแล้วด้วย ทำให้สินค้าที่เพิ่งปิด
+  // ใช้งาน/ลบผ่านปุ่มในหน้า import-error ยังโผล่ใน export รอบถัดไปแล้ว error ซ้ำเดิมไม่จบสักที) — ตรงกับ default
+  // ของตารางหลักที่ซ่อนสินค้าปิดใช้งานอยู่แล้ว ("แสดงที่ปิดใช้งาน" checkbox ไม่ติ๊กเป็นค่าเริ่มต้น)
   const products = db.prepare(`
     SELECT p.id, p.code, p.name, p.inspection_level, p.aql_value, p.notes,
            pg.name as product_group_name, u.name as unit_name, m.name as model_name
@@ -1395,6 +1398,7 @@ router.get('/products/export', ...adminOnly, async (req, res) => {
     LEFT JOIN product_groups pg ON pg.id = p.product_group_id
     LEFT JOIN units u ON u.id = p.unit_id
     LEFT JOIN models m ON m.id = p.model_id
+    WHERE p.is_active = 1
     ORDER BY p.name
   `).all();
   const supplierNamesByProduct = db.prepare('SELECT product_id, supplier_id FROM product_suppliers').all()
@@ -1405,7 +1409,10 @@ router.get('/products/export', ...adminOnly, async (req, res) => {
       .map(r => [r.product_id, r.name])
   );
   for (const p of products) {
-    const supplierNames = (supplierNamesByProduct[p.id] || []).map(id => supplierNameById.get(id)).filter(Boolean).sort().join(', ');
+    // S155 — คั่นด้วย ';' ไม่ใช่ ',' — Supplier ~13 รายมี comma อยู่ในชื่อจริง (เช่น "...CO.,LTD") ถ้าใช้ comma
+    // เป็นตัวคั่นระหว่าง Supplier หลายรายด้วย จะ import กลับมา split ชื่อเดียวกันเป็น 2 ชื่อผิดๆ (เจอจริงจาก user
+    // report — export 2000+ แถวแล้ว import กลับมา error ~330 แถว ส่วนใหญ่เป็นสินค้าที่ยังใช้งานจริงไม่ใช่ของเก่า)
+    const supplierNames = (supplierNamesByProduct[p.id] || []).map(id => supplierNameById.get(id)).filter(Boolean).sort().join('; ');
     ws.addRow([
       p.code||'', p.name,
       supplierNames, p.product_group_name||'', p.unit_name||'',
@@ -1426,9 +1433,10 @@ router.get('/products/export', ...adminOnly, async (req, res) => {
   const colorEnd = colorsRef.length + 1;
 
   // formula สำหรับ cross-sheet reference (ไม่ใส่ quote รอบ range) — errorStyle:'warning' เสมอ (ไม่ block) เพราะ
-  // ช่อง Supplier ต้องแก้เป็นหลายชื่อคั่น comma เอง dropdown ช่วยแค่เลือกชื่อ "ล่าสุด" มาต่อท้ายเท่านั้น
+  // ช่อง Supplier ต้องแก้เป็นหลายชื่อคั่น ';' เอง (S155 — เปลี่ยนจาก ',' เพราะ Supplier บางรายมี comma อยู่ในชื่อ
+  // จริง เช่น "...CO.,LTD" ทำให้ import กลับมา split ชื่อผิด) dropdown ช่วยแค่เลือกชื่อ "ล่าสุด" มาต่อท้ายเท่านั้น
   const dvSup  = { type: 'list', allowBlank: true, showErrorMessage: true, errorStyle: 'warning',
-                   errorTitle: 'ชื่อ Supplier', error: 'กรุณาเลือกจากรายการใน Reference (คั่นด้วย , ถ้าเลือกหลายคน)',
+                   errorTitle: 'ชื่อ Supplier', error: 'กรุณาเลือกจากรายการใน Reference (คั่นด้วย ; ถ้าเลือกหลายคน)',
                    formulae: [`Reference!$A$2:$A$${supEnd}`] };
   const dvGrp  = { type: 'list', allowBlank: true, showErrorMessage: true, errorStyle: 'warning',
                    errorTitle: 'กลุ่มสินค้า',  error: 'กรุณาเลือกจากรายการใน Reference',
@@ -1468,8 +1476,9 @@ router.get('/products/export', ...adminOnly, async (req, res) => {
   res.end();
 });
 
-// S129 — diff-aware (match by code||name, เทียบทุก field รวม supplier id set) + parse Supplier แบบ comma-separated
-// (หลายคน) + Model/Color เป็น field เสริม (ไม่บังคับ, ชื่อไม่รู้จัก = warning ไม่ error)
+// S129 — diff-aware (match by code||name, เทียบทุก field รวม supplier id set) + parse Supplier แบบ
+// semicolon-separated (หลายคน — S155 เปลี่ยนจาก comma เพราะชื่อ Supplier บางรายมี comma อยู่ในตัวเองจริง) +
+// Model/Color เป็น field เสริม (ไม่บังคับ, ชื่อไม่รู้จัก = warning ไม่ error)
 router.post('/products/import', ...adminOnly, excelMemUpload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'กรุณาอัปโหลดไฟล์ .xlsx' });
 
@@ -1480,7 +1489,7 @@ router.post('/products/import', ...adminOnly, excelMemUpload.single('file'), asy
   const ws = wb.getWorksheet('สินค้า') || wb.worksheets[0];
   if (!ws) return res.status(400).json({ error: 'ไม่พบ Sheet ในไฟล์' });
 
-  const hErr = checkHeaders(ws, ['รหัสสินค้า', 'ชื่อสินค้า *', 'ชื่อ Supplier * (คั่นด้วย , ถ้ามากกว่า 1)', 'กลุ่มสินค้า *', 'หน่วยนับ *', 'Inspection Level', 'AQL Value', 'หมายเหตุ', 'รุ่น/Model', 'สี']);
+  const hErr = checkHeaders(ws, ['รหัสสินค้า', 'ชื่อสินค้า *', 'ชื่อ Supplier * (คั่นด้วย ; ถ้ามากกว่า 1)', 'กลุ่มสินค้า *', 'หน่วยนับ *', 'Inspection Level', 'AQL Value', 'หมายเหตุ', 'รุ่น/Model', 'สี']);
   if (hErr.length) return res.status(400).json({ error: 'Header ไม่ตรงกับ template — กรุณาใช้ไฟล์ที่ดาวน์โหลดจากระบบ', headerErrors: hErr });
 
   // Build lookup maps (case-insensitive)
@@ -1534,8 +1543,9 @@ router.post('/products/import', ...adminOnly, excelMemUpload.single('file'), asy
 
     if (!name) errors.push('ชื่อสินค้าห้ามว่าง');
 
-    // Supplier — คั่นด้วย comma รองรับหลายคน (หน้าฟอร์มจริงเลือกได้มากกว่า 1)
-    const supplierNames = supplierCell.split(',').map(s => s.trim()).filter(Boolean);
+    // Supplier — คั่นด้วย ';' รองรับหลายคน (หน้าฟอร์มจริงเลือกได้มากกว่า 1) — S155 เปลี่ยนจาก ',' เพราะ Supplier
+    // บางรายมี comma อยู่ในชื่อตัวเองจริง (เช่น "...CO.,LTD") ทำให้ split ผิดเป็น 2 ชื่อถ้ายังใช้ comma เป็นตัวคั่น
+    const supplierNames = supplierCell.split(';').map(s => s.trim()).filter(Boolean);
     const supplierIds = [];
     if (!supplierNames.length) errors.push('ชื่อ Supplier ห้ามว่าง');
     else {
@@ -1593,11 +1603,15 @@ router.post('/products/import', ...adminOnly, excelMemUpload.single('file'), asy
     const display = { รหัส: code||'-', ชื่อสินค้า: name, Supplier: supplierNames.join(', ')||'-', กลุ่ม: groupName||'-', หน่วย: unitName||'-' };
     const _data = { code: code||null, name, supplierIds, groupId, unitId, inspLevel, aqlValue, notes: notes||null, modelId, colorId };
 
+    // S155 — resolve สินค้าเดิมในระบบก่อนเช็ค error เสมอ (ไม่ใช่แค่ตอนไม่ error) เพื่อให้แถวที่ error (เช่น พิมพ์ผิด
+    // แค่บางฟิลด์แต่จริงๆ ตรงกับสินค้าเดิมโดย code/name) มี _data.id ให้ frontend เสนอปุ่ม "ลบสินค้านี้" ได้ทันที
+    // (ดู DELETE /products/:id) ไม่ต้องปิด modal ไปหาที่หน้าตารางหลักเอง
+    const existing = (code && byCode.get(code.toLowerCase())) || (name && byName.get(name.toLowerCase())) || null;
+    if (existing) _data.id = existing.id;
+
     if (errors.length) { results.push({ row: rowNum, display, errors, warnings, status: 'error', _data }); return; }
 
-    const existing = (code && byCode.get(code.toLowerCase())) || (name && byName.get(name.toLowerCase())) || null;
     if (existing) {
-      _data.id = existing.id;
       const changes = [];
       if (normVal(existing.name) !== normVal(name)) changes.push(`ชื่อ: "${existing.name}" → "${name}"`);
       if ((existing.product_group_id || null) !== groupId) changes.push(`กลุ่มสินค้า: → "${groupName}"`);
@@ -1822,6 +1836,33 @@ router.patch('/products/:id/toggle', ...adminOnly, (req, res) => {
   if (!row) return res.status(404).json({ error: 'ไม่พบข้อมูล' });
   db.prepare('UPDATE products SET is_active = ? WHERE id = ?').run(row.is_active ? 0 : 1, req.params.id);
   res.json(db.prepare('SELECT * FROM products WHERE id = ?').get(req.params.id));
+});
+
+// S155 — ลบสินค้าถาวรถ้าไม่มีประวัติการใช้งานผูกอยู่เลย (bill_items/delivery_schedule_items/product_images/
+// product_drawings/product_colors ล้วน ON DELETE RESTRICT — SQLite เองจะ throw FK constraint error ถ้ามีแถวลูก
+// เหลืออยู่) ไม่ต้องเช็คทีละตารางเอง ปล่อยให้ FK enforcement (CLAUDE.md §2.5) เป็นตัวตัดสิน — ถ้าลบถาวรไม่ได้เพราะมี
+// ประวัติจริง fallback เป็น soft-delete (is_active=0) แทนเสมอตามกฎ ไม่ throw error ให้ user งงว่าทำไมลบไม่ได้
+// ใช้จากปุ่ม "ลบสินค้านี้" ในหน้า preview import Excel ที่ error (ให้ user เคลียร์สินค้าเก่าที่เลิกใช้จริงออกจาก
+// export/import cycle ได้ — ดู DEVLOG S155 สำหรับ context เต็ม: ปัญหาเดิมส่วนใหญ่จริงๆ เป็น bug ตัวคั่น comma
+// ไม่ใช่สินค้าเก่า แก้ที่ export/import แล้วแยกต่างหาก ปุ่มนี้ไว้เคลียร์ของที่เหลือจริงๆ เท่านั้น)
+router.delete('/products/:id', ...adminOnly, (req, res) => {
+  const product = db.prepare('SELECT * FROM products WHERE id = ?').get(req.params.id);
+  if (!product) return res.status(404).json({ error: 'ไม่พบข้อมูล' });
+
+  try {
+    db.transaction(() => {
+      db.prepare('DELETE FROM products WHERE id = ?').run(req.params.id); // product_suppliers cascade เองอยู่แล้ว
+      db.auditLog('products', req.params.id, 'DELETE', product, null, req.user.id, req.ip);
+    })();
+    return res.json({ deleted: true, deactivated: false });
+  } catch (e) {
+    db.prepare('UPDATE products SET is_active = 0 WHERE id = ?').run(req.params.id);
+    db.auditLog('products', req.params.id, 'UPDATE', product, { is_active: 0 }, req.user.id, req.ip);
+    return res.json({
+      deleted: false, deactivated: true,
+      message: 'สินค้านี้มีประวัติการใช้งานอยู่ในระบบ (เช่น เคยรับเข้า/มีรูปภาพ/Drawing) — ลบถาวรไม่ได้ตามกฎระบบ ปิดการใช้งานให้แทน',
+    });
+  }
 });
 
 // Product Images

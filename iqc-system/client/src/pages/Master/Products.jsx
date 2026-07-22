@@ -17,6 +17,7 @@ import { useSortable } from '../../hooks/useSortable';
 const IMPORT_STATUS_CLASS = {
   error: 'bg-red-50 dark:bg-red-900', warning: 'bg-amber-50 dark:bg-amber-900', ok: '',
   update: 'bg-blue-50 dark:bg-blue-900', skip: 'bg-gray-50 dark:bg-gray-800',
+  deleted: 'bg-green-50 dark:bg-green-900', // S155 — แถวที่กดลบ/ปิดใช้งานจากปุ่มใน import-error preview แล้ว
 };
 
 // ─── AQL Inspection Plan Options ───────────────────────────────────────────────
@@ -500,6 +501,7 @@ export default function Products() {
   const [importError, setImportError] = useState('');
   const [importCount, setImportCount] = useState(0);
   const [importExtra, setImportExtra] = useState(null); // { updated, skipped }
+  const [confirmDeleteRow, setConfirmDeleteRow] = useState(null); // { productId, name } — แถว error ที่กำลังจะลบ
   const importFileRef = useRef();
 
   useEffect(() => {
@@ -531,6 +533,22 @@ export default function Products() {
   const toggle = useMutation({
     mutationFn: (id) => api.patch(`/master/products/${id}/toggle`),
     onSuccess: () => { qc.invalidateQueries(['products']); setConfirmToggle(null); },
+  });
+
+  // S155 — ลบสินค้าจากหน้า preview import Excel ที่ error ตรงๆ (ไม่ต้องปิด modal ไปหาที่ตารางหลัก) — server จะลบถาวร
+  // ถ้าไม่มีประวัติการใช้งานผูกอยู่ ไม่งั้น fallback เป็นปิดใช้งานให้อัตโนมัติ (ดู DELETE /products/:id)
+  const deleteProduct = useMutation({
+    mutationFn: (id) => api.delete(`/master/products/${id}`),
+    onSuccess: (res, id) => {
+      setImportPreview(prev => prev && ({
+        ...prev,
+        results: prev.results.map(r =>
+          r._data?.id === id ? { ...r, status: 'deleted', errors: [], warnings: [], deleteResult: res.data } : r
+        ),
+      }));
+      setConfirmDeleteRow(null);
+      qc.invalidateQueries(['products']);
+    },
   });
 
   const { data: viewerImages = [] } = useQuery({
@@ -850,6 +868,17 @@ export default function Products() {
         loading={toggle.isPending}
       />
 
+      {/* S155 — ลบสินค้าจาก import-error preview: ลบถาวรถ้าไม่มีประวัติผูก ไม่งั้น server ปิดใช้งานให้อัตโนมัติแทน */}
+      <ConfirmDialog
+        open={!!confirmDeleteRow}
+        onClose={() => setConfirmDeleteRow(null)}
+        onConfirm={() => deleteProduct.mutate(confirmDeleteRow.productId)}
+        message={`ต้องการลบ "${confirmDeleteRow?.name}" ออกจากระบบ? ถ้าไม่มีประวัติการใช้งาน (บิล/Drawing ฯลฯ) จะถูกลบถาวร ถ้ามีประวัติอยู่ ระบบจะปิดการใช้งานให้แทนโดยอัตโนมัติ`}
+        confirmLabel="ลบ"
+        variant="danger"
+        loading={deleteProduct.isPending}
+      />
+
       {/* Image viewer modal */}
       <Modal open={!!imgViewer} onClose={() => setImgViewer(null)} title={imgViewer?.label || ''}>
         {viewerImages.length === 0 ? (
@@ -943,6 +972,14 @@ export default function Products() {
               )}
             </div>
 
+            {importPreview.errorCount > 0 && (
+              <p className="text-[12px] text-muted">
+                แถวที่ error เพราะสินค้านั้นเลิกใช้งานแล้วจริงๆ กด "ลบสินค้านี้ออกจากระบบ" ที่แถวนั้นได้เลย —
+                หลังลบครบแล้วให้ปิดหน้าต่างนี้แล้วกด <strong>Export Excel</strong> ใหม่อีกครั้งก่อน Import
+                (ไฟล์เดิมที่เปิดค้างไว้จะยัง error แถวเดิมอยู่ เพราะข้อมูลในไฟล์ยังไม่เปลี่ยน)
+              </p>
+            )}
+
             {/* Results table */}
             <div className="overflow-auto max-h-[420px] border border-border rounded-md">
               <table className="w-full text-small border-collapse">
@@ -967,13 +1004,18 @@ export default function Products() {
                       <td className="px-2 py-1.5">{r.display?.กลุ่ม || '-'}</td>
                       <td className="px-2 py-1.5">{r.display?.หน่วย || '-'}</td>
                       <td className="px-2 py-1.5">
+                        {r.status === 'deleted' && (
+                          <span className="text-success font-medium text-[12px]">
+                            ✓ {r.deleteResult?.deleted ? 'ลบออกจากระบบแล้ว' : 'ปิดการใช้งานแล้ว (มีประวัติการใช้งานอยู่ ลบถาวรไม่ได้)'}
+                          </span>
+                        )}
                         {r.status === 'skip' && (
                           <span className="text-muted font-medium text-[12px]">ไม่มีการเปลี่ยนแปลง — ข้าม</span>
                         )}
                         {r.status === 'update' && (
                           <span className="text-accent font-medium text-[12px]">อัปเดต</span>
                         )}
-                        {r.errors.length === 0 && r.warnings.length === 0 && r.status !== 'skip' && r.status !== 'update' && (
+                        {r.errors.length === 0 && r.warnings.length === 0 && r.status !== 'skip' && r.status !== 'update' && r.status !== 'deleted' && (
                           <span className="text-success font-medium">OK</span>
                         )}
                         {r.changes?.map((c, i) => (
@@ -985,6 +1027,15 @@ export default function Products() {
                         {r.warnings.map((w, i) => (
                           <div key={i} className="text-warning text-[12px] leading-snug">{w}</div>
                         ))}
+                        {r.status === 'error' && r._data?.id && (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteRow({ productId: r._data.id, name: r.display?.ชื่อสินค้า || r.display?.รหัส })}
+                            className="mt-1 text-[12px] text-danger underline hover:no-underline"
+                          >
+                            ลบสินค้านี้ออกจากระบบ
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}

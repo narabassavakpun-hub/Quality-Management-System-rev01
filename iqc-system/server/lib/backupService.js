@@ -12,7 +12,13 @@ const r2 = require('./r2Client');
 
 const DB_PATH = process.env.IQC_DB_PATH || path.join(__dirname, '../../iqc.db');
 const UPLOADS_BASE = path.join(__dirname, '../../uploads');
-const SYNC_STATE_PATH = path.join(UPLOADS_BASE, '..', 'upload-sync-state.json');
+// เดิมอยู่ที่ path.join(UPLOADS_BASE, '..', ...) = /app/upload-sync-state.json บน production — แต่
+// Dockerfile chown ให้ user `node` เขียนได้เฉพาะ /app/uploads กับ /data เท่านั้น (ไม่ใช่ /app เอง) ทำให้เขียน
+// ไม่ได้จริงมาตลอด (EACCES ใน production log จริง) → state ไม่เคย persist เลย → syncUploads() มองทุกไฟล์เป็น
+// "ใหม่" ทุกรอบ อัปโหลดทั้งโฟลเดอร์ uploads/ ซ้ำทุก ~2 ชม. แทนที่จะ incremental จริง (สาเหตุ Service-Initiated
+// bandwidth พุ่งสูงที่ตรวจพบจริงบน Render) — ย้ายไปอยู่โฟลเดอร์เดียวกับ DB แทน เพราะ IQC_DB_PATH=/data/iqc.db
+// ถูก chown ให้เขียนได้จริงใน Dockerfile (พิสูจน์แล้วว่าใช้งานได้ปกติ)
+const SYNC_STATE_PATH = path.join(path.dirname(DB_PATH), 'upload-sync-state.json');
 const MANIFEST_KEY = 'backups/manifest.json';
 
 const WEEKDAY_MAP = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };

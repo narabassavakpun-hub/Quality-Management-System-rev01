@@ -208,6 +208,12 @@ function runMigrations() {
   safeAddColumn('ncrs', 'link_copied_count', 'INTEGER DEFAULT 0');
   // Req 6 (Purchasing dashboard) — กันแจ้งเตือน "เกินกำหนด" ซ้ำทุกรอบที่ scheduler รัน (แจ้งครั้งเดียวต่อรายการ)
   safeAddColumn('ncrs', 'overdue_notified_at', 'DATETIME');
+  // S150 — เวลาที่ QMR อนุมัติเปิด NCR จริง (pending_qmr_open → pending_purchasing_review) ใช้เป็นจุดเริ่มนับวัน
+  // overdue แทน disposition_due_date เดิม (เคยแจ้งเตือนก่อน QMR เปิดเอกสารด้วยซ้ำ — ดู overdueNotifier.js)
+  safeAddColumn('ncrs', 'qmr_opened_at', 'DATETIME');
+  // S152 — เวลาที่ส่งแจ้งเตือนส่วนตัว "ค้างอนุมัติ" ครั้งล่าสุด (เฉพาะ 3 ขั้นก่อนถึงจัดซื้อ — ดู internalReminder.js)
+  // reset เป็น NULL ทุกครั้งที่ status เปลี่ยน (ncrService.js's approveNcr) เพราะขั้นใหม่ต้องเริ่มนับรอบใหม่เสมอ
+  safeAddColumn('ncrs', 'internal_reminder_last_sent_at', 'DATETIME');
 
   // supplier_responses: respondent name + track superseded responses
   safeAddColumn('supplier_responses', 'respondent_name', 'TEXT');
@@ -296,6 +302,11 @@ function runMigrations() {
   safeAddColumn('users', 'telegram_chat_id', 'TEXT');
   // users: อีเมลส่วนตัว (S128) — ใช้ส่งแจ้งเตือนอีเมล (เช่น COO รับทราบ NCR) เหมือน telegram_chat_id
   safeAddColumn('users', 'email', 'TEXT');
+  // users: Telegram @username สาธารณะ (S153) — เก็บไม่มี '@' นำหน้า, ใช้ @mention ในข้อความกลุ่ม (เช่น
+  // แจ้งเตือน NCR เกินกำหนด ไปกลุ่มจัดซื้อ) ต่างจาก telegram_chat_id ที่ใช้ส่ง DM ส่วนตัวเท่านั้น — plain-text
+  // "@username" ถูก Telegram parse เป็น mention entity อัตโนมัติแม้ไม่ตั้ง parse_mode (ไม่ต้องเสี่ยง HTML
+  // injection จากข้อความที่มีค่าผู้ใช้กรอกปนอยู่ — ดู sendTelegram()'s comment เดิมใน routes/notifications.js)
+  safeAddColumn('users', 'telegram_username', 'TEXT');
 
   // users: Authentication Provider Framework — local (default) หรือ ad (ผูก Active Directory)
   // validate ที่ application layer เท่านั้น (ไม่ทำ CHECK rebuild) เหมือน qc_station/factory_assignment
@@ -1830,6 +1841,28 @@ try {
   if (stuck.changes > 0) console.log(`[Migration] Closed ${stuck.changes} stuck NCP(s) (minor stuck at pending_manager)`);
 } catch (e) {
   console.error('[Migration] NCP heal failed:', e.message);
+}
+
+// Data-heal (S150): backfill qmr_opened_at ให้ NCR เก่าที่ผ่านขั้น QMR เปิดไปแล้วก่อน column นี้ถูกเพิ่ม —
+// ไม่งั้น overdueNotifier.js จะไม่มีวันแจ้งเตือน "เกินกำหนด" ให้เอกสารเก่าเหล่านี้อีกเลย (qmr_opened_at ค้าง NULL
+// ตลอดไป) ใช้เวลา approve แรกสุดของ role='qmr' ใน ncr_approvals (ขั้นเปิดมาก่อนขั้นปิดเสมอตาม state machine —
+// ดู ncrService.js's transitions) fallback เป็น created_at ถ้าหาไม่เจอ (กันชนกว่าไม่มีค่าเลย) — exclude สถานะ
+// ก่อนหน้า QMR เปิด (ยังไม่ควรมีค่า) และ ncp_closed (minor ไม่ผ่าน QMR เลย) — idempotent (WHERE qmr_opened_at IS NULL)
+try {
+  const needBackfill = db.prepare(`
+    SELECT id, created_at FROM ncrs
+    WHERE qmr_opened_at IS NULL
+      AND status NOT IN ('pending_supervisor','pending_manager','pending_qmr_open','ncp_closed','cancelled')
+  `).all();
+  for (const row of needBackfill) {
+    const firstQmrApproval = db.prepare(
+      "SELECT MIN(created_at) AS t FROM ncr_approvals WHERE ncr_id = ? AND role = 'qmr'"
+    ).get(row.id).t;
+    db.prepare('UPDATE ncrs SET qmr_opened_at = ? WHERE id = ?').run(firstQmrApproval || row.created_at, row.id);
+  }
+  if (needBackfill.length > 0) console.log(`[Migration] Backfilled qmr_opened_at for ${needBackfill.length} existing NCR(s)`);
+} catch (e) {
+  console.error('[Migration] qmr_opened_at backfill failed:', e.message);
 }
 
 // Relax users.role CHECK for DB เก่า (เพิ่ม prod_supervisor) — ต้องรันก่อน seedData() ที่ seed prod_sup1

@@ -46,6 +46,7 @@ function UserForm({ initial = {}, onSave, loading, error }) {
     qc_station: '',
     ...initial,
     telegram_chat_id: initial.telegram_chat_id || '',
+    telegram_username: initial.telegram_username || '',
     email: initial.email || '',
     password: '',
   });
@@ -139,6 +140,22 @@ function UserForm({ initial = {}, onSave, loading, error }) {
         <p className="text-[12px] text-muted mt-0.5">
           แจ้งเตือนกระดิ่งของผู้ใช้คนนี้จะถูกส่งเข้า Telegram ส่วนตัวตาม Chat ID นี้ทันที —
           วิธีหา Chat ID: ให้ผู้ใช้ทักแชทบอทก่อน แล้วเปิด <span className="font-mono">@userinfobot</span> เพื่อดูเลข ID (เว้นว่าง = ไม่ส่งเข้า Telegram ส่วนตัว)
+        </p>
+      </div>
+
+      <div>
+        <label className="label">Telegram Username</label>
+        <input
+          className="input font-mono"
+          value={form.telegram_username || ''}
+          onChange={e => set('telegram_username', e.target.value.replace(/^@+/, ''))}
+          placeholder="เช่น somchai_pur (ไม่ต้องใส่ @ นำหน้า)"
+        />
+        <p className="text-[12px] text-muted mt-0.5">
+          ใช้ @mention ชื่อผู้ใช้คนนี้ในข้อความแจ้งเตือนกลุ่ม Telegram (เช่น แจ้ง NCR เกินกำหนดไปกลุ่มจัดซื้อ จะ
+          @mention ผู้ดูแล Supplier นั้นๆ โดยอัตโนมัติ) — ต้องเป็น @username สาธารณะที่ตั้งไว้ในแอป Telegram และ
+          ผู้ใช้ต้องอยู่ในกลุ่มนั้นจริงถึงจะได้รับการแจ้งเตือน (คนละอันกับ Telegram Chat ID ด้านบนที่ใช้ส่ง DM
+          ส่วนตัวเท่านั้น) — เว้นว่าง = ไม่ mention
         </p>
       </div>
 
@@ -285,9 +302,12 @@ export default function AdminUsers() {
 
               {/* Telegram + Email + วันที่ */}
               <div className={`flex items-center justify-between text-[12px] text-muted ${r.email ? 'mb-0.5' : 'mb-3'}`}>
-                {r.telegram_chat_id
-                  ? <span className="font-mono">TG: {r.telegram_chat_id}</span>
-                  : <span>ไม่มี Telegram</span>}
+                <span className="flex items-center gap-1.5">
+                  {r.telegram_chat_id
+                    ? <span className="font-mono">TG: {r.telegram_chat_id}</span>
+                    : <span>ไม่มี Telegram</span>}
+                  {r.telegram_username && <span className="font-mono">@{r.telegram_username}</span>}
+                </span>
                 <span>{r.created_at ? new Date(r.created_at).toLocaleDateString('th-TH') : '—'}</span>
               </div>
               {r.email && <div className="text-[12px] text-muted mb-3 truncate">{r.email}</div>}
@@ -377,8 +397,11 @@ export default function AdminUsers() {
                   </td>
                   <td className="text-small">
                     {r.telegram_chat_id ? (
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-mono text-[12px] px-2 py-0.5 rounded bg-sky-50 dark:bg-sky-900 text-sky-700 dark:text-sky-200">{r.telegram_chat_id}</span>
+                        {r.telegram_username && (
+                          <span className="font-mono text-[12px] px-2 py-0.5 rounded bg-violet-50 dark:bg-violet-900 text-violet-700 dark:text-violet-200">@{r.telegram_username}</span>
+                        )}
                         <button
                           onClick={() => telegramTest.mutate(r.id)}
                           disabled={telegramTest.isPending}

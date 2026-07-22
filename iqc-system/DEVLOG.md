@@ -2,9 +2,9 @@
 
 ---
 
-## 📌 Current State (2026-07-21)
+## 📌 Current State (2026-07-22)
 
-**Version:** rev01 · Production · **Latest code:** Session 150 (2026-07-21)
+**Version:** rev01 · Production · **Latest code:** Session 156 (2026-07-22)
 
 **Architecture Summary**
 - Backend: Express 4.18 + better-sqlite3 (WAL, FK ON), **102 ตาราง** (+`environment_presets`, S118; +`supplier_purchasing_assignees`, S125), ~33 route files, SSE + Telegram + **Email/SMTP (S128, `lib/mailer.js`)**, port 3001
@@ -87,10 +87,432 @@
   รอบ scheduler ของ `runFullCycle()` จาก 10 นาที → **2 ชม.** (`server/index.js`) ลด bandwidth เพิ่มเติมโดยยอมรับ
   RPO ที่กว้างขึ้น — เงื่อนไข "backup เฉพาะถ้าข้อมูลเปลี่ยนในช่วงนั้น" มีอยู่แล้วจาก hash-dedup ของ `runHotBackup()`
   (S141) ไม่ต้องแก้ logic เพิ่ม แค่เปลี่ยนค่า interval — รายละเอียดแก้ไขดู session log ด้านล่าง
+- 🏁 **Bug user report (S151): NCR แจ้ง "เกินกำหนด" ไปกลุ่มจัดซื้อก่อน QMR อนุมัติเปิดเอกสารด้วยซ้ำ** — root cause:
+  `overdueNotifier.js` นับ "เกินกำหนด" จาก `disposition_due_date` ที่ QC Manager กรอกเองตอนส่ง NCR ให้ QMR อนุมัติ
+  (ขั้น `pending_manager`) ไม่เกี่ยวกับว่า QMR อนุมัติเปิดจริงหรือยัง — เพิ่มคอลัมน์ `ncrs.qmr_opened_at` (ตั้งค่าใน
+  `ncrService.js`'s `approveNcr()` ตอน transition `pending_qmr_open → pending_purchasing_review` จริง) เปลี่ยน
+  `overdueNotifier.js` ให้นับจากจุดนี้ + N วัน (ตั้งค่าได้ที่ Admin > ตั้งค่า > Telegram, key `ncr_overdue_days`,
+  default 7 ถ้ายังไม่ได้ตั้ง) — NCR ที่ QMR ยังไม่เปิด (`qmr_opened_at IS NULL`) จะไม่มีวันถูกนับว่าเกินกำหนดอีกต่อไป
+  — มี data-heal backfill `qmr_opened_at` ให้ NCR เก่าที่ผ่านขั้น QMR เปิดไปแล้วก่อน deploy (จาก
+  `ncr_approvals` ของ role='qmr' ที่เก่าสุด) กัน overdue tracking หายไปเงียบๆ สำหรับเอกสารที่ค้างอยู่ — รายละเอียด
+  ดู session log ด้านล่าง
+- 🏁 **Feature request (S152): แจ้งเตือน NCR ค้างอนุมัติ — แบบส่วนตัว (ก่อนถึงจัดซื้อ) + แบบซ้ำ (หลังถึงจัดซื้อ)**
+  ต่อยอดจาก S151 เป็น 2 กลไกคู่ขนาน: **(1) ใหม่** `lib/internalReminder.js` — แจ้ง Telegram ส่วนตัว (auto ผ่าน
+  `createNotification`) ให้ Supervisor/Manager/QMR เมื่อ NCR ค้างอยู่ที่ขั้นของตนเกิน N วัน (setting
+  `ncr_internal_reminder_days`, default 3) นับจากเวลา approve ล่าสุดใน `ncr_approvals` (หรือ `created_at` ถ้า
+  ยังไม่มีใครอนุมัติเลย = ขั้นแรกสุด) แจ้งซ้ำทุก N วันจนกว่าจะอนุมัติผ่านขั้นไป — ครอบคลุมเฉพาะ 3 ขั้นก่อนเอกสาร
+  "ถึงจัดซื้อ" (`pending_supervisor`/`pending_manager`/`pending_qmr_open`) ตามที่ user ยืนยันขอบเขต — เพิ่ม
+  `ncrs.internal_reminder_last_sent_at` reset เป็น `NULL` ทุกครั้งที่ status เปลี่ยน (`ncrService.js`) กันขั้นใหม่
+  สืบทอดรอบแจ้งเตือนจากขั้นเก่า **(2) ต่อยอด** `overdueNotifier.js` (ฝั่งจัดซื้อจาก S151) เปลี่ยนจากแจ้งครั้งเดียว
+  เป็น**แจ้งซ้ำทุก N วัน** (setting ใหม่ `ncr_overdue_repeat_days`, default 3) จนกว่าจะปิดเอกสาร +
+  ข้อความเพิ่มจำนวนวันที่เกินกำหนดมาแล้วจริง (ไม่ใช่แค่วันครบกำหนด) + แนบ link เข้าดูเอกสารตรงในข้อความกลุ่ม Telegram
+  ด้วย (เดิมมีแค่ในแจ้งเตือนส่วนตัว) — settings ทั้ง 3 ตัว (`ncr_overdue_days`/`ncr_overdue_repeat_days`/
+  `ncr_internal_reminder_days`) ตั้งค่าได้ที่ Admin > ตั้งค่า > Telegram — scheduler เดิม (`runOverdueCheck`,
+  ทุก 1 ชม.) เรียกทั้ง 2 กลไกในรอบเดียวกัน ไม่เพิ่ม interval ใหม่ — รายละเอียดดู session log ด้านล่าง
+- 🏁 **Feature request (S153): @mention ผู้ดูแลจัดซื้อในข้อความกลุ่ม Telegram เกินกำหนด** — เพิ่มคอลัมน์
+  `users.telegram_username` (แยกจาก `telegram_chat_id` เดิมที่ใช้ส่ง DM ส่วนตัวเท่านั้น) ตั้งค่าได้ที่ Admin >
+  จัดการผู้ใช้ — `overdueNotifier.js` (S151/S152) แปะ `@username` ของผู้ดูแลจัดซื้อของ supplier นั้นๆ นำหน้า
+  ข้อความกลุ่ม Telegram ที่แจ้ง NCR เกินกำหนด (ใหม่: `purchasingScope.js`'s `getSupplierAssigneeMentions()`) —
+  ใช้ plain-text `@username` (Telegram parse เป็น mention entity อัตโนมัติแม้ไม่ตั้ง parse_mode) **ไม่ใช้**
+  parse_mode:HTML/text_mention เพราะ `sendTelegram()` ส่งแบบ plain text เสมอตามที่ตั้งใจไว้ (กัน HTML injection
+  จากข้อความที่มีค่าผู้ใช้กรอกปนอยู่) — ถ้า supplier ไม่มีผู้ดูแล specific หรือผู้ดูแลยังไม่ตั้ง username ไม่ mention
+  ใครเลย (ไม่ throw) — รายละเอียดดู session log ด้านล่าง
+- 🏁 **ขยายผล (S154): @mention ครบทุกข้อความกลุ่ม Telegram จัดซื้อใน `ncrService.js`** — ต่อยอด S153 ทันที (user
+  ตอบรับข้อเสนอ) เพิ่ม `purchasingMentionsForBill(billId)` helper ใหม่ใน `ncrService.js` (reuse
+  `getSupplierAssigneeMentions()` เดิม) แล้วแปะ @mention นำหน้าข้อความกลุ่มจัดซื้อ**ครบทั้ง 7 จุด** ใน
+  `ncrService.js` (QMR อนุมัติเปิด/พร้อมส่ง Supplier/ปิดแล้ว/รอผู้จัดการจัดซื้อตรวจสอบ/ไม่อนุมัติ Review/QC
+  Manager ไม่อนุมัติคำตอบ Supplier/ส่ง Supplier ตอบใหม่) — ยังไม่แตะ `deliveryService.js`/`uaiService.js` (นอก
+  ขอบเขตคำขอ ยังไม่ได้ระบุ) — รายละเอียดดู session log ด้านล่าง
+- 🏁 **Bug user report (S155): Products Excel import error 332/2029 แถวหลัง export→import — root cause คือตัวคั่น
+  comma ชนกับชื่อ Supplier ที่มี comma อยู่ในตัวเอง ไม่ใช่สินค้าเก่า** — ตรวจ DB จริงพบ Supplier 13 รายมี comma ใน
+  ชื่อจริง (เช่น `"...CO.,LTD"`) กระทบสินค้าอยู่ 202/2042 รายการ — เดิม `products/export`+`/import`
+  (`master.js`) ใช้ comma คั่นทั้งระหว่าง Supplier หลายรายและอยู่ในชื่อ Supplier เอง ทำให้ import กลับมา split
+  ชื่อผิด **แก้ root cause**: เปลี่ยนตัวคั่นเป็น `;` (semicolon, ไม่มี Supplier รายไหนใช้อักขระนี้จริง) ทั้ง
+  export header/join, import split, dropdown validation error text, checkHeaders — ไฟล์เก่าที่ export ด้วย
+  header แบบ comma จะถูกปฏิเสธด้วย header-mismatch error ชัดเจนแทนที่จะ misparse เงียบๆ (ต้อง export ใหม่เท่านั้น
+  ไฟล์เก่าใช้ต่อไม่ได้) — **เพิ่มเติม**: export กรองเฉพาะ `is_active=1` แล้ว (เดิมส่งออกสินค้าปิดใช้งานด้วย ทำให้
+  ปิดใช้งานแล้วก็ยัง export→error ซ้ำวนไม่จบ) + เพิ่มปุ่ม **"ลบสินค้านี้ออกจากระบบ"** ที่แถว error ใน preview modal
+  (ลบถาวรถ้าไม่มีประวัติผูก FK เลย ไม่งั้น fallback ปิดใช้งานอัตโนมัติตาม CLAUDE.md §2.5) สำหรับสินค้าที่เหลือจริงๆ
+  ที่เลิกใช้แล้วหลังแก้ root cause แล้ว — รายละเอียดดู session log ด้านล่าง
 
 **Technical Debt / Roadmap:** ดู [`../AUDIT.md`](../AUDIT.md) §12 (Refactor Roadmap) — **P0 ปิดครบแล้ว (S105)**; P1 ปิดครบ; P2 ปิดครบ (S103); เหลือ P3 (horizontal scale, TypeScript) + gap ใหม่ (ipqc_records removal decision, ipqc_inspections test coverage, fgqc reset-all FK gap) + restore-drill ยังไม่ automate ใน CI (ดู AUDIT.md D5) + CLAUDE.md §11 Role Matrix ต้องเพิ่ม purchasing_manager (S125) + purchasing_manager review step (S128)
 
 **เอกสารอ้างอิง:** [`../CLAUDE.md`](../CLAUDE.md) · [`../PRD.md`](../PRD.md) · [`../brand.md`](../brand.md) · [`../design-dashboard.md`](../design-dashboard.md) · [`../testcase.md`](../testcase.md) · [`../AUDIT.md`](../AUDIT.md)
+
+---
+
+## 2026-07-22 | Session 156 — Render Bandwidth Audit รอบ 3: `upload-sync-state.json` เขียนไม่ได้จริงบน production (EACCES) — root cause ตัวจริงของ Service-Initiated bandwidth
+
+**คำขอ:** user รายงาน Render bandwidth วันนี้ 250MB ทั้งที่ DB มีแค่ ~3MB และ R2 storage (`qms-backups` bucket)
+รวม 84MB (231 objects) — ต่อยอดจากรายงาน audit ระบบ backup/restore เต็มรูปแบบที่ทำไปก่อนหน้า (12 หัวข้อตามคำขอ
+เดิม: ไฟล์ที่เกี่ยวข้อง, ลำดับ backup, ขนาดข้อมูล, ประเภท backup, bandwidth ประเมิน ฯลฯ — สรุปว่าไม่มี ZIP,
+DB ใช้ hash-dedup, uploads ใช้ incremental sync ถูกต้องตามทฤษฎี)
+
+**การวิเคราะห์ (ทำเป็นขั้น ไม่เดา — ยืนยันด้วยหลักฐานจาก Render dashboard จริงที่ user ส่งมาทีละรอบ):**
+1. รอบแรกตั้งสมมติฐานจาก `DEPLOYMENT.md:177-179` (เอกสารเดิมของโปรเจกต์เอง) ว่า Render Free tier
+   sleep/wake หลัง idle 15 นาที + OOM-kill จาก Chromium ตอน export PDF อาจเป็นสาเหตุ (เกิดบ่อยกว่า redeploy
+   มาก) — เสนอ 3 ทางเลือกให้ user (keep-alive ping / ลด PDF concurrency / thumbnail รูป)
+2. user แจ้งว่าใช้ UptimeRobot ยิงทุก 12 นาทีอยู่แล้ว (ตัด idle-sleep ออกจากสาเหตุหลักได้) + ให้ข้อมูลใหม่จาก
+   Render dashboard: **HTTP Responses = 50MB, Service-Initiated = 200MB** — ยืนยันว่าปัญหาไม่ได้มาจาก
+   traffic ผู้ใช้จริง (ดูรูป/หน้าเว็บ) แต่มาจาก server เรียกออกไปหา R2 เอง ตัด "thumbnail รูป" ออกจาก
+   priority ทันที (แก้จุดที่ bandwidth ต่ำอยู่แล้วไม่ช่วยอะไร)
+3. คำนวณย้อนกลับ: ถ้า 200MB มาจาก DB restore+re-upload ต่อรอบ restart (~6MB/รอบ) อย่างเดียว ต้องมี
+   restart ~30+ ครั้ง/วัน — สูงเกินกว่า "OOM ตอน export เป็นครั้งคราว" จะอธิบายได้ครบ → ขอให้ user เช็ค
+   Render Events/Logs tab จริงเพื่อยืนยันแทนเดาต่อ
+4. user ส่งภาพ Application logs จริง (Last 24 hours) — พบ **`[backupService] เขียน upload-sync-state.json
+   ไม่ได้: EACCES: permission denied, open '/app/upload-sync-state.json'`** ซ้ำต่อเนื่องตลอดทั้งวัน (ทั้ง
+   burst ช่วงเช้าจาก `markLocalFileSynced()` ที่เรียกจาก lazy fetch-through ใน `index.js:115` และเป็นชุดที่
+   ห่างกัน ~2 ชม. ตรงกับรอบ scheduler ปกติของ `runFullCycle()`)
+
+**Root cause ที่แท้จริง (ยืนยันด้วย log จริง + `Dockerfile`):** `backupService.js`'s `SYNC_STATE_PATH` เดิม
+คำนวณจาก `path.join(UPLOADS_BASE, '..', 'upload-sync-state.json')` = `/app/upload-sync-state.json` บน
+production แต่ `Dockerfile:58-59` (`RUN mkdir -p /app/uploads /data && chown -R node:node /app/uploads
+/data`) ให้สิทธิ์เขียนแก่ user `node` **เฉพาะ `/app/uploads` กับ `/data` เท่านั้น** — ไม่ใช่ `/app` เอง —
+ทำให้เขียนไฟล์นี้ล้มเหลวด้วย `EACCES` มาตลอดตั้งแต่ feature นี้ถูกสร้าง (`saveSyncState()` catch error
+เงียบ ไม่ throw, `backupService.js:186-188`) ผลคือ `loadSyncState()` คืน `{}` เสมอ (ไม่เคย persist จริง) →
+`syncUploads()` มองทุกไฟล์ใน `uploads/` เป็น "ใหม่" ทุกครั้ง → **อัปโหลดทั้งโฟลเดอร์ uploads/ (~84MB) ซ้ำทั้งหมด
+ทุกรอบ scheduler (~2 ชม./ครั้ง)** แทนที่จะเป็น incremental จริงตามที่ตั้งใจออกแบบไว้ — อธิบายตัวเลข
+Service-Initiated 200MB ได้พอดี (84MB × 2-3 รอบ active วันนี้) และอธิบายด้วยว่าทำไม fix ของ Session 150
+(`markLocalFileSynced()` กันอัปโหลดซ้ำหลัง lazy-fetch) ถึงไม่ได้ผลจริงบน production — เพราะมันก็เรียก
+`saveSyncState()` ตัวเดียวกันที่พังด้วย EACCES เหมือนกัน ทั้งที่ logic ถูกต้องทุกจุด พังแค่เพราะเขียนไฟล์ผิดที่
+
+**การแก้:** ย้าย `SYNC_STATE_PATH` ไปที่ `path.join(path.dirname(DB_PATH), 'upload-sync-state.json')` —
+โฟลเดอร์เดียวกับ DB (`IQC_DB_PATH=/data/iqc.db` ใน `Dockerfile:38`, พิสูจน์แล้วว่าเขียนได้จริงเพราะ `/data`
+ถูก chown ให้ user `node` ด้วย) แทนที่จะอยู่นอก `uploads/` ขึ้นไป 1 level แบบเดิม — ไม่ต้องแก้
+`walkFiles()`/`syncUploads()` เลย (ไฟล์ state ไม่ถูกเดินเจอเพราะอยู่คนละโฟลเดอร์กับ `uploads/` อยู่แล้ว) และ
+behavior บน local dev ไม่เปลี่ยน (path เดิมเขียนได้อยู่แล้วเพราะไม่มีข้อจำกัด permission แบบ Docker)
+
+**Test:** อัปเดต `REAL_SYNC_STATE_PATH` ใน `backupService.test.js` ให้ตรงสูตรใหม่ (เดิมอ้างอิง `UPLOADS_BASE`
+เหมือน production code เก่า ถ้าไม่แก้เทสจะ false-pass เพราะยัง compute path แบบเดิม) + เพิ่ม **BACKUP-18**
+(assert ว่า sync-state path ต้องอยู่นอก `UPLOADS_BASE` เสมอ — กัน regression กลับไปจุดเดิม) และ **BACKUP-19**
+(`markLocalFileSynced` เขียน/อ่านได้จริงที่โฟลเดอร์เดียวกับ DB แม้ `IQC_DB_PATH` อยู่คนละที่กับ `uploads/`) —
+`node --test` → **392/392 เขียว** (388 baseline + 4 เคสใหม่ นับรวม BACKUP-16/17 เดิมที่ยังผ่านหลังแก้สูตร path)
+
+**Verify:** ยังไม่ได้ verify กับ Render bandwidth จริง (ต้อง deploy ก่อน) — แนะนำ deploy แล้วดู Application
+logs ว่า error `EACCES ... upload-sync-state.json` หายไป + ติดตาม Service-Initiated bandwidth บน Render
+dashboard 24-48 ชม. เทียบ baseline 200MB/วันที่เจอวันนี้ ควรลดลงมากเพราะ `syncUploads()` จะกลับมา
+incremental จริง (อัปโหลดเฉพาะไฟล์ใหม่/เปลี่ยนต่อรอบ ไม่ใช่ทั้งโฟลเดอร์)
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/lib/backupService.js` | `SYNC_STATE_PATH`: `path.join(UPLOADS_BASE, '..', ...)` (เขียนไม่ได้บน production) → `path.join(path.dirname(DB_PATH), ...)` (เขียนได้จริง, โฟลเดอร์เดียวกับ DB) |
+| `server/test/backupService.test.js` | `REAL_SYNC_STATE_PATH` แก้สูตรให้ตรงโค้ดจริง + เพิ่ม BACKUP-18/19 (regression: path ต้องอยู่นอก uploads/, เขียน/อ่านได้จริงข้ามโฟลเดอร์) |
+
+---
+
+## 2026-07-22 | Session 155 — Products Excel import error 332 แถว: แก้ root cause (comma delimiter) + ปุ่มลบสินค้าเก่า
+
+**คำขอ:** user ส่งภาพหน้าจอ Import สินค้าจาก Excel แสดง error 332/2029 แถว (export แล้ว import กลับเข้าไปทันที) —
+ขอให้เพิ่มปุ่มลบสินค้าแถวนั้นออกจาก database เลย ถ้าประเมินว่าไม่ได้ใช้งานแล้ว เพราะถ้าไม่เคลียร์ระบบจะ
+export→import ไม่ได้เพราะติด error เรื่อยๆ
+
+**Root cause (ตรวจจากโค้ด+DB จริง ก่อนเชื่อสมมติฐาน "สินค้าเก่า" ของ user):** ข้อความ error ตัวอย่างในภาพ
+("ไม่พบ Supplier 'JINAN FENSTEK INTERNATIONAL TRADE CO.' / ไม่พบ Supplier 'LTD'") ชี้ว่าเป็นปัญหาการ split ชื่อ
+ผิด — เช็ค `server/routes/master.js` พบว่า `products/export`'s Supplier column ใช้ **comma** คั่นระหว่าง
+Supplier หลายรายต่อ 1 สินค้า (`.join(', ')`) และ `products/import` ก็ split ด้วย comma เดียวกัน
+(`supplierCell.split(',')`) — เช็ค DB จริง (`iqc.db`) พบ **Supplier 13 รายมี comma อยู่ในชื่อตัวเองจริง**
+(เช่น `"JINAN FENSTEK INTERNATIONAL TRADE CO.,LTD"` ตรงกับตัวอย่างในภาพเป๊ะ) export ออกมาแล้วดูเหมือนมี 2
+Supplier คั่น comma ทั้งที่จริงเป็นชื่อเดียว พอ import กลับมาเลย split ผิดเป็น 2 ชื่อที่หาไม่เจอทั้งคู่ — query
+นับสินค้าที่ผูกกับ Supplier กลุ่มนี้ได้ **202 จาก 2,042 รายการ** (~61% ของ error ที่รายงานมา) ยืนยันว่า error
+ส่วนใหญ่เป็น **สินค้าที่ยังใช้งานจริง ติด bug** ไม่ใช่ของเก่าเลิกใช้ตามที่ user สันนิษฐาน — ถ้าเพิ่มปุ่มลบแล้วกด
+ลบตาม error list ทันทีมีความเสี่ยงสูงที่จะลบสินค้าที่ยังขายอยู่จริงไปโดยไม่ตั้งใจ
+
+**ถามยืนยันแนวทางกับ user ก่อนทำ (AskUserQuestion):** เสนอ 2 ทาง (1) แก้ root cause ก่อนค่อยเพิ่มปุ่มลบสำหรับที่
+เหลือจริง (2) เพิ่มปุ่มลบตามที่ขอเลยไม่ต้องแก้ root cause — **user เลือกทางที่ 1**
+
+**การแก้ (2 ส่วน, `server/routes/master.js` เป็นหลัก):**
+
+**(1) Root cause — เปลี่ยนตัวคั่น Supplier จาก `,` เป็น `;`:**
+- Export: header column เปลี่ยนเป็น `'ชื่อ Supplier * (คั่นด้วย ; ถ้ามากกว่า 1)'`, join เปลี่ยนเป็น `.join('; ')`
+  + เพิ่ม `WHERE p.is_active = 1` ในคิวรีสินค้าที่ export (เดิมส่งออกสินค้าปิดใช้งานด้วย — ถ้าไม่กรอง สินค้าที่ถูก
+  ปิดใช้งาน/ลบผ่านฟีเจอร์ใหม่ข้อ (2) จะยังโผล่ใน export รอบถัดไปแล้ว error ซ้ำเดิมไม่จบสักที)
+- Import: `checkHeaders` เปลี่ยน header string ที่ต้องตรง, `supplierCell.split(';')` แทน `split(',')`, ข้อความ
+  dropdown validation error ปรับตาม — ยืนยันว่าไม่มี Supplier รายไหนใช้ `;` ในชื่อจริงเลย (เช็ค DB แล้ว)
+- ไฟล์เก่าที่ export ด้วย header แบบ comma (ก่อน fix นี้) จะโดน **header-mismatch error ชัดเจน** ("Header ไม่ตรง
+  กับ template") แทนที่จะ silently misparse เหมือนเดิม — **ต้อง export ใหม่เท่านั้น ไฟล์เก่าใช้ต่อไม่ได้**
+- ย้าย logic resolve `existing` product (match by code/name) ให้ทำงาน**ก่อน**เช็ค error เสมอ (เดิมทำแค่ตอนไม่
+  error) เพื่อให้แถว error ที่ตรงกับสินค้าเดิมในระบบมี `_data.id` ให้ frontend ใช้ต่อได้ในข้อ (2)
+
+**(2) ปุ่ม "ลบสินค้านี้ออกจากระบบ" (สำหรับสินค้าที่เหลือจริงๆ หลังแก้ root cause แล้ว):**
+- `DELETE /api/master/products/:id` (ใหม่) — พยายามลบถาวรในทรานแซกชันก่อนเสมอ (`product_suppliers` มี
+  `ON DELETE CASCADE` ลบเองอัตโนมัติ) ถ้ามีแถวลูกที่เป็น `ON DELETE RESTRICT` ผูกอยู่จริง (bill_items/
+  delivery_schedule_items/product_images/product_drawings/product_colors) SQLite จะ throw FK constraint
+  error เอง — **ไม่ต้องเช็คทีละตารางเอง** ปล่อยให้ FK enforcement (CLAUDE.md §2.5: ห้าม DELETE master data ที่มี
+  FK ชี้อยู่) เป็นตัวตัดสิน แล้ว catch มา fallback เป็น soft-delete (`is_active=0`) อัตโนมัติพร้อมข้อความอธิบาย
+  ชัดเจนว่าทำไมลบถาวรไม่ได้ — audit log ทั้ง 2 กรณี (DELETE/UPDATE)
+- `client/src/pages/Master/Products.jsx` — แถว error ในหน้า preview import ที่มี `_data.id` (ตรงกับสินค้าเดิม
+  ในระบบ) มีปุ่ม "ลบสินค้านี้ออกจากระบบ" ยืนยันผ่าน `ConfirmDialog` แล้วเรียก DELETE เปลี่ยนสถานะแถวนั้นเป็น
+  "✓ ลบออกจากระบบแล้ว" หรือ "✓ ปิดการใช้งานแล้ว (มีประวัติการใช้งานอยู่)" ตามผลจริงจาก server — **ไม่พยายาม
+  unblock ปุ่ม "นำเข้า" ในไฟล์เดิมที่เปิดค้างอยู่** (ลบสินค้าออกจาก DB ไม่ได้แก้ปัญหาข้อมูลในไฟล์ Excel ที่ยังโหลด
+  ค้างอยู่ — แถวนั้นจะ error เหมือนเดิมถ้า Import จริงจากไฟล์นี้ต่อ) มีข้อความแนะนำให้ export ใหม่หลังลบครบแล้ว
+
+**Test:** `server/test/productsImportExport.test.js` — เปลี่ยน PR-03/05 ให้ใช้ `;` แทน `,`, PR-04 เพิ่ม assert
+header/delimiter ตรง, **PR-04b ใหม่** (regression test ตรงเป้า: สร้าง Supplier ชื่อมี comma จริง import+export
+round-trip ถูกต้อง), **PR-10 ใหม่** (ไฟล์ header แบบเก่าถูกปฏิเสธด้วย header error), **PR-11 ใหม่** (`_data.id`
+ติดมาแม้ status เป็น error), **PR-12/13/14 ใหม่** (DELETE: ลบถาวรถ้าไม่มีประวัติ / fallback ปิดใช้งานถ้ามี
+bill_items ผูกอยู่ / 404 ถ้าไม่มี id), **PR-15 ใหม่** (export กรอง is_active=1 จริง) — `node --test` →
+**390/390 เขียว** (383 baseline + 7 เคสใหม่), `npm run build` (client) ผ่าน
+
+**Verify:** ยังไม่ได้ verify ผ่านมือจริงกับไฟล์ 2029 แถวจริงของ user — แนะนำ: (1) Export ใหม่จากระบบ (ไฟล์เก่าที่
+ใช้ในภาพ screenshot ใช้ต่อไม่ได้แล้ว จะโดน header-mismatch) (2) Import ไฟล์ใหม่กลับเข้าไปดูว่า error ลดจาก 332
+เหลือประมาณเท่าไร (คาดว่าลดลงมากเพราะ 202/332 น่าจะเป็น false-positive จาก comma bug) (3) สำหรับแถว error ที่
+เหลือจริง (สินค้าที่กลุ่ม/หน่วยนับ/ฯลฯ ไม่มีอยู่ในระบบแล้วจริงๆ) ให้ประเมินทีละรายการแล้วใช้ปุ่ม "ลบสินค้านี้ออกจาก
+ระบบ" เฉพาะรายที่มั่นใจว่าเลิกใช้แล้วจริง
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/routes/master.js` | Products export/import Supplier delimiter `,`→`;`, export กรอง `is_active=1`, resolve `existing` ก่อนเช็ค error, + `DELETE /products/:id` (hard delete + FK fallback เป็น soft-delete) |
+| `client/src/pages/Master/Products.jsx` | ปุ่ม "ลบสินค้านี้ออกจากระบบ" ในแถว error ของ import preview + `ConfirmDialog` + `deleteProduct` mutation |
+| `server/test/productsImportExport.test.js` | ปรับ PR-03/04/05 เป็น `;`, + PR-04b/10/11/12/13/14/15 (7 เคสใหม่) |
+
+---
+
+## 2026-07-22 | Session 154 — ขยาย @mention ไปข้อความกลุ่ม Telegram จัดซื้ออื่นๆ ใน ncrService.js ครบทุกจุด
+
+**คำขอ:** ต่อยอดจาก S153 — user ตอบรับข้อเสนอที่ถามไว้ท้าย S153 ว่าต้องการให้เพิ่ม @mention ในข้อความกลุ่มจัดซื้อ
+อื่นๆ ด้วย (ตัวอย่างที่ยกไว้: "NCR รอ Review จัดซื้อ", "พร้อมส่ง Supplier")
+
+**การแก้ (`server/services/ncrService.js`):**
+- เพิ่ม `purchasingMentionsForBill(billId)` — resolve `bill_id → supplier_id` แล้วเรียก
+  `getSupplierAssigneeMentions()` (S153) คืนบรรทัด `@user1 @user2\n` พร้อมใช้ต่อหน้าข้อความ หรือ `''` เปล่าถ้า
+  ไม่มีใคร mention ได้ (pattern เดียวกับ `purchasingTargetsForBill()` ที่มีอยู่แล้วสำหรับ resolve เป้าหมาย
+  in-app notification — เพิ่มคู่กันแยกหน้าที่ชัดเจน: ตัวหนึ่ง resolve "ใครควรได้ notification", อีกตัว resolve
+  "จะ mention ใครในข้อความกลุ่ม")
+- แปะ `purchasingMentionsForBill(ncr.bill_id)` นำหน้าข้อความ `sendTelegram(telegram_group_purchasing, ...)`
+  ครบทั้ง **7 จุด** ใน service นี้: `approveNcr()`'s `pending_purchasing_review` (QMR อนุมัติเปิด),
+  `pending_supplier` (พร้อมส่ง Supplier), `closed` (ปิดแล้ว), `purchasingReview()` (รอผู้จัดการจัดซื้อตรวจสอบ),
+  `rejectPurchasingManagerReview()` (ผู้จัดการจัดซื้อไม่อนุมัติ Review), `rejectSupplierResponse()` (QC Manager
+  ไม่อนุมัติคำตอบ Supplier), `resubmitToSupplier()` (ส่ง Supplier ตอบใหม่)
+
+**ขอบเขตที่ตั้งใจไม่แตะ:** `deliveryService.js`/`uaiService.js` ก็มี `sendTelegram(telegram_group_purchasing, ...)`
+เหมือนกัน (5 + 4 จุดตามลำดับ) แต่ user ไม่ได้ระบุถึง — ยังไม่แตะรอบนี้ ถ้าต้องการเพิ่มด้วยทำได้ทันทีด้วย pattern
+เดียวกัน (Delivery ต้อง resolve supplier_id จาก delivery record แทน bill_id, UAI อาจต้อง join ผ่าน ncr_id →
+bill_id → supplier_id เพิ่มอีกชั้น เพราะ UAI ไม่มี supplier_id ตรงๆ)
+
+**Test:** เพิ่ม NOTIF-13 ใน `purchasingNotifications.test.js` — จำลอง QMR อนุมัติเปิด NCR จริงผ่าน
+`ncrService.approveNcr()` (mock `node-fetch` แบบเดียวกับ NOTIF-10) เช็คว่าข้อความกลุ่มที่ส่งจริงขึ้นต้นด้วย
+`@username` ของผู้ดูแลจัดซื้อ — `node --test` → **383/383 เขียว** (382 baseline + 1 เคสใหม่) — ไม่มี frontend
+เปลี่ยนรอบนี้ (แก้แค่ service layer)
+
+**Verify:** ยังไม่ได้ verify ผ่าน Telegram จริง — ใช้วิธี verify เดียวกับที่แนะนำใน S153 (ตั้ง
+`telegram_username` ให้ผู้ดูแลจัดซื้อจริง แล้วลอง flow NCR ผ่านแต่ละขั้นทั้ง 7 จุด เช็คว่ามี @mention ขึ้นทุกครั้ง)
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/services/ncrService.js` | + `purchasingMentionsForBill(billId)`, แปะ @mention นำหน้าข้อความกลุ่มจัดซื้อครบ 7 จุด |
+| `server/test/purchasingNotifications.test.js` | + NOTIF-13 |
+
+---
+
+## 2026-07-22 | Session 153 — @mention ผู้ดูแลจัดซื้อในข้อความกลุ่ม Telegram NCR เกินกำหนด
+
+**คำขอ:** telegram สามารถ @ ชื่อคนในกลุ่มได้ไหม ถ้าได้ให้ @ ชื่อจัดซื้อที่ดูแล Sup นั้นๆ (ต่อยอดข้อความแจ้งเตือน
+กลุ่มจัดซื้อจาก S151/S152)
+
+**คำตอบ + แนวทาง:** Telegram mention ได้ 2 แบบ — (1) `@username` แบบ plain text (Telegram auto-parse เป็น
+mention entity เองแม้ไม่ตั้ง parse_mode ใดๆ) ต้องมี public username และอยู่ในกลุ่มจริงถึงจะได้ push notification
+(2) `text_mention` ผ่าน HTML (`<a href="tg://user?id=X">ชื่อ</a>`) ใช้ user ID แทน username ได้ แต่ต้องเปิด
+`parse_mode:HTML` — เลือกแบบ (1) เพราะ `sendTelegram()` (`routes/notifications.js`) ตั้งใจส่งแบบ plain text
+เสมอ (comment เดิมในโค้ด: กัน HTML injection จากข้อความที่มีค่าผู้ใช้กรอกปนอยู่ เช่น ชื่อสินค้า/comment/root_cause)
+เปลี่ยนเป็น parse_mode:HTML จะต้อง escape ทุกจุดที่มีค่าผู้ใช้กรอกในข้อความทั้งหมดใหม่ ความเสี่ยงไม่คุ้มกับ
+ประโยชน์ที่ต่างกันแค่ "ไม่ต้องมี public username" — แบบ (1) ใช้ได้ทันทีไม่ต้องแตะ `sendTelegram()` เลย
+
+**การแก้:**
+- เพิ่มคอลัมน์ `users.telegram_username TEXT` (`database.js`'s `safeAddColumn`) — เก็บไม่มี `@` นำหน้าเสมอ
+  (`normalizeTelegramUsername()` ใหม่ใน `index.js` ตัด `@` ที่ user พิมพ์มาออกให้) แยกจาก `telegram_chat_id`
+  เดิมโดยสิ้นเชิง (chat_id = DM ส่วนตัว, username = mention ในกลุ่ม — คนละวัตถุประสงค์ คนละ field)
+- `purchasingScope.js` เพิ่ม `getSupplierAssigneeMentions(supplierId)` — query
+  `supplier_purchasing_assignees JOIN users` เอาเฉพาะคนที่ active + ตั้ง `telegram_username` ไว้แล้ว คืน
+  `['@username', ...]` — ถ้า supplier ไม่มีผู้ดูแล specific คนไหนเลย คืน `[]` (ไม่ mention ทุกคนในกลุ่มแบบสุ่มสี่
+  สุ่มห้า ไม่ตรงเจตนา "เฉพาะคนที่ดูแล Sup นั้น")
+- `overdueNotifier.js` — เรียก `getSupplierAssigneeMentions()` แปะบรรทัดแรกของข้อความกลุ่ม Telegram ก่อน
+  `[IQC] ...` เดิม (ถ้ามี mention) — ไม่กระทบแจ้งเตือนส่วนตัว (`createNotification`/`notifyUserTelegram`) ที่
+  ระบุ target ชัดเจนอยู่แล้วผ่าน DM ไม่ต้อง mention
+- `index.js` — `GET/POST/PATCH /api/admin/users` เพิ่ม `telegram_username` เข้า SELECT/INSERT/UPDATE + audit log
+- `client/src/pages/Admin/Users.jsx` — ฟอร์มเพิ่มช่องกรอก "Telegram Username" (auto-strip `@`) พร้อมคำอธิบาย
+  แยกจาก Chat ID ชัดเจน + ตาราง desktop/การ์ดมือถือ เพิ่ม badge `@username` (สีม่วง แยกจาก badge chat_id สีฟ้า
+  เดิม) ต่อจากที่มีอยู่แล้ว
+
+**ขอบเขตที่ตั้งใจไม่แตะ:** ข้อความกลุ่ม Telegram อื่นๆ ที่ส่งไป `telegram_group_purchasing` (เช่น
+`ncrService.js`'s "NCR รอ Review จัดซื้อ"/"พร้อมส่ง Supplier") ยังไม่ได้เพิ่ม @mention — คำขอนี้เจาะจงเฉพาะ
+ข้อความ "เกินกำหนด" ที่กำลังคุยกันอยู่ ถ้าต้องการ mention ในข้อความอื่นด้วย บอกแยกได้ (pattern
+`getSupplierAssigneeMentions()` reuse ได้ทันที ไม่ต้องเขียนใหม่)
+
+**Test:** `purchasingNotifications.test.js` เพิ่ม NOTIF-10 (mock `node-fetch` แบบเดียวกับ `backupService.test.js`
+— ตั้ง `telegram_username` ให้ผู้ดูแล supplier แล้วเช็คว่าข้อความที่ส่งจริงขึ้นต้นด้วย `@username`), NOTIF-11
+(ไม่ตั้ง username → ไม่มี mention), NOTIF-12 (unit test `getSupplierAssigneeMentions()` ตรงๆ — คืนเฉพาะคนที่
+ตั้ง username ไว้ ข้ามคนที่ยังไม่ตั้ง) — `node --test` → **382/382 เขียว** (379 baseline + 3 เคสใหม่),
+`npm run build` (client) ผ่าน
+
+**Verify:** ยังไม่ได้ verify ผ่าน Telegram จริง — แนะนำให้ user ตั้งค่า `telegram_username` ให้ผู้ดูแลจัดซื้อสัก
+1 คนที่หน้า Admin > จัดการผู้ใช้ (ต้องเป็น username จริงที่มีอยู่ใน Telegram และคนนั้นต้องอยู่ในกลุ่มจัดซื้อที่ตั้ง
+ค่า Chat ID ไว้จริง) แล้วรอ/บังคับให้ NCR เกินกำหนด เช็คว่าข้อความกลุ่มมี `@username` ขึ้นก่อนและคนนั้นได้รับ push
+notification จริงจาก Telegram (ไม่ใช่แค่ข้อความ plain เฉยๆ)
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/db/database.js` | + `safeAddColumn('users','telegram_username','TEXT')` |
+| `server/lib/purchasingScope.js` | + `getSupplierAssigneeMentions(supplierId)` |
+| `server/lib/overdueNotifier.js` | ข้อความกลุ่ม Telegram แปะ `@mention` ผู้ดูแลจัดซื้อของ supplier นำหน้า |
+| `server/index.js` | `GET/POST/PATCH /api/admin/users` เพิ่ม `telegram_username` + `normalizeTelegramUsername()` |
+| `client/src/pages/Admin/Users.jsx` | ฟอร์ม + ตาราง/การ์ด เพิ่มช่องกรอก/แสดง Telegram Username |
+| `server/test/purchasingNotifications.test.js` | + NOTIF-10/11/12 |
+
+---
+
+## 2026-07-22 | Session 152 — NCR: แจ้งเตือนค้างอนุมัติส่วนตัว (ก่อนถึงจัดซื้อ) + แจ้งซ้ำ (หลังถึงจัดซื้อ)
+
+**คำขอ:** ต่อยอดจาก S151 — เพิ่มให้แจ้ง Telegram ส่วนตัวพร้อม link ติดตามอนุมัติ เมื่อเอกสารค้างอยู่ที่พนักงานคนใด
+คนหนึ่งเกิน 3 วัน (นับจากวันที่คนก่อนหน้าส่งขออนุมัติ) แต่ถ้าเอกสารถึงจัดซื้อแล้วให้นับจากวันที่ตั้งค่าไว้ในระบบแทน
+(เช่น 7 วัน) แล้วแจ้งกลุ่มจัดซื้อพร้อม link เข้าตรวจสอบ และถ้ายังเกินกำหนดอยู่ให้แจ้งซ้ำในกลุ่มทุกๆ 3 วัน พร้อมบอก
+ด้วยว่าเกินกำหนดมาแล้วกี่วัน
+
+**Clarify ก่อนเริ่ม (AskUserQuestion):** ข้อความต้นฉบับตีความได้หลายแบบ ถามยืนยัน 3 จุด — (1) ขอบเขตขั้นตอนของแจ้ง
+เตือนส่วนตัว: user เลือก **เฉพาะ 3 ขั้นก่อนถึงจัดซื้อเท่านั้น** (`pending_supervisor`/`pending_manager`/
+`pending_qmr_open`) ไม่รวมขั้นหลังจัดซื้อที่วนกลับมา QC ภายใน (2) แจ้งเตือนส่วนตัวควรแจ้งซ้ำหรือครั้งเดียว: user
+เลือก **แจ้งซ้ำทุก 3 วันเหมือนกลุ่มจัดซื้อ** (3) จำนวนวัน 3 วันของแจ้งเตือนส่วนตัวควรตั้งค่าได้ไหม: user เลือก
+**ตั้งค่าได้จาก Admin เหมือนกัน**
+
+**การแก้ (2 กลไกคู่ขนาน แบ่งตามว่าเอกสาร "ถึงจัดซื้อ" หรือยัง — เช็คจาก `qmr_opened_at` ที่เพิ่มใน S151):**
+
+**(1) `lib/internalReminder.js` (ใหม่ทั้งไฟล์)** — เฉพาะ 3 ขั้นก่อนถึงจัดซื้อ:
+- `STAGE_ROLE` map: `pending_supervisor→qc_supervisor`, `pending_manager→qc_manager`, `pending_qmr_open→qmr`
+- "วันที่คนก่อนหน้าส่งขออนุมัติ" = `COALESCE((SELECT MAX(created_at) FROM ncr_approvals WHERE ncr_id=n.id),
+  n.created_at)` — ใช้แถวล่าสุดใน `ncr_approvals` ของ NCR นั้น (ไม่ filter role เพราะในขอบเขต 3 ขั้นนี้มีแค่
+  1 แถวต่อครั้งอยู่แล้ว) หรือ `created_at` ถ้ายังไม่มีใครอนุมัติเลย (ขั้น `pending_supervisor` แรกสุด)
+- เกิน `ncr_internal_reminder_days` (default 3) วัน → แจ้งทุก user ของ role นั้น ผ่าน `createNotification()`
+  (ส่ง Telegram ส่วนตัว + แนบ link อัตโนมัติอยู่แล้วผ่าน `notifyUserTelegram`, ไม่ต้องเขียนโค้ดส่ง Telegram เอง)
+  ข้อความบอกจำนวนวันที่ค้างจริง (`ค้างอนุมัติมาแล้ว N วัน`)
+- แจ้งซ้ำทุก `ncr_internal_reminder_days` วัน จาก `ncrs.internal_reminder_last_sent_at` (คอลัมน์ใหม่, เก็บเวลา
+  แจ้งครั้งล่าสุด) — เงื่อนไข: `internal_reminder_last_sent_at IS NULL OR date(+N days) < date('now')`
+- `ncrService.js`'s `approveNcr()` — **ทุก** transition (ไม่ใช่แค่ 3 ขั้นนี้) reset `internal_reminder_last_sent_at
+  = NULL` ในทรานแซกชันเดียวกับเปลี่ยน status เสมอ — ขั้นใหม่ต้องเริ่มนับรอบแจ้งเตือนใหม่ ไม่สืบทอดรอบเก่า
+
+**(2) `overdueNotifier.js` (ต่อยอดจาก S151)** — หลังเอกสารถึงจัดซื้อแล้ว (`qmr_opened_at IS NOT NULL`):
+- เปลี่ยน `overdue_notified_at` จาก flag "เคยแจ้งหรือยัง" (gate ครั้งเดียว) เป็น cursor "แจ้งครั้งล่าสุดเมื่อไร"
+  — เงื่อนไขแจ้งซ้ำ: `overdue_notified_at IS NULL OR date(+ncr_overdue_repeat_days days) < date('now')`
+  (setting ใหม่, default 3) — แจ้งไปเรื่อยๆ จนกว่า NCR จะปิด/ยกเลิก (status filter เดิมกันไว้อยู่แล้ว)
+- ข้อความเปลี่ยนจาก "เกินกำหนด N วัน" (ค่าคงที่ = threshold) เป็น **"เกินกำหนดมาแล้ว X วัน"** (X คำนวณจริงจาก
+  `julianday('now') - julianday(date(qmr_opened_at, '+overdueDays days'))` — จำนวนวันที่ผ่านเส้นตายมาแล้วจริง
+  เพิ่มขึ้นเรื่อยๆ ทุกครั้งที่แจ้งซ้ำ ไม่ใช่ค่าคงที่)
+- ข้อความ Telegram กลุ่มจัดซื้อเพิ่ม link เข้าดูเอกสารตรงๆ (`${app_url}/ncr/{id}`) — เดิมมีแค่ในแจ้งเตือนส่วนตัว
+  ผ่าน `notifyUserTelegram` อัตโนมัติ กลุ่มไม่เคยมี link เลย (ต้องต่อ URL เองเพราะ `sendTelegram()` ดิบไม่ทำให้)
+
+**Settings ใหม่ (Admin > ตั้งค่า > Telegram, extend `GET/POST /api/admin/settings/telegram`):**
+`ncr_overdue_repeat_days` (default 3, กลุ่มจัดซื้อแจ้งซ้ำทุกกี่วัน) และ `ncr_internal_reminder_days` (default 3,
+แจ้งส่วนตัวครั้งแรก+รอบแจ้งซ้ำ ใช้ค่าเดียวกันทั้งคู่ตามที่ user ระบุ) — validate จำนวนเต็มบวกเหมือน
+`ncr_overdue_days` เดิม (refactor เป็น loop เดียวคุม 3 ฟิลด์แทนโค้ดซ้ำ) — `Admin/Settings.jsx`'s `TelegramTab`
+เพิ่ม 3 ช่องกรอก (จัดกลุ่ม "เกินกำหนด" 2 ช่องคู่กัน + "ค้างอนุมัติส่วนตัว" อีก 1 ช่องแยก)
+
+**Scheduler:** ไม่เพิ่ม `setInterval` ใหม่ — `runOverdueCheck()` (`index.js`, เดิมรันตอนบูต + ทุก 1 ชม.) เรียก
+`checkInternalApprovalReminders()` เพิ่มในรอบเดียวกัน (กัน error แยกกันด้วย try/catch คนละก้อน กันกลไกหนึ่งพังแล้ว
+ลากอีกกลไกไม่ทำงานไปด้วย)
+
+**Test:** `server/test/internalReminder.test.js` ใหม่ทั้งไฟล์ (IR-01..09) — ครอบ: ไม่แจ้งถ้ายังไม่เกิน (IR-01),
+แจ้งแต่ละ role ถูกต้องตามขั้น (IR-02/03/04, IR-03 พิสูจน์นับจาก `ncr_approvals` ไม่ใช่ `created_at`), ไม่แจ้งซ้ำ
+ทันที (IR-05), แจ้งซ้ำหลังครบรอบ (IR-06), reset รอบตอน status เปลี่ยน (IR-07), setting ใช้งานได้จริง (IR-08),
+ไม่แจ้ง NCP ที่ปิดแล้ว (IR-09) — `purchasingNotifications.test.js` เพิ่ม NOTIF-08 (แจ้งซ้ำหลังครบ repeat_days)
+และ NOTIF-09 (ข้อความมีจำนวนวันจริง + link) — `node --test` → **379/379 เขียว** (368 baseline + 2 + 9 เคสใหม่),
+`npm run build` (client) ผ่าน
+
+**Verify:** ยังไม่ได้ verify ผ่านมือจริงในเบราว์เซอร์ — แนะนำให้ user ทดสอบ flow จริง: สร้าง NCR ทิ้งไว้ที่ขั้น
+Supervisor/Manager/QMR เกิน 3 วัน (หรือลดค่า `ncr_internal_reminder_days` เป็น 0 ไม่ได้เพราะ validate ≥1 — ใช้ 1
+วันแทนเพื่อทดสอบเร็วขึ้น) เช็คว่า Telegram ส่วนตัวของ role นั้นได้รับข้อความพร้อม link แล้วลองอนุมัติผ่านขั้นไป เช็คว่า
+รอบแจ้งเตือนของขั้นถัดไปเริ่มนับใหม่ไม่ต่อจากขั้นเก่า — ฝั่งจัดซื้อ ลองตั้ง `ncr_overdue_days`/
+`ncr_overdue_repeat_days` เป็นค่าน้อยๆ เพื่อทดสอบว่าแจ้งซ้ำจริงพร้อมจำนวนวันที่เพิ่มขึ้นเรื่อยๆ และมี link ในข้อความ
+กลุ่ม Telegram
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/lib/internalReminder.js` | ใหม่ทั้งไฟล์ — `checkInternalApprovalReminders()` |
+| `server/lib/overdueNotifier.js` | เปลี่ยนจากแจ้งครั้งเดียวเป็นแจ้งซ้ำทุก `ncr_overdue_repeat_days` วัน + ข้อความจำนวนวันเกินจริง + link |
+| `server/db/database.js` | + `safeAddColumn('ncrs','internal_reminder_last_sent_at','DATETIME')` |
+| `server/services/ncrService.js` | `approveNcr()` reset `internal_reminder_last_sent_at=NULL` ทุก transition |
+| `server/index.js` | `runOverdueCheck()` เรียก `checkInternalApprovalReminders()` เพิ่ม, settings API เพิ่ม `ncr_overdue_repeat_days`/`ncr_internal_reminder_days` |
+| `client/src/pages/Admin/Settings.jsx` | `TelegramTab` เพิ่ม 3 ช่องกรอกจำนวนวัน |
+| `server/test/internalReminder.test.js` | ใหม่ทั้งไฟล์ — IR-01..09 |
+| `server/test/purchasingNotifications.test.js` | + NOTIF-08/09 |
+
+---
+
+## 2026-07-22 | Session 151 — Bug: NCR แจ้ง "เกินกำหนด" ก่อน QMR อนุมัติเปิดเอกสาร + จำนวนวันตั้งค่าได้
+
+**คำขอ:** user (qc_manager) รายงานว่าอนุมัติ NCR ส่งต่อให้ QMR อนุมัติวันที่ 22/07/2569 แล้วสักพักระบบแจ้งเตือนไป
+กลุ่มจัดซื้อว่า "NCR-2026-0001 เกินกำหนดวันที่ 2026-07-21 แล้ว กรุณาติดตาม" ทั้งที่ QMR ยังไม่ได้อนุมัติเปิดเอกสารเลย
+— ขอให้แก้เป็น: เริ่มนับวันแจ้งเตือนหลัง QMR อนุมัติเปิดเอกสารแล้วเท่านั้น โดยจำนวนวันตั้งค่าได้ที่เมนูตั้งค่าระบบ
+(Admin) แต่ถ้ายังไม่ได้ตั้งค่าให้ default ไว้ 7 วัน
+
+**Root cause:** `overdueNotifier.js` (เดิม) นับ "เกินกำหนด" จาก `ncrs.disposition_due_date` เทียบกับ
+`date('now')` ตรงๆ — ฟิลด์นี้เป็นวันที่ QC Manager **กรอกเอง** ตอนอนุมัติ NCR ที่ขั้น `pending_manager` (ส่งต่อให้
+QMR อนุมัติเปิด) เป็น "วันกำหนดดำเนินการ" (target action date) ที่แสดงในหน้า NCR/Purchasing Dashboard/PDF/Email
+อยู่แล้ว — ไม่มีความเกี่ยวข้องกับว่า QMR อนุมัติเปิดเอกสารจริงหรือยัง เคสนี้ QC Manager กรอกวันที่ 2026-07-21 ซึ่ง
+ผ่านไปแล้วตอนที่อนุมัติจริง (22/07) ทำให้ scheduler รอบถัดไป (ทุก 1 ชม., `checkOverdueNcrNotifications`) เจอเงื่อนไข
+overdue ทันทีทั้งที่เอกสารยังไม่ถึงมือ QMR เลยด้วยซ้ำ
+
+**การแก้:**
+- เพิ่มคอลัมน์ `ncrs.qmr_opened_at DATETIME` (`database.js`'s `safeAddColumn`) — บันทึกเวลาที่ QMR อนุมัติเปิด
+  NCR จริง
+- `services/ncrService.js`'s `approveNcr()` — ตอน transition `pending_qmr_open → pending_purchasing_review`
+  (ขั้นที่ QMR กดอนุมัติเปิดจริง) เซ็ต `qmr_opened_at = datetime('now')` ในทรานแซกชันเดียวกับการเปลี่ยน status
+  (pattern เดียวกับ `closed_at` ตอนปิดเอกสาร)
+- `lib/overdueNotifier.js` — เปลี่ยน query ทั้งหมด: ต้อง `qmr_opened_at IS NOT NULL` ก่อน (เอกสารที่ QMR ยังไม่
+  เปิดจะไม่ถูกพิจารณาเลย ไม่ว่า `disposition_due_date` จะเป็นอะไร) แล้วเทียบ `date(qmr_opened_at, '+N days') <
+  date('now')` โดย N อ่านจาก `db.getSetting('ncr_overdue_days')` (`Number(...) || 7` — default 7 ถ้ายังไม่ตั้ง)
+  ข้อความแจ้งเตือนเปลี่ยนเป็นอ้างอิงวันที่ QMR เปิด + จำนวนวันที่ตั้งไว้ แทนวันที่ QC Manager กรอกเอง — ไม่แตะ
+  `disposition_due_date` field เดิม (ยังคงเป็น "วันกำหนดดำเนินการ" แสดงในหน้าจอ/PDF/Email ตามเดิม แค่เลิกใช้เป็น
+  ตัวกระตุ้นแจ้งเตือนอัตโนมัติ)
+- **Setting ใหม่:** `ncr_overdue_days` เก็บผ่าน `db.getSetting`/`setSetting` เหมือน Telegram config เดิม — extend
+  `GET/POST /api/admin/settings/telegram` (`index.js`) ให้ครอบคลุมฟิลด์นี้ด้วย (validate เป็นจำนวนเต็มบวก, 400 ถ้า
+  ไม่ใช่) เพราะเป็น setting ที่คุมพฤติกรรม Telegram notification ไปกลุ่มจัดซื้อโดยตรง อยู่หน้าเดียวกับ "Chat ID —
+  กลุ่มจัดซื้อ" ใน `Admin/Settings.jsx`'s `TelegramTab` — เพิ่มช่องกรอกตัวเลข "แจ้งเตือน NCR เกินกำหนด (วัน หลัง QMR
+  อนุมัติเปิดเอกสาร)" พร้อมคำอธิบาย
+- **Data-heal (backfill):** NCR เก่าที่ผ่านขั้น QMR เปิดไปแล้วก่อน column นี้จะถูกเพิ่ม จะมี `qmr_opened_at` เป็น
+  `NULL` ค้างตลอดไปถ้าไม่ backfill (ทำให้ overdue tracking หายไปเงียบๆ สำหรับเอกสารค้างอยู่ตอน deploy) — เพิ่ม
+  migration step ใน `database.js` (รันหลัง `runMigrations()`/legacy rebuilds ทั้งหมด, ก่อน `seedData()`):
+  หา NCR ทุกตัวที่ `qmr_opened_at IS NULL` และสถานะอยู่หลังขั้น QMR เปิดไปแล้ว (ไม่ใช่
+  `pending_supervisor`/`pending_manager`/`pending_qmr_open`/`ncp_closed`/`cancelled`) แล้วเติมด้วยเวลา approve
+  แรกสุดของ role='qmr' ใน `ncr_approvals` (ขั้นเปิดมาก่อนขั้นปิดเสมอตาม state machine) fallback เป็น
+  `created_at` ถ้าหาไม่เจอ — idempotent (WHERE `qmr_opened_at IS NULL`)
+
+**ขอบเขตที่ตั้งใจไม่แตะ:** `services/purchasingDashboardService.js`'s `OVERDUE_EXPR` (badge สีแดงในหน้า
+Purchasing Dashboard) ยังอิง `disposition_due_date` แบบเดิมอยู่ — user รายงานปัญหาเฉพาะที่ Telegram notification
+เท่านั้น ยังไม่ได้ขอให้เปลี่ยนหน้า dashboard ด้วย (ถ้าต้องการ consistency ระหว่าง 2 จุดนี้ต้องแจ้งแยกต่างหาก)
+
+**Test:** `server/test/purchasingNotifications.test.js` — ปรับ `makeBillNcr()` helper จาก `dueDate` param เป็น
+`qmrOpenedAt` (insert ตรงเข้า `ncrs.qmr_opened_at` แทน `disposition_due_date`) เพิ่ม helper `daysAgo(n)` (ใช้
+`datetime('now', '-N days')` ของ SQLite เอง กัน format ไม่ตรงกัน) ปรับ NOTIF-04/05 เดิมให้ตั้งค่าผ่าน
+`qmrOpenedAt` แทน + เพิ่ม 2 เคสใหม่: **NOTIF-06** (NCR ที่ `qmr_opened_at` ยัง NULL ต้องไม่ถูกแจ้งเตือนเด็ดขาด — เคส
+ตรงกับบั๊กที่ user รายงาน) และ **NOTIF-07** (ตั้งค่า `ncr_overdue_days=3` แล้ว NCR ที่เปิดมา 4 วันต้องถูกแจ้งเตือน
+ทั้งที่ยังไม่เกิน default 7 วัน — ยืนยันว่า setting มีผลจริง) — `node --test` → **368/368 เขียว** (366 baseline +
+2 เคสใหม่), `npm run build` (client) ผ่าน
+
+**Verify:** ยังไม่ได้ verify ผ่านมือจริงในเบราว์เซอร์ — แนะนำให้ user ลอง flow จริง: qc_manager อนุมัติ NCR ส่งต่อ
+QMR (จะไม่มี qmr_opened_at ตอนนี้) รอ 1 ชม. เช็คว่ายังไม่มี notification "เกินกำหนด" ไปกลุ่มจัดซื้อ แล้วให้ QMR
+อนุมัติเปิดจริง เช็คว่า `qmr_opened_at` ถูกบันทึก แล้วลองตั้งค่า `ncr_overdue_days` ที่ Admin > ตั้งค่า > Telegram
+เป็นค่าน้อยๆ (เช่น 1) ทดสอบว่า notification มาตามจำนวนวันที่ตั้งไว้จริง — สำหรับ production DB ที่มี NCR ค้างอยู่
+ควรเช็ค log `[Migration] Backfilled qmr_opened_at for N existing NCR(s)` ตอน deploy เพื่อยืนยันว่า backfill
+รันสำเร็จ
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/db/database.js` | + `safeAddColumn('ncrs','qmr_opened_at','DATETIME')`, + data-heal backfill สำหรับ NCR เก่า |
+| `server/services/ncrService.js` | `approveNcr()` เซ็ต `qmr_opened_at` ตอน transition `pending_qmr_open → pending_purchasing_review` |
+| `server/lib/overdueNotifier.js` | เปลี่ยนเกณฑ์ overdue จาก `disposition_due_date` เป็น `qmr_opened_at` + N วัน (setting `ncr_overdue_days`, default 7) |
+| `server/index.js` | `GET/POST /api/admin/settings/telegram` เพิ่มฟิลด์ `ncr_overdue_days` (validate จำนวนเต็มบวก) |
+| `client/src/pages/Admin/Settings.jsx` | `TelegramTab` เพิ่มช่องกรอก "แจ้งเตือน NCR เกินกำหนด (วัน หลัง QMR อนุมัติเปิดเอกสาร)" |
+| `server/test/purchasingNotifications.test.js` | ปรับ helper เป็น `qmrOpenedAt`, + NOTIF-06/07 |
 
 ---
 
