@@ -26,6 +26,7 @@ function getProcessLabel(a, approvals, i, ncr) {
   if (a.action === 'rejected_to_staff') return 'ส่งกลับให้ QC รับเข้าแก้ไขข้อมูล';
   if (a.action === 'staff_resubmit') return 'QC รับเข้าแก้ไขแล้ว ส่งกลับเข้าระบบ';
   if (a.action === 'cancelled_staff_revision') return 'ยกเลิกเอกสาร';
+  if (a.action === 'rejected_qmr_open') return 'QMR ไม่อนุมัติ — ส่งกลับให้ QC Manager ตรวจสอบใหม่';
   if (a.role === 'qc_supervisor') {
     return ncr?.severity === 'minor' ? 'หัวหน้า QC อนุมัติปิด NCP' : 'หัวหน้า QC ตรวจสอบ NCR';
   }
@@ -123,7 +124,7 @@ function ApprovalTimeline({ approvals, ncr }) {
         const approvalIdx = approvalEvents.findIndex(ae => ae.data.id === a.id);
         const processLabel = getProcessLabel(a, approvalEvents.map(ae => ae.data), approvalIdx, ncr);
         const showDisposition = approvalIdx === firstQcManagerIdx && ncr?.disposition;
-        const isRejection = a.action === 'rejected_response' || a.action === 'rejected_purchasing_review' || a.action === 'rejected_to_staff' || a.action === 'cancelled_staff_revision';
+        const isRejection = a.action === 'rejected_response' || a.action === 'rejected_purchasing_review' || a.action === 'rejected_to_staff' || a.action === 'cancelled_staff_revision' || a.action === 'rejected_qmr_open';
         const isResubmit = a.action === 'resubmit' || a.action === 'staff_resubmit';
 
         return (
@@ -320,6 +321,13 @@ export default function NCRDetail() {
     onSuccess: () => { qc.invalidateQueries(['ncr', id]); setRejectToStaffOpen(false); setRejectToStaffComment(''); setRejectToStaffError(''); },
     onError: (err) => setRejectToStaffError(err.response?.data?.error || err.message || 'เกิดข้อผิดพลาด'),
   });
+  // S166 — QMR "ไม่อนุมัติ" ย้อนกลับแค่ 1 ขั้นไปหา QC Manager (คนละ endpoint จาก rejectToStaff/S161 เดิม) —
+  // ใช้ modal/state เดิมของปุ่ม "ไม่อนุมัติ" ร่วมกัน (rejectToStaffOpen/Comment/Error) แค่สลับ mutation ตาม role
+  const rejectQmrOpen = useMutation({
+    mutationFn: () => api.post(`/ncr/${id}/reject-qmr-open`, { comment: rejectToStaffComment }),
+    onSuccess: () => { qc.invalidateQueries(['ncr', id]); setRejectToStaffOpen(false); setRejectToStaffComment(''); setRejectToStaffError(''); },
+    onError: (err) => setRejectToStaffError(err.response?.data?.error || err.message || 'เกิดข้อผิดพลาด'),
+  });
   const saveStaffRevision = useMutation({
     mutationFn: () => api.patch(`/ncr/${id}/staff-revision`, { items: staffRevisionItems }),
     onSuccess: () => { qc.invalidateQueries(['ncr', id]); setStaffRevisionItems(null); },
@@ -504,9 +512,16 @@ export default function NCRDetail() {
               ไม่อนุมัติ
             </Button>
           )}
+          {/* S165/S166 — ที่ QMR แสดงเป็นคู่ "อนุมัติ/ไม่อนุมัติ" แทน (role อื่นยังคง "ส่งกลับแก้ไข (QC รับเข้า)"
+              ไว้) — ต่างจาก role อื่นตรงที่ QMR "ไม่อนุมัติ" ย้อนกลับแค่ 1 ขั้นไปหา QC Manager (rejectQmrOpen,
+              คนละ endpoint) ไม่ได้ข้ามไปถึง QC รับเข้าเหมือน role อื่น — เปิด modal เดิมร่วมกัน แค่ submit
+              ไปคนละ mutation ตาม role (ดู onClick ของปุ่ม "ยืนยัน" ใน modal ด้านล่าง) */}
           {canRejectToStaff && (
-            <Button variant="warning" onClick={() => { setRejectToStaffComment(''); setRejectToStaffError(''); setRejectToStaffOpen(true); }}>
-              ส่งกลับแก้ไข (QC รับเข้า)
+            <Button
+              variant={user?.role === 'qmr' ? 'danger' : 'warning'}
+              onClick={() => { setRejectToStaffComment(''); setRejectToStaffError(''); setRejectToStaffOpen(true); }}
+            >
+              {user?.role === 'qmr' ? 'ไม่อนุมัติ' : 'ส่งกลับแก้ไข (QC รับเข้า)'}
             </Button>
           )}
           {canApprove && <Button variant="success" onClick={() => setConfirmApprove(true)}>{approveLabel}</Button>}
@@ -1138,15 +1153,17 @@ export default function NCRDetail() {
         </div>
       </Modal>
 
-      {/* Modal: ส่งกลับให้ QC รับเข้าแก้ไขข้อมูล item (S161) — กดได้จากทุกขั้นก่อนถึง Supplier */}
-      <Modal open={rejectToStaffOpen} onClose={() => setRejectToStaffOpen(false)} title="ส่งกลับให้ QC รับเข้าแก้ไข" size="sm">
+      {/* Modal: ส่งกลับแก้ไข (S161) — ที่ QMR (S166) เป็น "ไม่อนุมัติ" ย้อนกลับแค่ 1 ขั้นไปหา QC Manager แทน
+          (rejectQmrOpen, คนละ endpoint/ปลายทางจาก role อื่นที่ยังส่งไปถึง QC รับเข้าเหมือนเดิม) */}
+      <Modal open={rejectToStaffOpen} onClose={() => setRejectToStaffOpen(false)} title={user?.role === 'qmr' ? 'ไม่อนุมัติ' : 'ส่งกลับให้ QC รับเข้าแก้ไข'} size="sm">
         <div className="space-y-3">
           <div className="bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded px-3 py-2 text-small text-danger">
-            เอกสารจะถูกส่งกลับไปให้ QC รับเข้าแก้ไขข้อมูล item (กลุ่มปัญหา/รายละเอียด/จำนวน/รูป) — เมื่อแก้ไขและส่งกลับ
-            เข้าระบบใหม่ เอกสารจะต้องผ่านการอนุมัติใหม่ทั้งหมดตั้งแต่ QC Supervisor
+            {user?.role === 'qmr'
+              ? 'เอกสารจะถูกส่งกลับไปให้ QC Manager ตรวจสอบใหม่อีกครั้ง'
+              : 'เอกสารจะถูกส่งกลับไปให้ QC รับเข้าแก้ไขข้อมูล item (กลุ่มปัญหา/รายละเอียด/จำนวน/รูป) — เมื่อแก้ไขและส่งกลับ เข้าระบบใหม่ เอกสารจะต้องผ่านการอนุมัติใหม่ทั้งหมดตั้งแต่ QC Supervisor'}
           </div>
           <div>
-            <label className="label">เหตุผลที่ส่งกลับ *</label>
+            <label className="label">เหตุผลที่{user?.role === 'qmr' ? 'ไม่อนุมัติ' : 'ส่งกลับ'} *</label>
             <textarea
               className="input"
               rows={3}
@@ -1158,7 +1175,11 @@ export default function NCRDetail() {
           {rejectToStaffError && <div className="text-danger text-small bg-red-50 dark:bg-red-900 px-2 py-1 rounded">{rejectToStaffError}</div>}
           <div className="flex gap-2 justify-end">
             <Button variant="secondary" onClick={() => setRejectToStaffOpen(false)}>ยกเลิก</Button>
-            <Button variant="warning" onClick={() => rejectToStaff.mutate()} loading={rejectToStaff.isPending}>ยืนยัน — ส่งกลับแก้ไข</Button>
+            {user?.role === 'qmr' ? (
+              <Button variant="danger" onClick={() => rejectQmrOpen.mutate()} loading={rejectQmrOpen.isPending}>ยืนยัน — ไม่อนุมัติ</Button>
+            ) : (
+              <Button variant="warning" onClick={() => rejectToStaff.mutate()} loading={rejectToStaff.isPending}>ยืนยัน — ส่งกลับแก้ไข</Button>
+            )}
           </div>
         </div>
       </Modal>

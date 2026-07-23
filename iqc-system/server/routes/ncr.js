@@ -421,6 +421,20 @@ router.post('/:id/reject-purchasing-review', auth, requireRole(['purchasing_mana
   }
 });
 
+// ===== S166 — QMR ไม่อนุมัติเปิด NCR (pending_qmr_open → pending_manager, ย้อนกลับให้ QC Manager ตรวจสอบใหม่) =====
+router.post('/:id/reject-qmr-open', auth, requireRole(['qmr']), (req, res) => {
+  const ncr = db.prepare('SELECT * FROM ncrs WHERE id = ?').get(req.params.id);
+  if (!ncr) return res.status(404).json({ error: 'ไม่พบ NCR' });
+
+  const { comment } = req.body;
+  try {
+    ncrService.rejectQmrOpen({ ncr, comment, actorId: req.user.id, actorIp: req.ip });
+    res.json({ ok: true, status: 'pending_manager' });
+  } catch (e) {
+    res.status(e.status || 400).json({ error: e.message });
+  }
+});
+
 // ===== S161 — ส่งกลับให้ QC รับเข้าแก้ไขข้อมูล item ได้จากทุกขั้นก่อนถึง Supplier =====
 // POST /api/ncr/:id/reject-to-staff — role ที่กดได้จริงตรวจใน service (STAFF_REJECT_ROLES ตาม status ปัจจุบัน)
 router.post('/:id/reject-to-staff', auth,

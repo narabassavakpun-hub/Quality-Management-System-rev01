@@ -339,6 +339,31 @@ function rejectPurchasingManagerReview({ ncr, comment, actorId, actorIp }) {
   reject();
 }
 
+// ===== S166 — QMR ไม่อนุมัติเปิด NCR (pending_qmr_open → pending_manager, ย้อนกลับไปให้ QC Manager ตรวจสอบใหม่
+// คนละกรณีกับ rejectToStaff/S161 ที่ QMR เคยใช้ก่อนหน้า — user ขอเปลี่ยนให้ QMR "ไม่อนุมัติ" ย้อนกลับแค่ 1 ขั้น
+// ไปหา QC Manager แทนที่จะข้าม manager ไปถึง QC รับเข้าเลย) — pattern เดียวกับ rejectPurchasingManagerReview
+function rejectQmrOpen({ ncr, comment, actorId, actorIp }) {
+  if (ncr.status !== 'pending_qmr_open') throw httpError('ไม่อนุมัติได้เฉพาะสถานะ pending_qmr_open เท่านั้น', 400);
+  if (!comment || !comment.trim()) throw httpError('กรุณาระบุเหตุผลที่ไม่อนุมัติ', 400);
+
+  const reject = db.transaction(() => {
+    const changed = db.prepare("UPDATE ncrs SET status='pending_manager' WHERE id=? AND status='pending_qmr_open'").run(ncr.id);
+    if (changed.changes === 0) throw new Error('เอกสารถูกดำเนินการแล้ว กรุณารีเฟรชหน้า');
+
+    db.prepare('INSERT INTO ncr_approvals (ncr_id, action, role, user_id, comment) VALUES (?, ?, ?, ?, ?)').run(ncr.id, 'rejected_qmr_open', 'qmr', actorId, comment);
+
+    for (const u of getUsersByRole('qc_manager')) {
+      createNotification(u.id, 'NCR ถูกส่งกลับให้ตรวจสอบใหม่', `${ncr.ncr_code} QMR ไม่อนุมัติ — กรุณาตรวจสอบใหม่อีกครั้ง: ${comment}`, `/ncr/${ncr.id}`);
+    }
+    sendTelegram(db.getSetting('telegram_group_qc'),
+      `[IQC] ${ncr.ncr_code}\nQMR ไม่อนุมัติเปิด NCR — ส่งกลับให้ QC Manager ตรวจสอบใหม่\nเหตุผล: ${comment}`
+    );
+
+    db.auditLog('ncrs', ncr.id, 'REJECT_QMR_OPEN', { status: 'pending_qmr_open' }, { status: 'pending_manager', comment }, actorId, actorIp);
+  });
+  reject();
+}
+
 // QC Manager ไม่อนุมัติคำตอบ Supplier (pending_manager_review → pending_supplier_resubmit)
 function rejectSupplierResponse({ ncr, comment, actorId, actorIp }) {
   const reject = db.transaction(() => {
@@ -534,5 +559,5 @@ function correctNcrItemProduct({ ncr, ncrItemId, newProductId, actorId, actorIp 
 module.exports = {
   createNcr, approveNcr, requestUai, purchasingReview, rejectPurchasingManagerReview, rejectSupplierResponse, resubmitToSupplier, getFullNcrItems,
   rejectToStaff, updateNcrItemsAsStaff, resubmitAfterStaffRevision, STAFF_REJECT_ROLES,
-  cancelNcrFromStaffRevision, correctNcrItemProduct,
+  cancelNcrFromStaffRevision, correctNcrItemProduct, rejectQmrOpen,
 };

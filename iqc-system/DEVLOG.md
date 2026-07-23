@@ -4,7 +4,7 @@
 
 ## 📌 Current State (2026-07-23)
 
-**Version:** rev01 · Production · **Latest code:** Session 164 (2026-07-23)
+**Version:** rev01 · Production · **Latest code:** Session 166 (2026-07-23)
 
 **Architecture Summary**
 - Backend: Express 4.18 + better-sqlite3 (WAL, FK ON), **102 ตาราง** (+`environment_presets`, S118; +`supplier_purchasing_assignees`, S125), ~33 route files, SSE + Telegram + **Email/SMTP (S128, `lib/mailer.js`)**, port 3001
@@ -138,6 +138,67 @@
 **Technical Debt / Roadmap:** ดู [`../AUDIT.md`](../AUDIT.md) §12 (Refactor Roadmap) — **P0 ปิดครบแล้ว (S105)**; P1 ปิดครบ; P2 ปิดครบ (S103); เหลือ P3 (horizontal scale, TypeScript) + gap ใหม่ (ipqc_records removal decision, ipqc_inspections test coverage, fgqc reset-all FK gap) + restore-drill ยังไม่ automate ใน CI (ดู AUDIT.md D5) + CLAUDE.md §11 Role Matrix ต้องเพิ่ม purchasing_manager (S125) + purchasing_manager review step (S128)
 
 **เอกสารอ้างอิง:** [`../CLAUDE.md`](../CLAUDE.md) · [`../PRD.md`](../PRD.md) · [`../brand.md`](../brand.md) · [`../design-dashboard.md`](../design-dashboard.md) · [`../testcase.md`](../testcase.md) · [`../AUDIT.md`](../AUDIT.md)
+
+---
+
+## 2026-07-23 | Session 166 — NCR: QMR "ไม่อนุมัติ" ย้อนกลับแค่ 1 ขั้นไปหา QC Manager (คนละกลไกจาก S161/S165)
+
+**คำขอ:** ต่อยอด Session 165 (เปลี่ยน label ปุ่มที่ QMR เป็น "ไม่อนุมัติ") — user ระบุเพิ่มว่าพฤติกรรมจริงต้อง
+เปลี่ยนด้วย ไม่ใช่แค่ label: "เมื่อ QMR ไม่อนุมัติให้ย้อนกลับไปให้ qc manager และให้มีการแจ้งเตือนที่ ID ของ qc
+manager ด้วย" — เดิม (S165 แค่เปลี่ยนสี/label) ปุ่มนี้ยังเรียก endpoint เดิมของ S161 (`reject-to-staff`) ซึ่งข้าม
+QC Manager ไปเลย ส่งตรงถึง QC รับเข้า (`pending_staff_revision`)
+
+**การแก้:** สร้าง endpoint/service function ใหม่แยกเฉพาะ QMR แทนที่จะใช้ตัวเดิม — pattern เดียวกับ
+`rejectPurchasingManagerReview` (ย้อนกลับ 1 ขั้น ไม่ล้างข้อมูลที่กรอกไว้แล้ว) ไม่ใช่ pattern ของ `rejectToStaff`
+(ย้อนไปไกลสุดถึง QC รับเข้า + ล้าง disposition ทั้งหมด):
+- **`services/ncrService.js`**: `rejectQmrOpen()` — `pending_qmr_open → pending_manager` (optimistic lock),
+  บันทึก `ncr_approvals` (action `'rejected_qmr_open'`, role `'qmr'`), **ไม่ล้าง `disposition`** (QC Manager
+  เห็นค่าที่ตั้งไว้เดิม พิจารณาใหม่ได้เลยไม่ต้องกรอกซ้ำ — ตรงกับที่ `rejectPurchasingManagerReview` ทำกับ
+  claim_value/EN), แจ้งเตือนทุกคนที่ role `qc_manager` (`getUsersByRole('qc_manager')`) + Telegram กลุ่ม QC
+- **`routes/ncr.js`**: `POST /:id/reject-qmr-open`, `requireRole(['qmr'])` เท่านั้น (คนละ route จาก
+  `reject-to-staff` เดิมที่ role อื่นยังใช้อยู่)
+- **`NCR/Detail.jsx`**: ปุ่ม/modal เดิมที่ role `qmr` (จาก S165) เปลี่ยนไปเรียก mutation ใหม่นี้แทน — ใช้
+  modal/state UI ร่วมกับปุ่ม "ส่งกลับแก้ไข" เดิม (`rejectToStaffOpen`/`Comment`/`Error`) แค่ branch ว่าจะ submit
+  ไป endpoint ไหนตาม `user?.role === 'qmr'` — ข้อความ warning ใน modal ก็เปลี่ยนตามบริบท ("ส่งกลับให้ QC
+  Manager ตรวจสอบใหม่" แทน "ส่งกลับให้ QC รับเข้าแก้ไข") — เพิ่ม label ใน `getProcessLabel()`/`isRejection`
+  ให้ action `rejected_qmr_open` แสดงผลถูกต้องใน timeline เหมือน action อื่นๆ
+
+**Test:** เพิ่ม GROUP I (QM-01–06) ใน `test/ncrUai.test.js` — permission (เฉพาะ qmr), guard สถานะผิด, บันทึก
+เหตุผลถูกต้อง, **ยืนยันตรงจุดตามคำขอ**: มี notification row ใหม่เกิดขึ้นจริงสำหรับ user role `qc_manager`
+(query ตาราง `notifications` โดยตรง เทียบจำนวนก่อน/หลัง) และ regression ว่า disposition เดิมไม่ถูกล้างหลัง
+ย้อนกลับ + qc_manager อนุมัติต่อได้ปกติ — `npm run build` (client) ผ่าน, `node --test` (server) →
+**432/432 เขียว**
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/services/ncrService.js` | เพิ่ม `rejectQmrOpen()` |
+| `server/routes/ncr.js` | เพิ่ม `POST /:id/reject-qmr-open` |
+| `client/src/pages/NCR/Detail.jsx` | ปุ่ม "ไม่อนุมัติ" ที่ QMR เรียก mutation ใหม่แทน, modal/timeline label ปรับตาม |
+| `server/test/ncrUai.test.js` | เพิ่ม GROUP I (QM-01–06) |
+
+---
+
+## 2026-07-23 | Session 165 — NCR: ปุ่ม "ส่งกลับแก้ไข (QC รับเข้า)" ที่ QMR เปลี่ยน label เป็น "ไม่อนุมัติ"
+
+**คำขอ:** user ขอเฉพาะที่ role QMR — เอาปุ่ม "ส่งกลับแก้ไข (QC รับเข้า)" (S161) ออก เปลี่ยนเป็นคู่ "อนุมัติ/
+ไม่อนุมัติ" แทน (role อื่น เช่น supervisor/manager/purchasing/purchasing_manager ยังคงปุ่มเดิมไว้)
+
+**การแก้:** เป็นแค่ label/สีปุ่ม ไม่แตะ logic เบื้องหลังเลย — `canRejectToStaff` (ปุ่มเดียวกับ S161) ที่
+`NCR/Detail.jsx` เปลี่ยนข้อความเป็น "ไม่อนุมัติ" + สีจาก `warning` เป็น `danger` (ให้เข้าชุดกับปุ่ม "ไม่อนุมัติ"
+อื่นในหน้านี้ เช่น `canRejectResponse`/`canRejectPurchasingReview`) **เฉพาะตอน `user?.role === 'qmr'`** เท่านั้น
+— กดแล้วยังเปิด modal เดิม ("ส่งกลับให้ QC รับเข้าแก้ไข", บังคับกรอกเหตุผล) และยังคงส่ง NCR ไปที่
+`pending_staff_revision` เหมือนเดิมทุกอย่าง — คู่กับปุ่ม "อนุมัติเปิดเอกสาร NCR" (`canApprove`) ที่มีอยู่แล้วเดิม
+ทำให้ QMR เห็นเป็นคู่ อนุมัติ/ไม่อนุมัติ ตามที่ขอ
+
+**Test:** ไม่มี logic backend เปลี่ยน ไม่ต้องเพิ่ม test — `npm run build` (client) ผ่าน
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `client/src/pages/NCR/Detail.jsx` | ปุ่ม reject-to-staff เปลี่ยน label/สีเฉพาะ role qmr เป็น "ไม่อนุมัติ" (danger) |
 
 ---
 

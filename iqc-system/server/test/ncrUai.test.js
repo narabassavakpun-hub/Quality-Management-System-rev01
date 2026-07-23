@@ -658,3 +658,60 @@ test('SR-26 หลังแก้ไขรหัสสินค้า resubmit +
   const ncr = await api('GET', `/api/ncr/${ncrJ}`, { cookie: C.staff });
   assert.equal(ncr.body.items[0].product_code, 'HW-CORRECT-001', 'รหัสสินค้าที่แก้ไขต้องยังคงอยู่หลังผ่านรอบอนุมัติใหม่');
 });
+
+// ================= GROUP I (S166): QMR "ไม่อนุมัติ" ย้อนกลับ 1 ขั้นไปหา QC Manager (คนละกรณีจาก S161) =================
+let ncrK;
+test('QM-01 setup NCR → pending_qmr_open', async () => {
+  const itemK = db.prepare(`INSERT INTO bill_items (bill_id,product_id,item_name,qty_received,qty_sampled,qty_passed,qty_failed,defect_category_id)
+    VALUES (?,?,'สินค้าทดสอบ K',100,10,7,3,?)`).run(bill, prod, dcat).lastInsertRowid;
+  const c = await api('POST', '/api/ncr', { cookie: C.staff, body: { bill_id: bill, severity: 'major', items: ncrItems(itemK) } });
+  ncrK = c.body.id;
+  await api('POST', `/api/ncr/${ncrK}/approve`, { cookie: C.sup, body: {} });
+  const r = await api('POST', `/api/ncr/${ncrK}/approve`, { cookie: C.mgr, body: { disposition: 'rework', disposition_note: 'ซ่อมแซม' } });
+  assert.equal(r.body.status, 'pending_qmr_open');
+});
+
+test('QM-02 reject-qmr-open ไม่ใส่เหตุผล → 400', async () => {
+  const r = await api('POST', `/api/ncr/${ncrK}/reject-qmr-open`, { cookie: C.qmr, body: {} });
+  assert.equal(r.status, 400);
+});
+
+test('QM-03 permission: qc_manager/purchasing เรียก reject-qmr-open ไม่ได้ (เฉพาะ qmr) → 403', async () => {
+  assert.equal((await api('POST', `/api/ncr/${ncrK}/reject-qmr-open`, { cookie: C.mgr, body: { comment: 'x' } })).status, 403);
+  assert.equal((await api('POST', `/api/ncr/${ncrK}/reject-qmr-open`, { cookie: C.pur, body: { comment: 'x' } })).status, 403);
+});
+
+test('QM-04 reject-qmr-open ตอนไม่ได้อยู่สถานะ pending_qmr_open → 400', async () => {
+  const c = await api('POST', '/api/ncr', { cookie: C.staff, body: { bill_id: bill, severity: 'major', items: ncrItems(mkItem()) } });
+  const r = await api('POST', `/api/ncr/${c.body.id}/reject-qmr-open`, { cookie: C.qmr, body: { comment: 'x' } });
+  assert.equal(r.status, 400);
+});
+
+test('QM-05 qmr ไม่อนุมัติ → ย้อนกลับไป pending_manager (ไม่ใช่ pending_staff_revision) + บันทึกเหตุผลใน approvals + แจ้งเตือน qc_manager', async () => {
+  const mgrUserId = uid('manager1');
+  const before = db.prepare('SELECT COUNT(*) AS c FROM notifications WHERE user_id = ?').get(mgrUserId).c;
+
+  const r = await api('POST', `/api/ncr/${ncrK}/reject-qmr-open`, { cookie: C.qmr, body: { comment: 'disposition ยังไม่เหมาะสม กรุณาพิจารณาใหม่' } });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.status, 'pending_manager');
+
+  const ncr = await api('GET', `/api/ncr/${ncrK}`, { cookie: C.staff });
+  assert.equal(ncr.body.status, 'pending_manager');
+  const approval = ncr.body.approvals.find(a => a.action === 'rejected_qmr_open');
+  assert.ok(approval, 'ต้องมี approval record ของการไม่อนุมัติ');
+  assert.equal(approval.role, 'qmr');
+  assert.equal(approval.comment, 'disposition ยังไม่เหมาะสม กรุณาพิจารณาใหม่');
+
+  const notif = db.prepare('SELECT title, message FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1').get(mgrUserId);
+  const after = db.prepare('SELECT COUNT(*) AS c FROM notifications WHERE user_id = ?').get(mgrUserId).c;
+  assert.equal(after, before + 1, 'qc_manager ต้องได้รับ notification ใหม่ 1 รายการ');
+  assert.match(notif.message, /disposition ยังไม่เหมาะสม/);
+});
+
+test('QM-06 หลังย้อนกลับแล้ว qc_manager อนุมัติต่อได้ปกติ (state machine ไม่พัง, disposition เดิมยังอยู่)', async () => {
+  const r = await api('POST', `/api/ncr/${ncrK}/approve`, { cookie: C.mgr, body: {} });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.status, 'pending_qmr_open');
+  const ncr = await api('GET', `/api/ncr/${ncrK}`, { cookie: C.staff });
+  assert.equal(ncr.body.disposition, 'rework', 'disposition เดิมไม่ถูกล้างตอนย้อนกลับ 1 ขั้น');
+});
