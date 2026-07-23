@@ -4,7 +4,7 @@
 
 ## 📌 Current State (2026-07-23)
 
-**Version:** rev01 · Production · **Latest code:** Session 161 (2026-07-23)
+**Version:** rev01 · Production · **Latest code:** Session 163 (2026-07-23)
 
 **Architecture Summary**
 - Backend: Express 4.18 + better-sqlite3 (WAL, FK ON), **102 ตาราง** (+`environment_presets`, S118; +`supplier_purchasing_assignees`, S125), ~33 route files, SSE + Telegram + **Email/SMTP (S128, `lib/mailer.js`)**, port 3001
@@ -138,6 +138,88 @@
 **Technical Debt / Roadmap:** ดู [`../AUDIT.md`](../AUDIT.md) §12 (Refactor Roadmap) — **P0 ปิดครบแล้ว (S105)**; P1 ปิดครบ; P2 ปิดครบ (S103); เหลือ P3 (horizontal scale, TypeScript) + gap ใหม่ (ipqc_records removal decision, ipqc_inspections test coverage, fgqc reset-all FK gap) + restore-drill ยังไม่ automate ใน CI (ดู AUDIT.md D5) + CLAUDE.md §11 Role Matrix ต้องเพิ่ม purchasing_manager (S125) + purchasing_manager review step (S128)
 
 **เอกสารอ้างอิง:** [`../CLAUDE.md`](../CLAUDE.md) · [`../PRD.md`](../PRD.md) · [`../brand.md`](../brand.md) · [`../design-dashboard.md`](../design-dashboard.md) · [`../testcase.md`](../testcase.md) · [`../AUDIT.md`](../AUDIT.md)
+
+---
+
+## 2026-07-23 | Session 163 — Bug: Bills/New.jsx step 2 เอกสารตรวจเส้นที่เพิ่งเลือกไฟล์ยังไม่ได้อัปโหลด ดูตัวอย่างไม่ได้
+
+**คำขอ:** user รายงาน: หน้าบันทึกบิล step 2 (รายการสินค้า) สำหรับสินค้าประเภทที่ต้องแนบเอกสารตรวจสอบ (เช่น
+เส้น) — พอเลือกไฟล์แล้วขึ้นแค่ชื่อไฟล์ กดดูตัวอย่างไม่ได้ เสี่ยงแนบผิดไฟล์โดยไม่รู้ตัว
+
+**Root cause:** `Bills/New.jsx`'s `docsSection` render มี 2 กลุ่ม — เอกสารที่อัปโหลดไปแล้วจริง (`existingDocs`,
+มี `file_path` บน server) มีลิงก์ `<a href="/uploads/inspection-docs/...">` คลิกดูได้อยู่แล้ว แต่เอกสารที่**เพิ่ง
+เลือกในเครื่อง ยังไม่ได้อัปโหลด** (`newDocs`, เป็น `File` object ในเบราว์เซอร์ล้วนๆ) render เป็น `<span>{f.name}</span>`
+เฉยๆ ไม่มีลิงก์เลย
+
+**การแก้:** ห่อชื่อไฟล์ด้วย `<a href={URL.createObjectURL(f)} target="_blank">` — ใช้ pattern เดียวกับที่ไฟล์นี้
+ใช้อยู่แล้วสำหรับ preview รูปภาพปัญหา (`images_files`, บรรทัด 174/324 เดิม) เปิดแท็บใหม่แสดงไฟล์ (PDF/รูป) ที่
+เลือกไว้จริงก่อน submit ให้ตรวจสอบได้ก่อนว่าเลือกไฟล์ถูกหรือไม่
+
+**Test:** `npm run build` (client) ผ่าน — ไม่มี unit test คลุมหน้านี้อยู่แล้ว (ตรงตาม pattern เดิมของไฟล์)
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `client/src/pages/Bills/New.jsx` | `newDocs` (ไฟล์ที่เพิ่งเลือก ยังไม่อัปโหลด) เพิ่มลิงก์ `URL.createObjectURL()` ให้คลิกดูตัวอย่างได้ |
+
+---
+
+## 2026-07-23 | Session 162 — NCR: ยกเลิกเอกสารได้ตอน pending_staff_revision + แก้ไขรหัสสินค้าผิดบน bill_item
+
+**คำขอ:** ต่อยอด Session 161 — user รายงานเคสจริง: ตอนรับเข้าลงรหัสสินค้าผิด แล้วออกเอกสาร NCR จากรหัสผิดนั้น
+ทำให้ "ทุกอย่างผิดหมดเลย" ต้องการ **ยกเลิก NCR ฉบับนั้นเพื่อออกเอกสารใหม่** — ใช้ Plan Mode วิเคราะห์ก่อนแก้เพราะ
+กระทบ NCR state machine (แกน ISO compliance) และพบว่าการยกเลิกอย่างเดียวไม่พอจริง (ดูหัวข้อ "สิ่งที่ตรวจพบ")
+
+**สิ่งที่ตรวจพบระหว่าง Plan Mode (ผ่าน Explore agent 2 ตัวคู่ขนาน):**
+- มี route `DELETE /api/ncr/:id` อยู่แล้วแต่เป็น **hard delete**, เฉพาะสถานะ `pending_supervisor` + ต้องเป็น
+  ผู้สร้างเอกสารเองเท่านั้น, ไม่มี notification เลย, ไม่มี service function (logic อยู่ใน route ตรงๆ), และ
+  **ไม่มี UI ไหนเรียกใช้เลย** (dead route) — ตัดสินใจไม่แตะ/ต่อยอด route นี้ เพราะ semantics (hard delete)
+  และ permission model (ผู้สร้างเท่านั้น) ต่างจากที่ต้องการ (soft-cancel, qc_staff/qc_supervisor คนไหนก็ได้
+  เหมือน `canEditStaffRevision` เดิม) — สร้าง endpoint ใหม่แยกต่างหากแทน
+- `ncrs.cancelled_at`/`cancelled_by` **มีอยู่แล้วในสคีมา** และ `'cancelled'` ก็เป็นค่าที่ valid อยู่แล้วใน
+  `VALID_NCR_STATUSES` แถมถูก exclude ไว้ทุกจุดที่เช็ค "item นี้ผูกกับ NCR ที่ active อยู่ไหม" อยู่แล้ว
+  (`routes/ncr.js`'s duplicate check, `routes/bills.js`'s `item.in_ncr`) — แปลว่า soft-cancel ปลดล็อก
+  bill_item ให้ออก NCR ใหม่ได้ทันทีโดยไม่ต้องเพิ่ม logic อะไรเลย ไม่ต้อง migrate schema
+- **ประเด็นสำคัญที่เกือบพลาด**: ยกเลิก+ออก NCR ใหม่เฉยๆ **ไม่ได้แก้ปัญหาจริง** เพราะ NCR ทุกจุด (แสดงผล/PDF/
+  export) live-join ไปที่ `bill_items → products` เสมอ (ไม่ได้ snapshot รหัสสินค้าไว้ที่ `ncr_items`) — ถ้า
+  ไม่แก้ `bill_items.product_id` เดิม NCR ใหม่ที่สร้างจาก bill_item เดิมก็จะยังพารหัสผิดเดิมมาอยู่ดี และ route
+  แก้ `bill_items.product_id` ที่มีอยู่แล้ว (`PATCH /bills/:id/items/:itemId`) ก็ใช้ได้เฉพาะตอน `bill.status
+  === 'draft'` เท่านั้น (บิลที่มี NCR แล้วต้อง `approved` เสมอ) — ไม่มีช่องทางแก้ไขหลังอนุมัติเลย — ถามยืนยัน
+  กับ user แล้วว่าต้องการให้เพิ่มช่องทางแก้ไขนี้ด้วย (ไม่ใช่แค่ยกเลิก)
+
+**การแก้ (ขอบเขตจำกัดตั้งใจ — ไม่ใช่ "แก้ไขบิลที่อนุมัติแล้ว" แบบทั่วไป ผูกกับ workflow `pending_staff_revision`
+เท่านั้น กันขยายผลกระทบ/ความเสี่ยง ตรงตาม CLAUDE.md ที่เน้นความรัดกุมของ audit trail):**
+
+- **`services/ncrService.js`**: `cancelNcrFromStaffRevision()` (mirror `rejectToStaff()` — บังคับเหตุผล,
+  optimistic lock, `ncr_approvals` action `'cancelled_staff_revision'`, audit, แจ้ง `created_by`+`qc_supervisor`
+  ทุกคน+Telegram) และ `correctNcrItemProduct()` (แก้ `bill_items.product_id`+`item_name` **และ**
+  `ncr_items.item_name` ในธุรกรรมเดียว กันข้อมูล denormalize ไม่ตรงกัน — บล็อกถ้า `bill_item_id IS NULL`
+  เพราะ NCR สร้างแบบไม่อ้างอิงบิลได้ ไม่ใช่แค่ UI ซ่อนเฉยๆ) — เพิ่ม `bi.product_id as bill_item_product_id`
+  ใน `getFullNcrItems()` ให้ client pre-populate ตัวเลือกปัจจุบันได้
+- **`routes/ncr.js`**: `POST /:id/cancel-staff-revision`, `PATCH /:id/staff-revision/item-product` (ทั้งคู่ gate
+  `qc_staff`/`qc_supervisor`) + เพิ่ม `b.supplier_id as bill_supplier_id` ใน `GET /:id` ให้ client กรอง dropdown
+  สินค้าตาม supplier ของบิลนี้ได้
+- **`NCR/Detail.jsx`**: ปุ่ม "ยกเลิก NCR ฉบับนี้" (แดง, บังคับกรอกเหตุผล, เตือนว่าย้อนกลับไม่ได้) คู่กับปุ่ม
+  "ส่งกลับเข้าระบบ" เดิม ในการ์ดแก้ไขข้อมูล item — และ dropdown เลือกสินค้าใหม่ (reuse `SearchableSelect`
+  component เดิมที่ `Bills/New.jsx` ใช้อยู่แล้ว ไม่สร้างใหม่) ต่อ item ที่มี `bill_item_id` เท่านั้น — คอมมิต
+  ทันทีตอนเลือก (แยก mutation จากปุ่ม "บันทึกการแก้ไข" เดิม เพราะแตะคนละตาราง/ความเสี่ยงคนละระดับ ควรมี audit
+  trail แยกจากกันชัดเจน) — เพิ่ม label ใน `getProcessLabel()`/`ApprovalTimeline` ให้ action ใหม่ทั้งหมด (รวม
+  `rejected_to_staff`/`staff_resubmit` จาก S161 ที่ไม่เคยมี label เฉพาะมาก่อน เดิม fallback โชว์แค่ชื่อ role)
+
+**Test:** เพิ่ม GROUP G (SR-14–19b, ยกเลิก) และ GROUP H (SR-20–26, แก้ไขรหัสสินค้า) ใน `test/ncrUai.test.js` —
+ครอบ permission/status guard ทุกจุด, บันทึกข้อมูลถูกต้อง, **regression ยืนยันตรงจุด**: หลังยกเลิกแล้ว bill_item
+เดิมออก NCR ใหม่ได้จริง (SR-19b) และหลังแก้รหัสสินค้าแล้ว resubmit+อนุมัติต่อได้ปกติไม่มี join พัง (SR-26) —
+`npm run build` (client) ผ่าน, `node --test` (server) → **421/421 เขียว**
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/services/ncrService.js` | เพิ่ม `cancelNcrFromStaffRevision()`, `correctNcrItemProduct()`; ขยาย `getFullNcrItems()` |
+| `server/routes/ncr.js` | เพิ่ม `POST /:id/cancel-staff-revision`, `PATCH /:id/staff-revision/item-product`; ขยาย `GET /:id` |
+| `client/src/pages/NCR/Detail.jsx` | ปุ่ม+modal ยกเลิก, dropdown แก้ไขรหัสสินค้า (SearchableSelect), label timeline ใหม่ |
+| `server/test/ncrUai.test.js` | เพิ่ม GROUP G (SR-14–19b) + GROUP H (SR-20–26) |
 
 ---
 

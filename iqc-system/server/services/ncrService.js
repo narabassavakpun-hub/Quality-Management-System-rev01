@@ -10,9 +10,11 @@ const { buildNcrInfoHtml, buildNcrInfoText } = require('../lib/ncrEmailTemplate'
 function httpError(message, status) { const e = new Error(message); e.status = status; return e; }
 
 // NCR items พร้อมรหัสสินค้า (join ผ่าน bill_item_id → products เหมือน exports.js PDF) — ใช้ทั้ง GET /ncr/:id และอีเมลแจ้ง COO
+// bill_item_product_id (S162) — product_id ปัจจุบันของ bill_item ที่ผูกอยู่ ใช้ pre-populate ตัวเลือกสินค้าตอน
+// แก้ไขรหัสสินค้าผิด (correctNcrItemProduct) ไม่ต้อง query แยก
 function getFullNcrItems(ncrId) {
   return db.prepare(`
-    SELECT ni.*, dc.name as defect_category_name, p.code as product_code
+    SELECT ni.*, dc.name as defect_category_name, p.code as product_code, bi.product_id as bill_item_product_id
     FROM ncr_items ni
     LEFT JOIN defect_categories dc ON dc.id = ni.defect_category_id
     LEFT JOIN bill_items bi ON bi.id = ni.bill_item_id
@@ -474,7 +476,63 @@ function resubmitAfterStaffRevision({ ncr, actorId, actorRole, actorIp }) {
   resubmit();
 }
 
+// ===== S162 — ยกเลิก NCR ทั้งฉบับตอนสถานะ pending_staff_revision (คนละกรณีกับ DELETE /:id เดิมที่ hard-delete
+// เฉพาะ pending_supervisor+ผู้สร้างเท่านั้น ไม่ใช้ route นั้นตรงนี้เพราะ semantics/permission ต่างกัน) — ใช้เมื่อ
+// เอกสารทั้งฉบับผิดตั้งแต่ต้น (เช่น ออกจากรหัสสินค้าผิด) ต้องเริ่มใหม่ทั้งฉบับ ไม่ใช่แค่แก้ไขข้อมูล item
+function cancelNcrFromStaffRevision({ ncr, actorId, actorRole, actorIp, comment }) {
+  if (ncr.status !== 'pending_staff_revision') throw httpError('ยกเลิกได้เฉพาะสถานะ "ส่งกลับแก้ไข" เท่านั้น', 400);
+  if (!comment || !comment.trim()) throw httpError('กรุณาระบุเหตุผลที่ยกเลิก', 400);
+
+  const cancel = db.transaction(() => {
+    const changed = db.prepare(
+      "UPDATE ncrs SET status='cancelled', cancelled_at=datetime('now'), cancelled_by=? WHERE id=? AND status='pending_staff_revision'"
+    ).run(actorId, ncr.id);
+    if (changed.changes === 0) throw new Error('เอกสารถูกดำเนินการแล้ว กรุณารีเฟรชหน้า');
+
+    db.prepare('INSERT INTO ncr_approvals (ncr_id, action, role, user_id, comment) VALUES (?, ?, ?, ?, ?)').run(ncr.id, 'cancelled_staff_revision', actorRole, actorId, comment);
+
+    const targets = new Set([ncr.created_by, ...getUsersByRole('qc_supervisor').map(u => u.id)]);
+    for (const uid of targets) {
+      createNotification(uid, 'NCR ถูกยกเลิก', `${ncr.ncr_code} ถูกยกเลิกระหว่างขั้นตอนแก้ไขข้อมูล — ${comment}`, `/ncr/${ncr.id}`);
+    }
+    sendTelegram(db.getSetting('telegram_group_qc'), `[IQC] ${ncr.ncr_code}\nถูกยกเลิกระหว่างขั้นตอนแก้ไขข้อมูล QC\nเหตุผล: ${comment}`);
+
+    db.auditLog('ncrs', ncr.id, 'CANCEL', { status: 'pending_staff_revision' }, { status: 'cancelled', comment }, actorId, actorIp);
+  });
+  cancel();
+}
+
+// ===== S162 — แก้ไขรหัสสินค้า (product_id) ของ bill_item ที่ผูกกับ item นี้ ตอนสถานะ pending_staff_revision
+// เท่านั้น (จงใจไม่ใช่ "แก้ไขบิลที่อนุมัติแล้ว" แบบทั่วไป — ผูกกับ workflow นี้เพื่อจำกัดขอบเขต/ความเสี่ยงตาม
+// แนวทาง compliance ของระบบ) แก้ทั้ง bill_items (ต้นทาง, มีผลกับทุก NCR ในอนาคตที่อ้าง bill_item นี้) และ
+// ncr_items.item_name (สำเนาที่ denormalize ไว้ ต้องอัปเดตพร้อมกันไม่งั้นจะไม่ตรงกันทันที) ในธุรกรรมเดียว —
+// แยก function ต่างหากจาก updateNcrItemsAsStaff โดยตั้งใจ (คนละความเสี่ยง/audit trail คนละเรื่อง)
+function correctNcrItemProduct({ ncr, ncrItemId, newProductId, actorId, actorIp }) {
+  if (ncr.status !== 'pending_staff_revision') throw httpError('แก้ไขรหัสสินค้าได้เฉพาะตอนสถานะ "ส่งกลับแก้ไข" เท่านั้น', 400);
+  if (!newProductId) throw httpError('กรุณาเลือกสินค้า', 400);
+
+  const item = db.prepare('SELECT * FROM ncr_items WHERE id = ? AND ncr_id = ?').get(ncrItemId, ncr.id);
+  if (!item) throw httpError('ไม่พบรายการ item นี้ใน NCR', 400);
+  if (!item.bill_item_id) throw httpError('รายการนี้ไม่ได้ผูกกับ bill_item (สร้างแบบไม่อ้างอิงบิล) แก้ไขรหัสสินค้าไม่ได้', 400);
+
+  const product = db.prepare('SELECT id, name FROM products WHERE id = ?').get(newProductId);
+  if (!product) throw httpError('ไม่พบสินค้าที่เลือก', 400);
+
+  const correct = db.transaction(() => {
+    const before = db.prepare('SELECT product_id, item_name FROM bill_items WHERE id = ?').get(item.bill_item_id);
+
+    db.prepare('UPDATE bill_items SET product_id=?, item_name=? WHERE id=?').run(product.id, product.name, item.bill_item_id);
+    db.prepare('UPDATE ncr_items SET item_name=? WHERE id=?').run(product.name, item.id);
+
+    db.auditLog('bill_items', item.bill_item_id, 'CORRECT_PRODUCT', before, { product_id: product.id, item_name: product.name }, actorId, actorIp);
+    db.auditLog('ncr_items', item.id, 'UPDATE', { item_name: item.item_name }, { item_name: product.name }, actorId, actorIp);
+  });
+  correct();
+  return { product_id: product.id, product_name: product.name };
+}
+
 module.exports = {
   createNcr, approveNcr, requestUai, purchasingReview, rejectPurchasingManagerReview, rejectSupplierResponse, resubmitToSupplier, getFullNcrItems,
   rejectToStaff, updateNcrItemsAsStaff, resubmitAfterStaffRevision, STAFF_REJECT_ROLES,
+  cancelNcrFromStaffRevision, correctNcrItemProduct,
 };

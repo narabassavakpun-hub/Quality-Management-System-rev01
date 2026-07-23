@@ -258,8 +258,11 @@ function ItemRow({ item, index, products, defectCategories, onChange, onDelete, 
         </label>
         {newDocs.map((f, fi) => (
           <div key={`new-${fi}`} className="flex items-center gap-1 bg-green-50 dark:bg-green-900 border border-success rounded px-1.5 py-1">
-            <svg className="w-3 h-3 text-success shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M4 18h12V6l-4-4H4v16zm8-14 2 2h-2V4z"/></svg>
-            <span className="text-[12px] text-success truncate">{f.name}</span>
+            <a href={URL.createObjectURL(f)} target="_blank" rel="noreferrer"
+              className="flex items-center gap-1 flex-1 min-w-0" title="ดูตัวอย่างไฟล์ที่เลือก">
+              <svg className="w-3 h-3 text-success shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M4 18h12V6l-4-4H4v16zm8-14 2 2h-2V4z"/></svg>
+              <span className="text-[12px] text-success truncate underline decoration-dotted">{f.name}</span>
+            </a>
           </div>
         ))}
         {existingDocs.map((doc, di) => (

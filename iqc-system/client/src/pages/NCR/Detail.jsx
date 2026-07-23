@@ -8,6 +8,7 @@ import Button from '../../components/UI/Button';
 import Modal from '../../components/UI/Modal';
 import ConfirmDialog from '../../components/UI/ConfirmDialog';
 import ImageUploadPair from '../../components/UI/ImageUploadPair';
+import SearchableSelect from '../../components/UI/SearchableSelect';
 import { ncrDisplayStatusKey } from '../../utils/rolePermissions';
 
 const DISPOSITION_LABELS = {
@@ -22,6 +23,9 @@ function getProcessLabel(a, approvals, i, ncr) {
   if (a.action === 'rejected_response') return 'QC Manager ไม่อนุมัติคำตอบ Supplier';
   if (a.action === 'rejected_purchasing_review') return 'ผู้จัดการจัดซื้อไม่อนุมัติ Review';
   if (a.action === 'resubmit') return 'จัดซื้อส่ง Supplier ตอบใหม่';
+  if (a.action === 'rejected_to_staff') return 'ส่งกลับให้ QC รับเข้าแก้ไขข้อมูล';
+  if (a.action === 'staff_resubmit') return 'QC รับเข้าแก้ไขแล้ว ส่งกลับเข้าระบบ';
+  if (a.action === 'cancelled_staff_revision') return 'ยกเลิกเอกสาร';
   if (a.role === 'qc_supervisor') {
     return ncr?.severity === 'minor' ? 'หัวหน้า QC อนุมัติปิด NCP' : 'หัวหน้า QC ตรวจสอบ NCR';
   }
@@ -119,8 +123,8 @@ function ApprovalTimeline({ approvals, ncr }) {
         const approvalIdx = approvalEvents.findIndex(ae => ae.data.id === a.id);
         const processLabel = getProcessLabel(a, approvalEvents.map(ae => ae.data), approvalIdx, ncr);
         const showDisposition = approvalIdx === firstQcManagerIdx && ncr?.disposition;
-        const isRejection = a.action === 'rejected_response' || a.action === 'rejected_purchasing_review';
-        const isResubmit = a.action === 'resubmit';
+        const isRejection = a.action === 'rejected_response' || a.action === 'rejected_purchasing_review' || a.action === 'rejected_to_staff' || a.action === 'cancelled_staff_revision';
+        const isResubmit = a.action === 'resubmit' || a.action === 'staff_resubmit';
 
         return (
           <div key={a.id} className="flex gap-3">
@@ -187,6 +191,10 @@ export default function NCRDetail() {
   const [rejectToStaffComment, setRejectToStaffComment] = useState('');
   const [rejectToStaffError, setRejectToStaffError] = useState('');
   const [staffRevisionItems, setStaffRevisionItems] = useState(null); // null = ยังไม่ได้เปิดแก้ไข
+  // S162 — ยกเลิก NCR ทั้งฉบับตอน pending_staff_revision (เช่น ออกจากรหัสสินค้าผิดตั้งแต่ต้น)
+  const [cancelStaffRevisionOpen, setCancelStaffRevisionOpen] = useState(false);
+  const [cancelStaffRevisionComment, setCancelStaffRevisionComment] = useState('');
+  const [cancelStaffRevisionError, setCancelStaffRevisionError] = useState('');
 
   const { data: ncr, isLoading } = useQuery({
     queryKey: ['ncr', id],
@@ -195,6 +203,13 @@ export default function NCRDetail() {
   // S161 — ตัวเลือกกลุ่มปัญหาสำหรับฟอร์มแก้ไข item ตอน pending_staff_revision
   const { data: defectCatsRes } = useQuery({ queryKey: ['defect-categories'], queryFn: () => api.get('/master/defect-categories').then(r => r.data) });
   const defectCategories = defectCatsRes?.data ?? defectCatsRes ?? [];
+  // S162 — ตัวเลือกสินค้าสำหรับแก้ไขรหัสสินค้าผิด (เฉพาะตอนเปิดแก้ไข ลดคำขอที่ไม่จำเป็น) กรองตาม supplier ของบิลนี้
+  const { data: productsRes } = useQuery({
+    queryKey: ['products', ncr?.bill_supplier_id],
+    queryFn: () => api.get('/master/products', { params: { supplier_id: ncr.bill_supplier_id } }).then(r => r.data),
+    enabled: !!ncr?.bill_supplier_id && staffRevisionItems !== null,
+  });
+  const products = Array.isArray(productsRes) ? productsRes : (productsRes?.data ?? []);
 
   const approve = useMutation({
     mutationFn: () => {
@@ -312,6 +327,21 @@ export default function NCRDetail() {
   const resubmitStaffRevision = useMutation({
     mutationFn: () => api.post(`/ncr/${id}/resubmit-staff-revision`),
     onSuccess: () => { qc.invalidateQueries(['ncr', id]); setStaffRevisionItems(null); },
+  });
+  // S162 — ยกเลิก NCR ทั้งฉบับตอน pending_staff_revision
+  const cancelStaffRevision = useMutation({
+    mutationFn: () => api.post(`/ncr/${id}/cancel-staff-revision`, { comment: cancelStaffRevisionComment }),
+    onSuccess: () => { qc.invalidateQueries(['ncr', id]); setCancelStaffRevisionOpen(false); setCancelStaffRevisionComment(''); setCancelStaffRevisionError(''); },
+    onError: (err) => setCancelStaffRevisionError(err.response?.data?.error || err.message || 'เกิดข้อผิดพลาด'),
+  });
+  // S162 — แก้ไขรหัสสินค้าของ bill_item ที่ผูกกับ item นี้ — คอมมิตทันทีตอนเลือก (แยกจาก saveStaffRevision
+  // เพราะแตะ bill_items ไม่ใช่แค่ ncr_items เอง เป็นคนละความเสี่ยง/audit trail)
+  const correctProduct = useMutation({
+    mutationFn: ({ ncrItemId, productId }) => api.patch(`/ncr/${id}/staff-revision/item-product`, { ncr_item_id: ncrItemId, product_id: productId }),
+    onSuccess: (_res, vars) => {
+      qc.invalidateQueries(['ncr', id]);
+      setStaffRevisionItems(prev => prev && prev.map(p => (p.id === vars.ncrItemId ? { ...p, product_id: vars.productId } : p)));
+    },
   });
   // ใช้ endpoint เดิมของรูป NCR (ไม่เคย gate ด้วย status อยู่แล้ว) — เพิ่มเข้ามาแค่ UI ให้กดใช้ได้จากหน้านี้
   const uploadNcrImages = useMutation({
@@ -661,6 +691,7 @@ export default function NCRDetail() {
               <Button variant="secondary" size="sm" onClick={() => setStaffRevisionItems(ncr.items.map(i => ({
                 id: i.id, qty_received: i.qty_received, qty_sampled: i.qty_sampled, qty_failed: i.qty_failed,
                 defect_category_id: i.defect_category_id ?? '', defect_detail: i.defect_detail || '',
+                product_id: i.bill_item_product_id ?? '', bill_item_id: i.bill_item_id,
               })))}>
                 แก้ไขข้อมูล
               </Button>
@@ -675,6 +706,20 @@ export default function NCRDetail() {
                 return (
                   <div key={item.id} className="border border-border rounded-lg p-3 space-y-2">
                     <div className="font-medium text-body">{orig?.item_name}</div>
+                    {item.bill_item_id && (
+                      <div>
+                        <label className="label">สินค้า (แก้ไขรหัสสินค้าได้ถ้าตรวจพบว่าลงผิดตอนรับเข้า)</label>
+                        <SearchableSelect
+                          options={products.map(p => ({ value: p.id, label: p.code ? `[${p.code}] ${p.name}` : p.name }))}
+                          value={item.product_id}
+                          onChange={val => correctProduct.mutate({ ncrItemId: item.id, productId: val })}
+                          placeholder="ค้นหาสินค้า..."
+                        />
+                        {correctProduct.isPending && correctProduct.variables?.ncrItemId === item.id && (
+                          <p className="text-[11px] text-muted mt-1">กำลังบันทึก...</p>
+                        )}
+                      </div>
+                    )}
                     <div className="grid grid-cols-3 gap-2">
                       <div>
                         <label className="label">รับเข้า</label>
@@ -734,10 +779,15 @@ export default function NCRDetail() {
           </div>
 
           <div className="mt-4 pt-3 border-t border-border flex items-center justify-between flex-wrap gap-2">
-            <p className="text-small text-muted">เมื่อแก้ไขครบแล้ว กดส่งกลับเข้าระบบเพื่อเริ่มอนุมัติใหม่ตั้งแต่ QC Supervisor</p>
-            <Button variant="success" onClick={() => resubmitStaffRevision.mutate()} loading={resubmitStaffRevision.isPending}>
-              ส่งกลับเข้าระบบ (เริ่มอนุมัติใหม่)
+            <Button variant="danger" size="sm" onClick={() => { setCancelStaffRevisionComment(''); setCancelStaffRevisionError(''); setCancelStaffRevisionOpen(true); }}>
+              ยกเลิก NCR ฉบับนี้
             </Button>
+            <div className="flex items-center gap-3 flex-wrap justify-end">
+              <p className="text-small text-muted">เมื่อแก้ไขครบแล้ว กดส่งกลับเข้าระบบเพื่อเริ่มอนุมัติใหม่ตั้งแต่ QC Supervisor</p>
+              <Button variant="success" onClick={() => resubmitStaffRevision.mutate()} loading={resubmitStaffRevision.isPending}>
+                ส่งกลับเข้าระบบ (เริ่มอนุมัติใหม่)
+              </Button>
+            </div>
           </div>
         </div>
       )}
@@ -1109,6 +1159,31 @@ export default function NCRDetail() {
           <div className="flex gap-2 justify-end">
             <Button variant="secondary" onClick={() => setRejectToStaffOpen(false)}>ยกเลิก</Button>
             <Button variant="warning" onClick={() => rejectToStaff.mutate()} loading={rejectToStaff.isPending}>ยืนยัน — ส่งกลับแก้ไข</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Modal: ยกเลิก NCR ทั้งฉบับตอน pending_staff_revision (S162) */}
+      <Modal open={cancelStaffRevisionOpen} onClose={() => setCancelStaffRevisionOpen(false)} title="ยกเลิก NCR ฉบับนี้" size="sm">
+        <div className="space-y-3">
+          <div className="bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded px-3 py-2 text-small text-danger">
+            เอกสารทั้งฉบับจะถูกยกเลิก (ย้อนกลับไม่ได้) — ใช้เมื่อข้อมูลผิดตั้งแต่ต้น (เช่น ออกจากรหัสสินค้าผิด) จนต้องออกเอกสาร
+            NCR ใหม่แทน หลังยกเลิกแล้วสามารถออก NCR ใหม่จากรายการสินค้าเดิมได้ทันที
+          </div>
+          <div>
+            <label className="label">เหตุผลที่ยกเลิก *</label>
+            <textarea
+              className="input"
+              rows={3}
+              value={cancelStaffRevisionComment}
+              onChange={e => setCancelStaffRevisionComment(e.target.value)}
+              placeholder="ระบุเหตุผลที่ยกเลิกเอกสารนี้"
+            />
+          </div>
+          {cancelStaffRevisionError && <div className="text-danger text-small bg-red-50 dark:bg-red-900 px-2 py-1 rounded">{cancelStaffRevisionError}</div>}
+          <div className="flex gap-2 justify-end">
+            <Button variant="secondary" onClick={() => setCancelStaffRevisionOpen(false)}>ปิด</Button>
+            <Button variant="danger" onClick={() => cancelStaffRevision.mutate()} loading={cancelStaffRevision.isPending}>ยืนยัน — ยกเลิกเอกสาร</Button>
           </div>
         </div>
       </Modal>

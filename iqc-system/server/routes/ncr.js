@@ -144,7 +144,7 @@ router.get('/:id', auth, (req, res) => {
   const ncr = db.prepare(`
     SELECT n.*, s.name as supplier_name, b.invoice_no as bill_invoice, b.po_no as bill_po,
            b.received_date as bill_received_date, bu.full_name as bill_received_by_name,
-           u.full_name as created_by_name
+           u.full_name as created_by_name, b.supplier_id as bill_supplier_id
     FROM ncrs n
     LEFT JOIN bills b ON b.id = n.bill_id
     LEFT JOIN suppliers s ON s.id = b.supplier_id
@@ -463,6 +463,36 @@ router.post('/:id/resubmit-staff-revision', auth, requireRole(['qc_staff', 'qc_s
   try {
     ncrService.resubmitAfterStaffRevision({ ncr, actorId: req.user.id, actorRole: req.user.role, actorIp: req.ip });
     res.json({ ok: true, status: 'pending_supervisor' });
+  } catch (e) {
+    res.status(e.status || 400).json({ error: e.message });
+  }
+});
+
+// ===== S162 — ยกเลิก NCR ทั้งฉบับตอน pending_staff_revision (เช่น ออกจากรหัสสินค้าผิดตั้งแต่ต้น) =====
+// POST /api/ncr/:id/cancel-staff-revision
+router.post('/:id/cancel-staff-revision', auth, requireRole(['qc_staff', 'qc_supervisor']), (req, res) => {
+  const ncr = db.prepare('SELECT * FROM ncrs WHERE id = ?').get(req.params.id);
+  if (!ncr) return res.status(404).json({ error: 'ไม่พบ NCR' });
+
+  const { comment } = req.body;
+  try {
+    ncrService.cancelNcrFromStaffRevision({ ncr, actorId: req.user.id, actorRole: req.user.role, actorIp: req.ip, comment });
+    res.json({ ok: true, status: 'cancelled' });
+  } catch (e) {
+    res.status(e.status || 400).json({ error: e.message });
+  }
+});
+
+// ===== S162 — แก้ไขรหัสสินค้าของ bill_item ที่ผูกกับ item นี้ ตอน pending_staff_revision เท่านั้น =====
+// PATCH /api/ncr/:id/staff-revision/item-product — body: { ncr_item_id, product_id }
+router.patch('/:id/staff-revision/item-product', auth, requireRole(['qc_staff', 'qc_supervisor']), (req, res) => {
+  const ncr = db.prepare('SELECT * FROM ncrs WHERE id = ?').get(req.params.id);
+  if (!ncr) return res.status(404).json({ error: 'ไม่พบ NCR' });
+
+  const { ncr_item_id, product_id } = req.body;
+  try {
+    const result = ncrService.correctNcrItemProduct({ ncr, ncrItemId: ncr_item_id, newProductId: product_id, actorId: req.user.id, actorIp: req.ip });
+    res.json({ ok: true, ...result, items: ncrService.getFullNcrItems(ncr.id) });
   } catch (e) {
     res.status(e.status || 400).json({ error: e.message });
   }
