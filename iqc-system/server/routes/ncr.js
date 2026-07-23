@@ -421,6 +421,53 @@ router.post('/:id/reject-purchasing-review', auth, requireRole(['purchasing_mana
   }
 });
 
+// ===== S161 — ส่งกลับให้ QC รับเข้าแก้ไขข้อมูล item ได้จากทุกขั้นก่อนถึง Supplier =====
+// POST /api/ncr/:id/reject-to-staff — role ที่กดได้จริงตรวจใน service (STAFF_REJECT_ROLES ตาม status ปัจจุบัน)
+router.post('/:id/reject-to-staff', auth,
+  requireRole(['qc_supervisor', 'qc_manager', 'qmr', 'purchasing', 'purchasing_manager']),
+  (req, res) => {
+    const ncr = db.prepare('SELECT * FROM ncrs WHERE id = ?').get(req.params.id);
+    if (!ncr) return res.status(404).json({ error: 'ไม่พบ NCR' });
+
+    const { comment } = req.body;
+    try {
+      ncrService.rejectToStaff({ ncr, actorId: req.user.id, actorRole: req.user.role, actorIp: req.ip, comment });
+      res.json({ ok: true, status: 'pending_staff_revision' });
+    } catch (e) {
+      res.status(e.status || 400).json({ error: e.message });
+    }
+  });
+
+// PATCH /api/ncr/:id/staff-revision — qc_staff/qc_supervisor แก้ไขข้อมูล item ตอนสถานะ pending_staff_revision
+// body: { items: [{ id, qty_received, qty_sampled, qty_failed, defect_category_id, defect_detail }, ...] }
+router.patch('/:id/staff-revision', auth, requireRole(['qc_staff', 'qc_supervisor']), (req, res) => {
+  const ncr = db.prepare('SELECT * FROM ncrs WHERE id = ?').get(req.params.id);
+  if (!ncr) return res.status(404).json({ error: 'ไม่พบ NCR' });
+
+  const { items } = req.body;
+  try {
+    ncrService.updateNcrItemsAsStaff({ ncr, items, actorId: req.user.id, actorIp: req.ip });
+    res.json({ ok: true, items: ncrService.getFullNcrItems(ncr.id) });
+  } catch (e) {
+    res.status(e.status || 400).json({ error: e.message });
+  }
+});
+
+// POST /api/ncr/:id/resubmit-staff-revision — qc_staff/qc_supervisor ส่งกลับเข้าระบบใหม่หลังแก้ไข
+// (pending_staff_revision → pending_supervisor, เริ่มอนุมัติใหม่ทั้งหมด)
+router.post('/:id/resubmit-staff-revision', auth, requireRole(['qc_staff', 'qc_supervisor']), (req, res) => {
+  const ncr = db.prepare('SELECT * FROM ncrs WHERE id = ?').get(req.params.id);
+  if (!ncr) return res.status(404).json({ error: 'ไม่พบ NCR' });
+  if (ncr.status !== 'pending_staff_revision') return res.status(400).json({ error: 'ส่งกลับเข้าระบบได้เฉพาะสถานะ "ส่งกลับแก้ไข" เท่านั้น' });
+
+  try {
+    ncrService.resubmitAfterStaffRevision({ ncr, actorId: req.user.id, actorRole: req.user.role, actorIp: req.ip });
+    res.json({ ok: true, status: 'pending_supervisor' });
+  } catch (e) {
+    res.status(e.status || 400).json({ error: e.message });
+  }
+});
+
 // ===== POST /api/ncr/:id/regenerate-token — Purchasing รีเจเนอเรต token =====
 router.post('/:id/regenerate-token', auth, requireRole(['purchasing', 'purchasing_manager']), (req, res) => {
   const ncr = db.prepare('SELECT * FROM ncrs WHERE id = ?').get(req.params.id);

@@ -129,6 +129,9 @@ export const STATUS_LABELS = {
   pending_supplier: { label: 'รอ Supplier ตอบ', color: 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200' },
   pending_manager_review: { label: 'รอ Manager ตรวจ', color: 'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200' },
   pending_supplier_resubmit: { label: 'ถูกส่งกลับ — รอ Supplier ตอบใหม่', color: 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-200' },
+  // S161 — ส่งกลับให้ QC รับเข้าแก้ไขข้อมูล item (กลุ่มปัญหา/รายละเอียด/จำนวน/รูป) ได้จากทุกขั้นก่อนถึง Supplier
+  // (supervisor/manager/qmr/purchasing/purchasing_manager) — แก้แล้วส่งใหม่ = เริ่มอนุมัติใหม่ทั้งหมดจาก pending_supervisor
+  pending_staff_revision: { label: 'ส่งกลับแก้ไข (QC รับเข้า)', color: 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-200' },
   pending_qmr_close: { label: 'รอ QMR ปิด', color: 'bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200' },
   pending_uai: { label: 'รอดำเนินการ UAI', color: 'bg-violet-100 dark:bg-violet-900 text-violet-800 dark:text-violet-200' },
   closed: { label: 'ปิดแล้ว', color: 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' },

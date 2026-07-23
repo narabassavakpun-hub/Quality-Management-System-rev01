@@ -4,7 +4,7 @@
 
 ## 📌 Current State (2026-07-23)
 
-**Version:** rev01 · Production · **Latest code:** Session 160 (2026-07-23)
+**Version:** rev01 · Production · **Latest code:** Session 161 (2026-07-23)
 
 **Architecture Summary**
 - Backend: Express 4.18 + better-sqlite3 (WAL, FK ON), **102 ตาราง** (+`environment_presets`, S118; +`supplier_purchasing_assignees`, S125), ~33 route files, SSE + Telegram + **Email/SMTP (S128, `lib/mailer.js`)**, port 3001
@@ -138,6 +138,81 @@
 **Technical Debt / Roadmap:** ดู [`../AUDIT.md`](../AUDIT.md) §12 (Refactor Roadmap) — **P0 ปิดครบแล้ว (S105)**; P1 ปิดครบ; P2 ปิดครบ (S103); เหลือ P3 (horizontal scale, TypeScript) + gap ใหม่ (ipqc_records removal decision, ipqc_inspections test coverage, fgqc reset-all FK gap) + restore-drill ยังไม่ automate ใน CI (ดู AUDIT.md D5) + CLAUDE.md §11 Role Matrix ต้องเพิ่ม purchasing_manager (S125) + purchasing_manager review step (S128)
 
 **เอกสารอ้างอิง:** [`../CLAUDE.md`](../CLAUDE.md) · [`../PRD.md`](../PRD.md) · [`../brand.md`](../brand.md) · [`../design-dashboard.md`](../design-dashboard.md) · [`../testcase.md`](../testcase.md) · [`../AUDIT.md`](../AUDIT.md)
+
+---
+
+## 2026-07-23 | Session 161 — NCR: เพิ่ม status ใหม่ `pending_staff_revision` ให้ส่งกลับแก้ไขได้จากทุกขั้นก่อนถึง Supplier (supervisor→manager→qmr→purchasing→purchasing_manager) กลับไป qc_staff รับเข้า
+
+**คำขอ:** "ปรับให้เอกสาร NCR สามารถส่งกลับแก้ไขได้ตั้งแต่ผู้จัดการจัดซื้อย้อนกลับไปจนถึง qc_staff รับเข้า" — เดิม
+มีแค่ `rejectPurchasingManagerReview` ที่ purchasing_manager กดได้ แต่ส่งกลับแค่ 1 ขั้น (ไปหา purchasing) ไม่ใช่
+ไปถึง qc_staff ที่เป็นต้นตอข้อมูล และไม่มีกลไกแบบนี้เลยที่ขั้นอื่น (supervisor/manager/qmr/purchasing)
+
+**ขอบเขต (ถามและตกลงกับ user ก่อนแก้ เพราะกระทบ NCR state machine ซึ่งเป็นแกน ISO compliance):**
+1. จุดที่กดส่งกลับได้ — **ทุกขั้นตอน**: supervisor/manager/qmr/purchasing/purchasing_manager (ไม่ใช่แค่
+   purchasing_manager ตามคำขอตัวอักษรเป๊ะๆ — user เลือกให้ครอบคลุมกว้างกว่านั้น)
+2. หลัง qc_staff แก้ไขแล้วส่งกลับเข้าระบบ — **เริ่มอนุมัติใหม่ทั้งหมดตั้งแต่ `pending_supervisor`** (ปลอดภัยกว่า
+   ข้ามขั้นที่เคยอนุมัติไปแล้วบนข้อมูลที่เพิ่งแก้ไข)
+3. สิ่งที่แก้ไขได้ — เฉพาะข้อมูล item: กลุ่มปัญหา/รายละเอียด/จำนวน/รูป (ไม่ใช่แค่หมายเหตุ+ส่งกลับเข้าระบบเฉยๆ
+   แบบ Bills reject — ต้องมี edit UI จริง)
+
+**Schema:** เดิมกังวลว่าต้อง rebuild ตาราง `ncrs` (ตาม pattern `migrateNcrAddPendingUai`) แต่พบว่า **`ncrs.status`
+ไม่มี CHECK constraint จริงมาตั้งแต่ DEVMORE H4** (validate ที่ app layer ผ่าน `db.VALID_NCR_STATUSES` แทน) —
+เพิ่ม `'pending_staff_revision'` เข้า Set นั้นที่เดียวพอ ไม่ต้อง migration ใดๆ เลย
+
+**Backend (`services/ncrService.js`):**
+- `STAFF_REJECT_ROLES` — map status ปัจจุบัน → role ที่มีสิทธิ์กดส่งกลับ (คู่กับ `role` ใน `approveNcr`'s
+  transitions map, คนละทิศทางของ action เดียวกัน)
+- `rejectToStaff()` — status ปัจจุบัน → `pending_staff_revision` (optimistic lock) + บันทึกลง `ncr_approvals`
+  (action='rejected_to_staff') + แจ้ง `ncr.created_by` + `getReceivingQCStaff()` (กลุ่ม qc_staff สถานี incoming) + Telegram
+- `updateNcrItemsAsStaff()` — แก้ `ncr_items` (qty_received/qty_sampled/qty_failed/defect_category_id/
+  defect_detail) เฉพาะตอนสถานะ `pending_staff_revision` เท่านั้น — รูปภาพใช้ endpoint เดิม (`POST`/`DELETE
+  /ncr/:id/images`) ที่มีอยู่แล้วและไม่เคย gate ด้วย status (ตรวจแล้ว) ไม่ต้องสร้างใหม่ แค่เพิ่ม UI เรียกใช้
+- `resubmitAfterStaffRevision()` — `pending_staff_revision` → `pending_supervisor` + **เคลียร์
+  disposition/disposition_note/disposition_due_date/disposition_completed_at/disposition_by/
+  effectiveness_*/qmr_opened_at/internal_reminder_last_sent_at ทั้งหมดเป็น NULL** (กันข้อมูลรอบก่อนค้างแสดงผิด
+  ตอนเข้ารอบอนุมัติใหม่ — แต่ละขั้นจะตั้งค่าใหม่สดๆ เองผ่าน `approveNcr` ปกติ) — ทดสอบยืนยันแล้วว่า state
+  machine เดินต่อได้ปกติหลัง resubmit (SR-13)
+
+**Routes (`routes/ncr.js`):** `POST /:id/reject-to-staff` (role ตรวจใน service ตาม status ปัจจุบัน) ·
+`PATCH /:id/staff-revision` (แก้ items) · `POST /:id/resubmit-staff-revision` (ทั้งคู่ gate `qc_staff`/`qc_supervisor`)
+
+**`lib/overdueNotifier.js`:** เพิ่ม `pending_staff_revision` เข้า exclusion list (`status NOT IN (...)`) — เอกสาร
+อยู่กับ QC รับเข้า ไม่ใช่ค้างที่จัดซื้อ/ผู้อนุมัติ ไม่ควรถูกนับเกินกำหนดแจ้งจัดซื้อผิดที่ (ตรวจแล้ว: `internalReminder.js`
+ใช้ whitelist ของตัวเองอยู่แล้ว ไม่รวม status นี้โดยธรรมชาติ ไม่ต้องแก้)
+
+**Frontend (`NCR/Detail.jsx`):**
+- ปุ่ม "ส่งกลับแก้ไข (QC รับเข้า)" + modal (เหตุผลบังคับกรอก) — โชว์ตาม `STAFF_REJECT_ROLES[ncr.status] ===
+  user?.role` (mirror ฝั่ง server) ปรากฏที่ทุกขั้นที่เกี่ยวข้องอัตโนมัติ ไม่ต้องเขียนซ้ำ 5 จุด
+- Banner แดงตอน `pending_staff_revision` (pattern เดียวกับ banner เดิมของ `pending_supplier_resubmit`) ดึงจาก
+  `ncr.approvals` action='rejected_to_staff' ล่าสุด
+- การ์ด "แก้ไขข้อมูล item" (เฉพาะ `qc_staff`/`qc_supervisor` ตอนสถานะนี้) — ฟอร์มแก้ไขต่อ item (จำนวน 3 ช่อง +
+  dropdown กลุ่มปัญหา + textarea รายละเอียด) + อัปโหลด/ลบรูปภาพ (เรียก endpoint เดิม) + ปุ่ม "ส่งกลับเข้าระบบ"
+- เพิ่ม label `pending_staff_revision` ใน `rolePermissions.js`'s `STATUS_LABELS` + `exports.js`'s `statusLabel()`
+  (ให้ Badge/PDF export แสดงผลถูกต้อง ไม่ fallback เป็น raw status string)
+
+**Known limitation (ไม่ใช่ bug แต่ไม่ได้ทำรอบนี้):** dashboard/report บาง endpoint (เช่น purchasing dashboard
+summary) อาจไม่แสดง `pending_staff_revision` เป็น bucket แยกต่างหาก (ยังคงถูกนับรวมใน query ทั่วไปที่กรองแค่
+`status NOT IN (closed,...)` แต่ไม่มี label เฉพาะในกราฟสรุป) — ไม่กระทบ core flow ที่ทำรอบนี้ รอ user ตัดสินใจ
+ว่าต้องการ breakdown แยกไหมถ้าเจอปัญหาจริง
+
+**Test:** เพิ่ม **GROUP F (SR-01 ถึง SR-13)** ใน `test/ncrUai.test.js` ครอบ: reject ไม่ใส่เหตุผล (400),
+permission role ผิด (403) ทั้งฝั่ง reject/edit/resubmit, บันทึกเหตุผลลง `ncr_approvals` ถูกต้อง, แก้ไขข้อมูล
+item จริง, resubmit กลับ `pending_supervisor` + เคลียร์ disposition/qmr_opened_at เมื่อ reject มาจากขั้นลึก
+(ทดสอบเคสจริงจาก `pending_purchasing_manager_review` ที่ผ่าน disposition มาแล้ว), และยืนยัน state machine เดิน
+ต่อได้ปกติหลัง resubmit — `npm run build` (client) ผ่าน, `node --test` (server) → **407/407 เขียว**
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/db/database.js` | เพิ่ม `'pending_staff_revision'` ใน `VALID_NCR_STATUSES` |
+| `server/services/ncrService.js` | เพิ่ม `STAFF_REJECT_ROLES`, `rejectToStaff()`, `updateNcrItemsAsStaff()`, `resubmitAfterStaffRevision()` |
+| `server/routes/ncr.js` | เพิ่ม 3 routes: reject-to-staff, staff-revision (PATCH), resubmit-staff-revision |
+| `server/lib/overdueNotifier.js` | เพิ่ม `pending_staff_revision` เข้า exclusion list |
+| `server/routes/exports.js` | เพิ่ม label ใน `statusLabel()` |
+| `client/src/utils/rolePermissions.js` | เพิ่ม `pending_staff_revision` ใน `STATUS_LABELS` |
+| `client/src/pages/NCR/Detail.jsx` | ปุ่ม+modal ส่งกลับ, banner, การ์ดแก้ไขข้อมูล item + รูปภาพ, mutations ที่เกี่ยวข้อง |
+| `server/test/ncrUai.test.js` | เพิ่ม GROUP F (SR-01–13) |
 
 ---
 

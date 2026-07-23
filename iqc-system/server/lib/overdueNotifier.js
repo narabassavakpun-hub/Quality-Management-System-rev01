@@ -35,7 +35,8 @@ function checkOverdueNcrNotifications() {
     JOIN bills b ON b.id = n.bill_id
     WHERE n.qmr_opened_at IS NOT NULL
       AND date(n.qmr_opened_at, '+' || ? || ' days') < date('now')
-      AND n.status NOT IN ('closed', 'ncp_closed', 'cancelled')
+      -- S161: pending_staff_revision = อยู่กับ QC รับเข้า ไม่ใช่ค้างที่จัดซื้อ/ผู้อนุมัติ ไม่นับเกินกำหนดตรงนี้
+      AND n.status NOT IN ('closed', 'ncp_closed', 'cancelled', 'pending_staff_revision')
       AND (n.overdue_notified_at IS NULL OR date(n.overdue_notified_at, '+' || ? || ' days') < date('now'))
   `).all(overdueDays, repeatDays);
 

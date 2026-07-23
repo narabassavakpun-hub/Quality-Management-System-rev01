@@ -390,4 +390,91 @@ function resubmitToSupplier({ ncr, actorId, actorIp }) {
   resubmit();
 }
 
-module.exports = { createNcr, approveNcr, requestUai, purchasingReview, rejectPurchasingManagerReview, rejectSupplierResponse, resubmitToSupplier, getFullNcrItems };
+// ===== S161 — ส่งกลับให้ QC รับเข้าแก้ไขข้อมูล item ได้จากทุกขั้นก่อนถึง Supplier =====
+// role ที่มีสิทธิ์กดส่งกลับ ต่อ status ปัจจุบัน (ตรงกับ transitions map ของ approveNcr — คนละฝั่งของ action เดียวกัน)
+const STAFF_REJECT_ROLES = {
+  pending_supervisor: 'qc_supervisor',
+  pending_manager: 'qc_manager',
+  pending_qmr_open: 'qmr',
+  pending_purchasing_review: 'purchasing',
+  pending_purchasing_manager_review: 'purchasing_manager',
+};
+
+// ส่งกลับ (status ปัจจุบัน → pending_staff_revision) — ไม่ล้าง disposition/qmr_opened_at ตรงนี้ (เก็บไว้ audit
+// ว่าเคยไปถึงไหนมาแล้ว) ล้างจริงตอน resubmitAfterStaffRevision() แทน (ดูด้านล่าง เหตุผลเดียวกับ resubmit)
+function rejectToStaff({ ncr, actorId, actorRole, actorIp, comment }) {
+  const requiredRole = STAFF_REJECT_ROLES[ncr.status];
+  if (!requiredRole) throw httpError(`ไม่สามารถส่งกลับจากสถานะ ${ncr.status}`, 400);
+  if (requiredRole !== actorRole) throw httpError('ไม่มีสิทธิ์ส่งกลับขั้นตอนนี้', 403);
+  if (!comment || !comment.trim()) throw httpError('กรุณาระบุเหตุผลที่ส่งกลับ', 400);
+
+  const reject = db.transaction(() => {
+    const changed = db.prepare("UPDATE ncrs SET status='pending_staff_revision', internal_reminder_last_sent_at=NULL WHERE id=? AND status=?").run(ncr.id, ncr.status);
+    if (changed.changes === 0) throw new Error('เอกสารถูกดำเนินการแล้ว กรุณารีเฟรชหน้า');
+
+    db.prepare('INSERT INTO ncr_approvals (ncr_id, action, role, user_id, comment) VALUES (?, ?, ?, ?, ?)').run(ncr.id, 'rejected_to_staff', actorRole, actorId, comment);
+
+    const targets = new Set([ncr.created_by, ...getReceivingQCStaff().map(u => u.id)]);
+    for (const uid of targets) {
+      createNotification(uid, 'NCR ถูกส่งกลับให้แก้ไข', `${ncr.ncr_code} ถูกส่งกลับให้แก้ไขข้อมูล — ${comment}`, `/ncr/${ncr.id}`);
+    }
+    sendTelegram(db.getSetting('telegram_group_qc'), `[IQC] ${ncr.ncr_code}\nถูกส่งกลับให้ QC รับเข้าแก้ไขข้อมูล\nเหตุผล: ${comment}`);
+
+    db.auditLog('ncrs', ncr.id, 'REJECT_TO_STAFF', { status: ncr.status }, { status: 'pending_staff_revision', comment }, actorId, actorIp);
+  });
+  reject();
+}
+
+// QC staff/supervisor แก้ไขข้อมูล item ตอนสถานะ pending_staff_revision — แก้ได้เฉพาะ defect_category_id/
+// defect_detail/qty_* (ไม่แตะ item_name/bill_item_id — อ้างอิงสินค้าเดิมเสมอ กันข้อมูลไม่ตรงกับ bill ต้นทาง)
+// รูปภาพใช้ endpoint เดิม (POST/DELETE /ncr/:id/images) อยู่แล้ว ไม่ต้องทำใหม่ — endpoint นั้นไม่เคย gate ด้วย
+// status อยู่แล้ว (qc_staff/qc_supervisor แก้รูปได้ตลอดอายุเอกสาร)
+function updateNcrItemsAsStaff({ ncr, items, actorId, actorIp }) {
+  if (ncr.status !== 'pending_staff_revision') throw httpError('แก้ไขข้อมูล item ได้เฉพาะตอนสถานะ "ส่งกลับแก้ไข" เท่านั้น', 400);
+  if (!items?.length) throw httpError('ไม่มีรายการให้แก้ไข', 400);
+
+  const update = db.transaction(() => {
+    const updateItem = db.prepare(`
+      UPDATE ncr_items SET qty_received=?, qty_sampled=?, qty_failed=?, defect_category_id=?, defect_detail=?
+      WHERE id=? AND ncr_id=?
+    `);
+    for (const item of items) {
+      const r = updateItem.run(item.qty_received, item.qty_sampled, item.qty_failed, item.defect_category_id || null, item.defect_detail || null, item.id, ncr.id);
+      if (r.changes === 0) throw httpError(`ไม่พบรายการ item id=${item.id} ใน NCR นี้`, 400);
+    }
+    db.auditLog('ncr_items', ncr.id, 'UPDATE', null, { items }, actorId, actorIp);
+  });
+  update();
+}
+
+// QC staff/supervisor ส่งกลับเข้าระบบใหม่หลังแก้ไข (pending_staff_revision → pending_supervisor) — เริ่มอนุมัติ
+// ใหม่ทั้งหมดจากต้น (ตกลงกับ user แล้ว: ปลอดภัยกว่าข้ามขั้นที่เคยอนุมัติไปแล้วบนข้อมูลที่เพิ่งแก้ไข) เคลียร์
+// disposition/effectiveness/qmr_opened_at ที่อาจตั้งไว้จากรอบก่อนหน้า กันข้อมูลค้างแสดงผิด (แต่ละขั้นจะตั้งค่าใหม่
+// สดๆ เองตอนอนุมัติซ้ำรอบนี้ผ่าน approveNcr ปกติ)
+function resubmitAfterStaffRevision({ ncr, actorId, actorRole, actorIp }) {
+  const resubmit = db.transaction(() => {
+    const changed = db.prepare(`
+      UPDATE ncrs SET status='pending_supervisor',
+        disposition=NULL, disposition_note=NULL, disposition_due_date=NULL, disposition_completed_at=NULL, disposition_by=NULL,
+        effectiveness_check_date=NULL, effectiveness_result=NULL, effectiveness_note=NULL, effectiveness_checked_by=NULL, effectiveness_checked_at=NULL,
+        qmr_opened_at=NULL, internal_reminder_last_sent_at=NULL
+      WHERE id=? AND status='pending_staff_revision'
+    `).run(ncr.id);
+    if (changed.changes === 0) throw new Error('เอกสารถูกดำเนินการแล้ว กรุณารีเฟรชหน้า');
+
+    db.prepare('INSERT INTO ncr_approvals (ncr_id, action, role, user_id, comment) VALUES (?, ?, ?, ?, ?)').run(ncr.id, 'staff_resubmit', actorRole, actorId, null);
+
+    for (const sv of getUsersByRole('qc_supervisor')) {
+      createNotification(sv.id, 'NCR แก้ไขแล้ว รออนุมัติใหม่', `${ncr.ncr_code} QC รับเข้าแก้ไขข้อมูลแล้ว รออนุมัติจาก QC Supervisor อีกครั้ง`, `/ncr/${ncr.id}`);
+    }
+    sendTelegram(db.getSetting('telegram_group_qc'), `[IQC] ${ncr.ncr_code}\nQC รับเข้าแก้ไขข้อมูลแล้ว — รออนุมัติใหม่ตั้งแต่ QC Supervisor`);
+
+    db.auditLog('ncrs', ncr.id, 'STAFF_RESUBMIT', { status: 'pending_staff_revision' }, { status: 'pending_supervisor' }, actorId, actorIp);
+  });
+  resubmit();
+}
+
+module.exports = {
+  createNcr, approveNcr, requestUai, purchasingReview, rejectPurchasingManagerReview, rejectSupplierResponse, resubmitToSupplier, getFullNcrItems,
+  rejectToStaff, updateNcrItemsAsStaff, resubmitAfterStaffRevision, STAFF_REJECT_ROLES,
+};

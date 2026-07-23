@@ -182,11 +182,19 @@ export default function NCRDetail() {
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewItems, setReviewItems] = useState([]);
   const [reviewError, setReviewError] = useState('');
+  // S161 — ส่งกลับให้ QC รับเข้าแก้ไขข้อมูล item ได้จากทุกขั้นก่อนถึง Supplier
+  const [rejectToStaffOpen, setRejectToStaffOpen] = useState(false);
+  const [rejectToStaffComment, setRejectToStaffComment] = useState('');
+  const [rejectToStaffError, setRejectToStaffError] = useState('');
+  const [staffRevisionItems, setStaffRevisionItems] = useState(null); // null = ยังไม่ได้เปิดแก้ไข
 
   const { data: ncr, isLoading } = useQuery({
     queryKey: ['ncr', id],
     queryFn: () => api.get(`/ncr/${id}`).then(r => r.data),
   });
+  // S161 — ตัวเลือกกลุ่มปัญหาสำหรับฟอร์มแก้ไข item ตอน pending_staff_revision
+  const { data: defectCatsRes } = useQuery({ queryKey: ['defect-categories'], queryFn: () => api.get('/master/defect-categories').then(r => r.data) });
+  const defectCategories = defectCatsRes?.data ?? defectCatsRes ?? [];
 
   const approve = useMutation({
     mutationFn: () => {
@@ -291,6 +299,34 @@ export default function NCRDetail() {
     onSuccess: () => qc.invalidateQueries(['ncr', id]),
   });
 
+  // S161 — ส่งกลับให้ QC รับเข้าแก้ไขข้อมูล item ได้จากทุกขั้นก่อนถึง Supplier
+  const rejectToStaff = useMutation({
+    mutationFn: () => api.post(`/ncr/${id}/reject-to-staff`, { comment: rejectToStaffComment }),
+    onSuccess: () => { qc.invalidateQueries(['ncr', id]); setRejectToStaffOpen(false); setRejectToStaffComment(''); setRejectToStaffError(''); },
+    onError: (err) => setRejectToStaffError(err.response?.data?.error || err.message || 'เกิดข้อผิดพลาด'),
+  });
+  const saveStaffRevision = useMutation({
+    mutationFn: () => api.patch(`/ncr/${id}/staff-revision`, { items: staffRevisionItems }),
+    onSuccess: () => { qc.invalidateQueries(['ncr', id]); setStaffRevisionItems(null); },
+  });
+  const resubmitStaffRevision = useMutation({
+    mutationFn: () => api.post(`/ncr/${id}/resubmit-staff-revision`),
+    onSuccess: () => { qc.invalidateQueries(['ncr', id]); setStaffRevisionItems(null); },
+  });
+  // ใช้ endpoint เดิมของรูป NCR (ไม่เคย gate ด้วย status อยู่แล้ว) — เพิ่มเข้ามาแค่ UI ให้กดใช้ได้จากหน้านี้
+  const uploadNcrImages = useMutation({
+    mutationFn: (files) => {
+      const fd = new FormData();
+      for (const f of files) fd.append('images', f);
+      return api.post(`/ncr/${id}/images`, fd);
+    },
+    onSuccess: () => qc.invalidateQueries(['ncr', id]),
+  });
+  const deleteNcrImage = useMutation({
+    mutationFn: (imageId) => api.delete(`/ncr/${id}/images/${imageId}`),
+    onSuccess: () => qc.invalidateQueries(['ncr', id]),
+  });
+
   const purchasingReview = useMutation({
     mutationFn: () => api.patch(`/ncr/${id}/purchasing-review`, { items: reviewItems }),
     onSuccess: () => {
@@ -354,6 +390,16 @@ export default function NCRDetail() {
 
   const canRejectResponse = !isNCP && user?.role === 'qc_manager' && ncr.status === 'pending_manager_review';
   const canRejectPurchasingReview = !isNCP && user?.role === 'purchasing_manager' && ncr.status === 'pending_purchasing_manager_review';
+  // S161 — ส่งกลับให้ QC รับเข้าแก้ไขข้อมูล item ได้จากทุกขั้นก่อนถึง Supplier (ตรงกับ STAFF_REJECT_ROLES ฝั่ง server)
+  const STAFF_REJECT_ROLES = {
+    pending_supervisor: 'qc_supervisor',
+    pending_manager: 'qc_manager',
+    pending_qmr_open: 'qmr',
+    pending_purchasing_review: 'purchasing',
+    pending_purchasing_manager_review: 'purchasing_manager',
+  };
+  const canRejectToStaff = STAFF_REJECT_ROLES[ncr.status] === user?.role;
+  const canEditStaffRevision = ncr.status === 'pending_staff_revision' && ['qc_staff', 'qc_supervisor'].includes(user?.role);
   const canResubmit = !isNCP && user?.role === 'purchasing' && ncr.status === 'pending_supplier_resubmit';
   const canRequestUAI = !isNCP && user?.role === 'purchasing' && ncr.status === 'pending_supplier';
   const canCopyLink = !isNCP && user?.role === 'purchasing' && ['pending_supplier', 'uai_pending_qc_manager'].includes(ncr.status);
@@ -426,6 +472,11 @@ export default function NCRDetail() {
           {canRejectPurchasingReview && (
             <Button variant="danger" onClick={() => { setRejectReviewComment(''); setRejectReviewError(''); setRejectReviewOpen(true); }}>
               ไม่อนุมัติ
+            </Button>
+          )}
+          {canRejectToStaff && (
+            <Button variant="warning" onClick={() => { setRejectToStaffComment(''); setRejectToStaffError(''); setRejectToStaffOpen(true); }}>
+              ส่งกลับแก้ไข (QC รับเข้า)
             </Button>
           )}
           {canApprove && <Button variant="success" onClick={() => setConfirmApprove(true)}>{approveLabel}</Button>}
@@ -582,6 +633,114 @@ export default function NCRDetail() {
           </div>
         );
       })()}
+
+      {/* S161 — ถูกส่งกลับให้ QC รับเข้าแก้ไขข้อมูล item ได้จากทุกขั้นก่อนถึง Supplier */}
+      {ncr.status === 'pending_staff_revision' && (() => {
+        const rejection = [...(ncr.approvals || [])].reverse().find(a => a.action === 'rejected_to_staff');
+        return (
+          <div className="card bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700">
+            <div className="text-small font-semibold text-danger mb-1">ถูกส่งกลับให้ QC รับเข้าแก้ไขข้อมูล</div>
+            {rejection && (
+              <>
+                <div className="text-small text-muted">โดย: {rejection.full_name || rejection.role} — {new Date(rejection.created_at + 'Z').toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })}</div>
+                {rejection.comment && <div className="text-small text-text mt-1 bg-surface border border-red-200 dark:border-red-700 rounded px-2 py-1">{rejection.comment}</div>}
+              </>
+            )}
+            {canEditStaffRevision && (
+              <div className="mt-2 text-small text-muted">แก้ไขข้อมูล item ด้านล่าง แล้วกด "ส่งกลับเข้าระบบ" เพื่อเริ่มอนุมัติใหม่ตั้งแต่ QC Supervisor</div>
+            )}
+          </div>
+        );
+      })()}
+
+      {canEditStaffRevision && (
+        <div className="card">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <h2 className="text-h3 font-semibold text-primary">แก้ไขข้อมูล item</h2>
+            {staffRevisionItems === null && (
+              <Button variant="secondary" size="sm" onClick={() => setStaffRevisionItems(ncr.items.map(i => ({
+                id: i.id, qty_received: i.qty_received, qty_sampled: i.qty_sampled, qty_failed: i.qty_failed,
+                defect_category_id: i.defect_category_id ?? '', defect_detail: i.defect_detail || '',
+              })))}>
+                แก้ไขข้อมูล
+              </Button>
+            )}
+          </div>
+
+          {staffRevisionItems !== null && (
+            <div className="space-y-3">
+              {staffRevisionItems.map((item, idx) => {
+                const orig = ncr.items.find(i => i.id === item.id);
+                const setField = (field, val) => setStaffRevisionItems(prev => prev.map((p, i) => (i === idx ? { ...p, [field]: val } : p)));
+                return (
+                  <div key={item.id} className="border border-border rounded-lg p-3 space-y-2">
+                    <div className="font-medium text-body">{orig?.item_name}</div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="label">รับเข้า</label>
+                        <input type="number" className="input" value={item.qty_received} onChange={e => setField('qty_received', +e.target.value)} />
+                      </div>
+                      <div>
+                        <label className="label">สุ่มตรวจ</label>
+                        <input type="number" className="input" value={item.qty_sampled} onChange={e => setField('qty_sampled', +e.target.value)} />
+                      </div>
+                      <div>
+                        <label className="label">ไม่ผ่าน</label>
+                        <input type="number" className="input" value={item.qty_failed} onChange={e => setField('qty_failed', +e.target.value)} />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="label">กลุ่มปัญหา</label>
+                      <select className="input" value={item.defect_category_id} onChange={e => setField('defect_category_id', e.target.value ? +e.target.value : null)}>
+                        <option value="">-- เลือก --</option>
+                        {defectCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="label">รายละเอียด</label>
+                      <textarea className="input" rows={2} value={item.defect_detail} onChange={e => setField('defect_detail', e.target.value)} />
+                    </div>
+                  </div>
+                );
+              })}
+              <div className="flex gap-2 justify-end">
+                <Button variant="secondary" onClick={() => setStaffRevisionItems(null)}>ยกเลิก</Button>
+                <Button variant="primary" onClick={() => saveStaffRevision.mutate()} loading={saveStaffRevision.isPending}>บันทึกการแก้ไข</Button>
+              </div>
+            </div>
+          )}
+
+          {/* รูปภาพ — ใช้ endpoint เดิมที่มีอยู่แล้ว (POST/DELETE /ncr/:id/images) แค่เพิ่มปุ่มเรียกใช้จากหน้านี้ */}
+          <div className="mt-4 pt-3 border-t border-border">
+            <label className="label">รูปภาพเพิ่มเติม</label>
+            <div className="flex flex-wrap gap-2 mb-2">
+              {(ncr.images || []).map(img => (
+                <div key={img.id} className="relative group">
+                  <a href={`/uploads/ncr/${img.file_path}`} target="_blank" rel="noreferrer">
+                    <img src={`/uploads/ncr/${img.file_path}`} alt="" className="h-20 w-20 object-cover rounded border border-border" />
+                  </a>
+                  <button
+                    onClick={() => deleteNcrImage.mutate(img.id)}
+                    className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-danger text-white text-[12px] flex items-center justify-center opacity-0 group-hover:opacity-100 shadow"
+                  >×</button>
+                </div>
+              ))}
+            </div>
+            <input
+              type="file" accept="image/*" multiple
+              onChange={e => { if (e.target.files?.length) uploadNcrImages.mutate(e.target.files); e.target.value = ''; }}
+              className="text-small"
+            />
+          </div>
+
+          <div className="mt-4 pt-3 border-t border-border flex items-center justify-between flex-wrap gap-2">
+            <p className="text-small text-muted">เมื่อแก้ไขครบแล้ว กดส่งกลับเข้าระบบเพื่อเริ่มอนุมัติใหม่ตั้งแต่ QC Supervisor</p>
+            <Button variant="success" onClick={() => resubmitStaffRevision.mutate()} loading={resubmitStaffRevision.isPending}>
+              ส่งกลับเข้าระบบ (เริ่มอนุมัติใหม่)
+            </Button>
+          </div>
+        </div>
+      )}
 
       {isNCP && ncr.status === 'ncp_closed' && (
         <div className="card bg-teal-50 dark:bg-teal-900 border border-teal-200 dark:border-teal-700">
@@ -925,6 +1084,31 @@ export default function NCRDetail() {
           <div className="flex gap-2 justify-end">
             <Button variant="secondary" onClick={() => setRejectReviewOpen(false)}>ยกเลิก</Button>
             <Button variant="danger" onClick={() => rejectPurchasingReview.mutate()} loading={rejectPurchasingReview.isPending}>ยืนยัน — ไม่อนุมัติ</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Modal: ส่งกลับให้ QC รับเข้าแก้ไขข้อมูล item (S161) — กดได้จากทุกขั้นก่อนถึง Supplier */}
+      <Modal open={rejectToStaffOpen} onClose={() => setRejectToStaffOpen(false)} title="ส่งกลับให้ QC รับเข้าแก้ไข" size="sm">
+        <div className="space-y-3">
+          <div className="bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded px-3 py-2 text-small text-danger">
+            เอกสารจะถูกส่งกลับไปให้ QC รับเข้าแก้ไขข้อมูล item (กลุ่มปัญหา/รายละเอียด/จำนวน/รูป) — เมื่อแก้ไขและส่งกลับ
+            เข้าระบบใหม่ เอกสารจะต้องผ่านการอนุมัติใหม่ทั้งหมดตั้งแต่ QC Supervisor
+          </div>
+          <div>
+            <label className="label">เหตุผลที่ส่งกลับ *</label>
+            <textarea
+              className="input"
+              rows={3}
+              value={rejectToStaffComment}
+              onChange={e => setRejectToStaffComment(e.target.value)}
+              placeholder="ระบุสิ่งที่ต้องแก้ไข"
+            />
+          </div>
+          {rejectToStaffError && <div className="text-danger text-small bg-red-50 dark:bg-red-900 px-2 py-1 rounded">{rejectToStaffError}</div>}
+          <div className="flex gap-2 justify-end">
+            <Button variant="secondary" onClick={() => setRejectToStaffOpen(false)}>ยกเลิก</Button>
+            <Button variant="warning" onClick={() => rejectToStaff.mutate()} loading={rejectToStaff.isPending}>ยืนยัน — ส่งกลับแก้ไข</Button>
           </div>
         </div>
       </Modal>

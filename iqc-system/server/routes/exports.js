@@ -71,6 +71,7 @@ function statusLabel(status) {
     pending_qmr_open: 'รอ QMR เปิด', pending_purchasing_review: 'รอจัดซื้อ Review',
     pending_purchasing_manager_review: 'รอผู้จัดการจัดซื้อตรวจสอบ', pending_supplier: 'รอ Supplier',
     pending_manager_review: 'รอ Manager ตรวจ', pending_supplier_resubmit: 'ถูกส่งกลับ', pending_qmr_close: 'รอ QMR ปิด',
+    pending_staff_revision: 'ส่งกลับแก้ไข (QC รับเข้า)',
     closed: 'ปิดแล้ว', pending_uai: 'รอดำเนินการ UAI', uai_pending_qc_manager: 'UAI รอ QC Manager',
     uai_pending_purchasing: 'UAI รอจัดซื้อ', uai_pending_cco: 'UAI รอ COO',
     uai_pending_cmo: 'UAI รอ CMO', uai_pending_cpo: 'UAI รอ CPO',

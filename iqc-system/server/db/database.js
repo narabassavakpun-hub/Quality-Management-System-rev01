@@ -19,6 +19,9 @@ const VALID_NCR_STATUSES = new Set([
   'pending_purchasing_review', 'pending_purchasing_manager_review', 'pending_supplier', 'pending_manager_review',
   'pending_qmr_close', 'pending_supplier_resubmit', 'pending_uai',
   'closed', 'uai_pending_qc_manager', 'cancelled', 'ncp_closed',
+  // S161 — ส่งกลับให้ QC รับเข้าแก้ไขข้อมูล item ได้จากทุกขั้นก่อนถึง Supplier (supervisor/manager/qmr/
+  // purchasing/purchasing_manager) — แก้แล้วส่งใหม่ = เริ่มอนุมัติใหม่ทั้งหมดจาก pending_supervisor
+  'pending_staff_revision',
 ]);
 
 const db = new Database(DB_PATH);
