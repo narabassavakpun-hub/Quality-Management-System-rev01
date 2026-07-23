@@ -290,7 +290,10 @@ router.post('/:id/reject', auth, requireRole(['qc_supervisor']), (req, res) => {
 
   const { comment } = req.body;
   // DEVMORE H7 — optimistic lock กัน approve/reject ชนกัน
-  const changed = db.prepare("UPDATE bills SET status='draft' WHERE id=? AND status='pending_approval'").run(req.params.id);
+  // S159 — persist comment ลง reject_comment (ไม่ใช่แค่ข้อความ notification ที่ผ่านไปแล้วหายไป) ให้ qc_staff
+  // เห็นสาเหตุค้างอยู่บนบิลเองตอนกลับมาแก้ไข (Bills/Detail.jsx + Bills/New.jsx banner)
+  const changed = db.prepare("UPDATE bills SET status='draft', reject_comment=? WHERE id=? AND status='pending_approval'")
+    .run(comment || null, req.params.id);
   if (changed.changes === 0) return res.status(400).json({ error: 'บิลถูกดำเนินการแล้ว กรุณารีเฟรชหน้า' });
   createNotification(bill.created_by, 'บิลถูกส่งกลับ', `Invoice ${bill.invoice_no} ถูกส่งกลับ${comment ? ': ' + comment : ''}`, `/bills/${bill.id}`);
   db.auditLog('bills', req.params.id, 'REJECT', { status: 'pending_approval' }, { status: 'draft', comment }, req.user.id, req.ip);

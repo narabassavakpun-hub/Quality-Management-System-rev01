@@ -883,6 +883,14 @@ export default function BillNew() {
         </div>
       </div>
 
+      {/* S159 — หมายเหตุ QC Supervisor ตอนส่งกลับ (โชว์ค้างตอนแก้ไข จนกว่าจะกด "ส่งอนุมัติ" ใหม่) */}
+      {isEdit && existingBill?.reject_comment && (
+        <div className="card mb-3 bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700">
+          <div className="text-small font-semibold text-danger mb-1">หัวหน้า QC ส่งกลับบิลนี้ — กรุณาแก้ไขตามหมายเหตุก่อนส่งอนุมัติใหม่</div>
+          <div className="text-small text-text mt-1 bg-surface border border-red-200 dark:border-red-700 rounded px-2 py-1.5">{existingBill.reject_comment}</div>
+        </div>
+      )}
+
       {/* DEVMORE M8 — แจ้งเตือน draft ที่ยังไม่ได้บันทึก */}
       {draftFound && !isEdit && (
         <div className="card mb-3 border-l-4 border-warning bg-yellow-50 dark:bg-yellow-900 flex items-center justify-between gap-3 flex-wrap">

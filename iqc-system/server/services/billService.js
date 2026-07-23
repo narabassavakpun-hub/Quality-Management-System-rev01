@@ -39,7 +39,8 @@ function createBill({ invoice_no, po_no, container_no, tracking_no, supplier_id,
 // submit บิล (draft → pending_approval) + notify supervisor + audit
 function submitBill({ bill, actorId, actorIp }) {
   const submit = db.transaction(() => {
-    db.prepare("UPDATE bills SET status='pending_approval' WHERE id=?").run(bill.id);
+    // เคลียร์ reject_comment รอบก่อน (ถ้ามี) — ตั้งใจ: ส่งอนุมัติใหม่ = ถือว่าแก้ตามที่ supervisor แจ้งแล้ว
+    db.prepare("UPDATE bills SET status='pending_approval', reject_comment=NULL WHERE id=?").run(bill.id);
     for (const sv of getUsersByRole('qc_supervisor')) {
       createNotification(sv.id, 'บิลรออนุมัติ', `Invoice ${bill.invoice_no} รอการอนุมัติ`, `/bills/${bill.id}`);
     }

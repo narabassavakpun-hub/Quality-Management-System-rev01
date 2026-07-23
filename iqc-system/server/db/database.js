@@ -160,6 +160,9 @@ function runMigrations() {
   // bills: missing columns from old schema
   safeAddColumn('bills', 'cancelled_at', 'DATETIME');
   safeAddColumn('bills', 'cancelled_by', 'INTEGER REFERENCES users(id)');
+  // bills: หมายเหตุตอน qc_supervisor ส่งกลับ (reject) ให้ qc_staff เห็นสาเหตุ+แก้ไขได้ (S159) — เคลียร์กลับ
+  // เป็น NULL ตอน submit ใหม่ (billService.submitBill) กันโน้ตเก่าค้างข้ามรอบ reject ถัดไป
+  safeAddColumn('bills', 'reject_comment', 'TEXT');
 
   // bill_items: ISO compliance columns
   safeAddColumn('bill_items', 'inspector_id', 'INTEGER REFERENCES users(id)');

@@ -209,6 +209,7 @@ CREATE TABLE IF NOT EXISTS bills (
   status TEXT DEFAULT 'draft' CHECK(status IN ('draft','pending_approval','approved','cancelled','editing')),
   cancelled_at DATETIME,
   cancelled_by INTEGER REFERENCES users(id) ON DELETE RESTRICT,
+  reject_comment TEXT,
   created_by INTEGER REFERENCES users(id) ON DELETE RESTRICT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );

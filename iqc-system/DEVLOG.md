@@ -2,9 +2,9 @@
 
 ---
 
-## 📌 Current State (2026-07-22)
+## 📌 Current State (2026-07-23)
 
-**Version:** rev01 · Production · **Latest code:** Session 159 (2026-07-22)
+**Version:** rev01 · Production · **Latest code:** Session 160 (2026-07-23)
 
 **Architecture Summary**
 - Backend: Express 4.18 + better-sqlite3 (WAL, FK ON), **102 ตาราง** (+`environment_presets`, S118; +`supplier_purchasing_assignees`, S125), ~33 route files, SSE + Telegram + **Email/SMTP (S128, `lib/mailer.js`)**, port 3001
@@ -138,6 +138,47 @@
 **Technical Debt / Roadmap:** ดู [`../AUDIT.md`](../AUDIT.md) §12 (Refactor Roadmap) — **P0 ปิดครบแล้ว (S105)**; P1 ปิดครบ; P2 ปิดครบ (S103); เหลือ P3 (horizontal scale, TypeScript) + gap ใหม่ (ipqc_records removal decision, ipqc_inspections test coverage, fgqc reset-all FK gap) + restore-drill ยังไม่ automate ใน CI (ดู AUDIT.md D5) + CLAUDE.md §11 Role Matrix ต้องเพิ่ม purchasing_manager (S125) + purchasing_manager review step (S128)
 
 **เอกสารอ้างอิง:** [`../CLAUDE.md`](../CLAUDE.md) · [`../PRD.md`](../PRD.md) · [`../brand.md`](../brand.md) · [`../design-dashboard.md`](../design-dashboard.md) · [`../testcase.md`](../testcase.md) · [`../AUDIT.md`](../AUDIT.md)
+
+---
+
+## 2026-07-23 | Session 160 — Bills: เพิ่มหมายเหตุตอน qc_supervisor "ส่งกลับ" บิล ให้ qc_staff เห็นสาเหตุ+แก้ไข
+
+**คำขอ:** user ส่งภาพหน้าจอ dialog "ส่งกลับ" ของ qc_supervisor (ยืนยันอย่างเดียว ไม่มีช่องกรอกเหตุผล) — ขอให้
+เพิ่มหมายเหตุตอนส่งกลับ ให้ qc_staff ผู้รับเข้าเห็นว่าต้องแก้อะไร
+
+**พบว่า backend รองรับ `comment` อยู่แล้วบางส่วน:** `POST /bills/:id/reject` เดิมรับ `comment` จาก body และใส่ใน
+ข้อความ notification (`createNotification`) กับ `audit_logs.new_value` อยู่แล้ว — **แต่ frontend ไม่เคยส่ง
+`comment` เลย** (ไม่มี input ให้กรอก, `reject.mutate()` เรียกเปล่าๆ) และต่อให้ส่งมา ก็ไม่เคย persist ไว้ที่ตัวบิล
+เอง (อยู่แค่ในข้อความ notification ที่หายไปหลังอ่าน + audit log ที่ user ทั่วไปเข้าไม่ถึง) — พอ qc_staff เปิดบิล
+กลับมาแก้ภายหลัง (ไม่ได้เห็น notification ตอนนั้นพอดี) จะไม่มีทางรู้เหตุผลเลยนอกจากไปถามปากเปล่า
+
+**การแก้:**
+- Schema: เพิ่มคอลัมน์ `bills.reject_comment TEXT` (schema.sql + `safeAddColumn` migration ใน database.js)
+- `POST /bills/:id/reject`: persist `comment` ลง `reject_comment` ในการ UPDATE เดียวกับที่เปลี่ยน status (ยังอยู่
+  ใน optimistic-lock query เดิม ไม่เพิ่ม query แยก)
+- `billService.submitBill()`: เคลียร์ `reject_comment` กลับเป็น `NULL` ตอน qc_staff กด "ส่งอนุมัติ" ใหม่ (ถือว่า
+  แก้ตามที่แจ้งแล้ว กันโน้ตเก่าค้างข้ามรอบ reject ถัดไป)
+- `Bills/Detail.jsx`: เปลี่ยน dialog "ส่งกลับ" จาก `ConfirmDialog` ธรรมดา (ยืนยันอย่างเดียว) เป็น `Modal` กำหนดเอง
+  + `<textarea>` หมายเหตุ (ไม่บังคับ) — pattern เดียวกับที่ `NCR/Detail.jsx` ใช้อยู่แล้วสำหรับ reject-with-reason
+  (`.input`/`.label` class จริงที่มี CSS นิยามอยู่ — ต่างจาก `.input-field` ที่เจอว่าเป็น class ผีไม่มี CSS จริง
+  ตอนแก้ audit log filter bar ก่อนหน้านี้)
+- เพิ่ม banner แดงแสดง `reject_comment` ค้างไว้ทั้งที่ `Bills/Detail.jsx` (ตอน `status==='draft'`) และ
+  `Bills/New.jsx` (`?edit=id`, หน้าที่ qc_staff ใช้แก้ไขจริง) — โชว์จนกว่าจะ submit ใหม่ (ตาม logic เคลียร์ด้านบน)
+
+**Test:** เพิ่ม **BILL-11b** ใน `test/bills.test.js` — ยืนยัน `reject_comment` ถูกบันทึกหลัง reject และถูกเคลียร์
+กลับเป็น `null` หลัง resubmit — `npm run build` (client) ผ่าน, `node --test` (server) → **394/394 เขียว**
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/db/schema.sql` | เพิ่ม `bills.reject_comment TEXT` |
+| `server/db/database.js` | `safeAddColumn('bills', 'reject_comment', 'TEXT')` ใน `runMigrations()` |
+| `server/routes/bills.js` | `POST /:id/reject` persist `comment` ลง `reject_comment` |
+| `server/services/billService.js` | `submitBill()` เคลียร์ `reject_comment` เป็น NULL ตอน resubmit |
+| `client/src/pages/Bills/Detail.jsx` | dialog ส่งกลับมี textarea หมายเหตุ + banner แดงแสดง `reject_comment` |
+| `client/src/pages/Bills/New.jsx` | banner แดงแสดง `reject_comment` ในหน้าแก้ไข (`?edit=id`) |
+| `server/test/bills.test.js` | เพิ่ม BILL-11b |
 
 ---
 

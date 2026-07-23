@@ -6,6 +6,7 @@ import api, { downloadExcel, downloadPdf } from '../../utils/api';
 import Badge from '../../components/UI/Badge';
 import Button from '../../components/UI/Button';
 import ConfirmDialog from '../../components/UI/ConfirmDialog';
+import Modal from '../../components/UI/Modal';
 
 export default function BillDetail() {
   const { id } = useParams();
@@ -13,6 +14,7 @@ export default function BillDetail() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [confirmAction, setConfirmAction] = React.useState(null);
+  const [rejectComment, setRejectComment] = React.useState('');
 
   const { data: bill, isLoading } = useQuery({
     queryKey: ['bill', id],
@@ -24,8 +26,8 @@ export default function BillDetail() {
     onSuccess: () => { qc.invalidateQueries(['bill', id]); setConfirmAction(null); },
   });
   const reject = useMutation({
-    mutationFn: () => api.post(`/bills/${id}/reject`),
-    onSuccess: () => { qc.invalidateQueries(['bill', id]); setConfirmAction(null); },
+    mutationFn: () => api.post(`/bills/${id}/reject`, { comment: rejectComment || undefined }),
+    onSuccess: () => { qc.invalidateQueries(['bill', id]); setConfirmAction(null); setRejectComment(''); },
   });
 
   if (isLoading) return <div className="text-muted py-8 text-center">กำลังโหลด...</div>;
@@ -82,6 +84,15 @@ export default function BillDetail() {
           )}
         </div>
       </div>
+
+      {/* หมายเหตุ QC Supervisor ตอนส่งกลับ (S159) — โชว์ค้างจนกว่า qc_staff จะแก้แล้วกด "ส่งอนุมัติ" ใหม่
+          (billService.submitBill เคลียร์ reject_comment กลับเป็น null ตอนนั้น) */}
+      {bill.status === 'draft' && bill.reject_comment && (
+        <div className="card bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700">
+          <div className="text-small font-semibold text-danger mb-1">หัวหน้า QC ส่งกลับบิลนี้ — กรุณาแก้ไขตามหมายเหตุ</div>
+          <div className="text-small text-text mt-1 bg-surface border border-red-200 dark:border-red-700 rounded px-2 py-1.5">{bill.reject_comment}</div>
+        </div>
+      )}
 
       <div className="card">
         <h2 className="text-h3 font-semibold text-primary mb-3">ข้อมูลบิล</h2>
@@ -196,16 +207,22 @@ export default function BillDetail() {
         variant="success"
         loading={approve.isPending}
       />
-      <ConfirmDialog
-        open={confirmAction === 'reject'}
-        onClose={() => setConfirmAction(null)}
-        onConfirm={() => reject.mutate()}
-        title="ส่งกลับ"
-        message={`ต้องการส่งกลับบิล Invoice ${bill.invoice_no} ใช่หรือไม่`}
-        confirmLabel="ส่งกลับ"
-        variant="warning"
-        loading={reject.isPending}
-      />
+      <Modal open={confirmAction === 'reject'} onClose={() => { setConfirmAction(null); setRejectComment(''); }} title="ส่งกลับ" size="sm">
+        <p className="text-body text-text mb-3">ต้องการส่งกลับบิล Invoice {bill.invoice_no} ใช่หรือไม่</p>
+        <div className="mb-4">
+          <label className="label">หมายเหตุถึง QC ผู้รับเข้า (ไม่บังคับ)</label>
+          <textarea
+            className="input" rows={3}
+            placeholder="ระบุสิ่งที่ต้องแก้ไข เช่น รูปไม่ชัด, กรอกข้อมูลผิด ฯลฯ"
+            value={rejectComment}
+            onChange={e => setRejectComment(e.target.value)}
+          />
+        </div>
+        <div className="flex gap-2 justify-end">
+          <Button variant="secondary" onClick={() => { setConfirmAction(null); setRejectComment(''); }} disabled={reject.isPending}>ยกเลิก</Button>
+          <Button variant="warning" onClick={() => reject.mutate()} loading={reject.isPending}>ส่งกลับ</Button>
+        </div>
+      </Modal>
     </div>
   );
 }

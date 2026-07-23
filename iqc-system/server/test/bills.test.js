@@ -121,6 +121,23 @@ test('BILL-11 supervisor reject pending → back to draft', async () => {
   assert.equal(detail.body.status, 'draft');
 });
 
+// S159 — user รายงาน: อยากให้ qc_supervisor ใส่หมายเหตุตอนส่งกลับ ให้ qc_staff เห็นสาเหตุ+แก้ไขได้ — เดิม comment
+// ถูกส่งไปแค่ในข้อความ notification (หายไปหลังอ่าน) ไม่เคย persist ไว้ที่บิลเอง
+test('BILL-11b reject: หมายเหตุถูกบันทึกลง reject_comment ให้ qc_staff เห็นตอนกลับมาแก้ไข', async () => {
+  const b = await api('POST', '/api/bills', { cookie: C.staff, body: billBody() });
+  await api('POST', `/api/bills/${b.body.id}/items`, { cookie: C.staff, body: cleanItem() });
+  await api('POST', `/api/bills/${b.body.id}/submit`, { cookie: C.staff });
+  await api('POST', `/api/bills/${b.body.id}/reject`, { cookie: C.sup, body: { comment: 'รูปไม่ชัด กรุณาถ่ายใหม่' } });
+  const detail = await api('GET', `/api/bills/${b.body.id}`, { cookie: C.staff });
+  assert.equal(detail.body.reject_comment, 'รูปไม่ชัด กรุณาถ่ายใหม่');
+
+  // qc_staff แก้ไขแล้วส่งอนุมัติใหม่ — reject_comment ต้องถูกเคลียร์ (ถือว่าแก้ตามที่แจ้งแล้ว)
+  const resubmit = await api('POST', `/api/bills/${b.body.id}/submit`, { cookie: C.staff });
+  assert.equal(resubmit.status, 200);
+  const detail2 = await api('GET', `/api/bills/${b.body.id}`, { cookie: C.staff });
+  assert.equal(detail2.body.reject_comment, null);
+});
+
 // ===== Telegram กลุ่ม QC — ข้อความรูปแบบใหม่ตอน submit/approve (คำขอ user, S143) =====
 // mock 'node-fetch' ผ่าน require.cache (pattern เดียวกับ test/backupService.test.js's mockNodeFetch) กันยิง
 // network จริงไป Telegram API ระหว่างเทส — sendTelegram() ใน routes/notifications.js ไม่ await โดยผู้เรียก
