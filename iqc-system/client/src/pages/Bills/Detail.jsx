@@ -15,6 +15,7 @@ export default function BillDetail() {
   const qc = useQueryClient();
   const [confirmAction, setConfirmAction] = React.useState(null);
   const [rejectComment, setRejectComment] = React.useState('');
+  const [rejectError, setRejectError] = React.useState('');
 
   const { data: bill, isLoading } = useQuery({
     queryKey: ['bill', id],
@@ -27,7 +28,8 @@ export default function BillDetail() {
   });
   const reject = useMutation({
     mutationFn: () => api.post(`/bills/${id}/reject`, { comment: rejectComment || undefined }),
-    onSuccess: () => { qc.invalidateQueries(['bill', id]); setConfirmAction(null); setRejectComment(''); },
+    onSuccess: () => { qc.invalidateQueries(['bill', id]); setConfirmAction(null); setRejectComment(''); setRejectError(''); },
+    onError: (err) => setRejectError(err.response?.data?.error || err.message || 'เกิดข้อผิดพลาด'),
   });
 
   if (isLoading) return <div className="text-muted py-8 text-center">กำลังโหลด...</div>;
@@ -56,9 +58,14 @@ export default function BillDetail() {
           )}
           {user?.role === 'qc_supervisor' && bill.status === 'pending_approval' && (
             <>
-              <Button variant="danger" onClick={() => setConfirmAction('reject')}>ส่งกลับ</Button>
+              <Button variant="danger" onClick={() => { setRejectComment(''); setRejectError(''); setConfirmAction('reject'); }}>ส่งกลับ</Button>
               <Button variant="success" onClick={() => setConfirmAction('approve')}>อนุมัติ</Button>
             </>
+          )}
+          {/* S164 — supervisor เรียกกลับได้แม้อนุมัติไปแล้ว ถ้าตรวจพบข้อมูลผิดภายหลัง (ปุ่มเดียวกับตอน
+              pending_approval, ไม่มีปุ่ม "อนุมัติ" ซ้ำเพราะอนุมัติไปแล้ว) — server บล็อกเองถ้ามี NCR ผูกอยู่แล้ว */}
+          {user?.role === 'qc_supervisor' && bill.status === 'approved' && (
+            <Button variant="danger" onClick={() => { setRejectComment(''); setRejectError(''); setConfirmAction('reject'); }}>ส่งกลับแก้ไข</Button>
           )}
           {bill.status === 'approved' && (
             <>
@@ -207,8 +214,12 @@ export default function BillDetail() {
         variant="success"
         loading={approve.isPending}
       />
-      <Modal open={confirmAction === 'reject'} onClose={() => { setConfirmAction(null); setRejectComment(''); }} title="ส่งกลับ" size="sm">
-        <p className="text-body text-text mb-3">ต้องการส่งกลับบิล Invoice {bill.invoice_no} ใช่หรือไม่</p>
+      <Modal open={confirmAction === 'reject'} onClose={() => { setConfirmAction(null); setRejectComment(''); setRejectError(''); }} title="ส่งกลับ" size="sm">
+        <p className="text-body text-text mb-3">
+          {bill.status === 'approved'
+            ? `บิลนี้อนุมัติไปแล้ว — ต้องการเรียกกลับไปให้ QC ผู้รับเข้าแก้ไขใหม่ (สถานะจะกลับเป็นร่าง) ใช่หรือไม่`
+            : `ต้องการส่งกลับบิล Invoice ${bill.invoice_no} ใช่หรือไม่`}
+        </p>
         <div className="mb-4">
           <label className="label">หมายเหตุถึง QC ผู้รับเข้า (ไม่บังคับ)</label>
           <textarea
@@ -218,8 +229,9 @@ export default function BillDetail() {
             onChange={e => setRejectComment(e.target.value)}
           />
         </div>
+        {rejectError && <div className="text-danger text-small bg-red-50 dark:bg-red-900 px-3 py-2 rounded mb-3">{rejectError}</div>}
         <div className="flex gap-2 justify-end">
-          <Button variant="secondary" onClick={() => { setConfirmAction(null); setRejectComment(''); }} disabled={reject.isPending}>ยกเลิก</Button>
+          <Button variant="secondary" onClick={() => { setConfirmAction(null); setRejectComment(''); setRejectError(''); }} disabled={reject.isPending}>ยกเลิก</Button>
           <Button variant="warning" onClick={() => reject.mutate()} loading={reject.isPending}>ส่งกลับ</Button>
         </div>
       </Modal>

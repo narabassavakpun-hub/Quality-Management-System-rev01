@@ -283,20 +283,38 @@ router.post('/:id/approve', auth, requireRole(['qc_supervisor']), (req, res) => 
 });
 
 // ===== POST /api/bills/:id/reject =====
+// S164 — supervisor เรียกกลับได้แม้อนุมัติไปแล้ว (เจอข้อมูลผิดภายหลัง) ไม่ใช่แค่ตอน pending_approval เหมือนเดิม
 router.post('/:id/reject', auth, requireRole(['qc_supervisor']), (req, res) => {
   const bill = db.prepare('SELECT * FROM bills WHERE id = ?').get(req.params.id);
   if (!bill) return res.status(404).json({ error: 'ไม่พบบิล' });
-  if (bill.status !== 'pending_approval') return res.status(400).json({ error: 'บิลนี้ไม่ได้รออนุมัติ' });
+  if (!['pending_approval', 'approved'].includes(bill.status)) return res.status(400).json({ error: 'บิลนี้ไม่ได้อยู่สถานะที่ส่งกลับได้' });
+
+  // S164 — ถ้าอนุมัติไปแล้วและมีเอกสาร NCR/NCP ออกไปแล้วผูกกับ item ของบิลนี้ ห้ามส่งกลับ กัน bill_items ที่
+  // NCR อ้างอิงอยู่ถูกแก้ไข/ลบตอนบิลกลับไปเป็น draft (ncr_items เก็บสำเนาข้อมูลแยกไว้ตอนสร้างจริง แต่ product
+  // code ยัง live-join กับ bill_items เสมอ — แก้ไขบิลจะทำให้ข้อมูลไม่ตรงกันได้ ดูเหตุผลเดียวกับ S162)
+  if (bill.status === 'approved') {
+    const activeNcr = db.prepare(`
+      SELECT n.ncr_code FROM ncrs n
+      JOIN ncr_items ni ON ni.ncr_id = n.id
+      JOIN bill_items bi ON bi.id = ni.bill_item_id
+      WHERE bi.bill_id = ? AND n.status != 'cancelled'
+      LIMIT 1
+    `).get(req.params.id);
+    if (activeNcr) {
+      return res.status(400).json({ error: `บิลนี้มีเอกสาร ${activeNcr.ncr_code} ผูกอยู่แล้ว ไม่สามารถส่งกลับได้ — กรุณายกเลิกเอกสาร NCR/NCP ก่อน` });
+    }
+  }
 
   const { comment } = req.body;
-  // DEVMORE H7 — optimistic lock กัน approve/reject ชนกัน
+  // DEVMORE H7 — optimistic lock กัน approve/reject ชนกัน (เทียบ status ปัจจุบันที่ query มาจริง ไม่ hardcode
+  // ค่าเดียว เพราะตอนนี้ยอมรับได้ทั้ง pending_approval และ approved)
   // S159 — persist comment ลง reject_comment (ไม่ใช่แค่ข้อความ notification ที่ผ่านไปแล้วหายไป) ให้ qc_staff
   // เห็นสาเหตุค้างอยู่บนบิลเองตอนกลับมาแก้ไข (Bills/Detail.jsx + Bills/New.jsx banner)
-  const changed = db.prepare("UPDATE bills SET status='draft', reject_comment=? WHERE id=? AND status='pending_approval'")
-    .run(comment || null, req.params.id);
+  const changed = db.prepare("UPDATE bills SET status='draft', reject_comment=? WHERE id=? AND status=?")
+    .run(comment || null, req.params.id, bill.status);
   if (changed.changes === 0) return res.status(400).json({ error: 'บิลถูกดำเนินการแล้ว กรุณารีเฟรชหน้า' });
   createNotification(bill.created_by, 'บิลถูกส่งกลับ', `Invoice ${bill.invoice_no} ถูกส่งกลับ${comment ? ': ' + comment : ''}`, `/bills/${bill.id}`);
-  db.auditLog('bills', req.params.id, 'REJECT', { status: 'pending_approval' }, { status: 'draft', comment }, req.user.id, req.ip);
+  db.auditLog('bills', req.params.id, 'REJECT', { status: bill.status }, { status: 'draft', comment }, req.user.id, req.ip);
   res.json({ ok: true });
 });
 

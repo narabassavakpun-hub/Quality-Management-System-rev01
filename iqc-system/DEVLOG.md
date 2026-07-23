@@ -4,7 +4,7 @@
 
 ## 📌 Current State (2026-07-23)
 
-**Version:** rev01 · Production · **Latest code:** Session 163 (2026-07-23)
+**Version:** rev01 · Production · **Latest code:** Session 164 (2026-07-23)
 
 **Architecture Summary**
 - Backend: Express 4.18 + better-sqlite3 (WAL, FK ON), **102 ตาราง** (+`environment_presets`, S118; +`supplier_purchasing_assignees`, S125), ~33 route files, SSE + Telegram + **Email/SMTP (S128, `lib/mailer.js`)**, port 3001
@@ -138,6 +138,42 @@
 **Technical Debt / Roadmap:** ดู [`../AUDIT.md`](../AUDIT.md) §12 (Refactor Roadmap) — **P0 ปิดครบแล้ว (S105)**; P1 ปิดครบ; P2 ปิดครบ (S103); เหลือ P3 (horizontal scale, TypeScript) + gap ใหม่ (ipqc_records removal decision, ipqc_inspections test coverage, fgqc reset-all FK gap) + restore-drill ยังไม่ automate ใน CI (ดู AUDIT.md D5) + CLAUDE.md §11 Role Matrix ต้องเพิ่ม purchasing_manager (S125) + purchasing_manager review step (S128)
 
 **เอกสารอ้างอิง:** [`../CLAUDE.md`](../CLAUDE.md) · [`../PRD.md`](../PRD.md) · [`../brand.md`](../brand.md) · [`../design-dashboard.md`](../design-dashboard.md) · [`../testcase.md`](../testcase.md) · [`../AUDIT.md`](../AUDIT.md)
+
+---
+
+## 2026-07-23 | Session 164 — Bills: qc_supervisor ส่งกลับบิลที่อนุมัติไปแล้วได้ (เดิมกดได้แค่ตอน pending_approval)
+
+**คำขอ:** user รายงาน: หลัง qc_supervisor อนุมัติบิลไปแล้ว ถ้าตรวจพบข้อมูลผิดภายหลัง อยากส่งกลับให้ qc_staff
+แก้ไขใหม่ — เดิมปุ่ม "ส่งกลับ" กดได้แค่ตอนสถานะ `pending_approval` เท่านั้น พอกด "อนุมัติ" ไปแล้วไม่มีทางย้อนกลับเลย
+
+**การแก้:** ขยาย `POST /bills/:id/reject` ให้รับ `bill.status` ทั้ง `pending_approval` และ `approved` (เดิมเช็ค
+เฉพาะ `pending_approval`) — optimistic lock ยังทำงานถูกต้อง (เทียบ `bill.status` จริงที่ query มา ไม่ hardcode
+ค่าเดียว) — ผลลัพธ์เหมือนเดิมทุกจุด (กลับไป `draft` + บันทึก `reject_comment` ให้ qc_staff เห็น ตาม S159)
+
+**Safety guard ที่เพิ่มเข้ามา (ป้องกันปัญหาที่ยังไม่มีใครถามแต่เป็นความเสี่ยงจริง):** ถ้าบิลอนุมัติไปแล้วและมี
+เอกสาร NCR/NCP ออกไปแล้วผูกกับ item ใดก็ตามของบิลนี้ (`n.status != 'cancelled'`) **บล็อกการส่งกลับ** พร้อมบอก
+รหัส NCR ที่ผูกอยู่ — เหตุผล: `bill_items` ที่ NCR อ้างอิงอยู่ (ผ่าน `ncr_items.bill_item_id`) ถ้าถูกแก้ไข/ลบตอน
+บิลกลับไปเป็น draft จะทำให้ข้อมูลระหว่าง NCR กับบิลไม่ตรงกัน (คนละปัญหากับที่ Session 162 เพิ่งแก้ไป แต่ root
+cause เดียวกัน — NCR live-join กับ `bill_items` เสมอ) — ถ้ามี NCR ผูกอยู่จริงต้องยกเลิก/จัดการ NCR ก่อน (ใช้
+ปุ่ม "ยกเลิก NCR ฉบับนี้" จาก Session 162 ได้ถ้า NCR นั้นยังอยู่ `pending_staff_revision`)
+
+**Frontend (`Bills/Detail.jsx`):** เพิ่มปุ่ม "ส่งกลับแก้ไข" (แดง) เมื่อ `bill.status === 'approved'` (คู่กับปุ่ม
+"ส่งกลับ" เดิมตอน `pending_approval` — ไม่มีปุ่ม "อนุมัติ" ซ้ำเพราะอนุมัติไปแล้ว) ใช้ modal เดียวกับเดิม ปรับข้อความ
+เตือนให้ชัดว่ากำลังเรียกกลับเอกสารที่อนุมัติแล้ว + เพิ่ม error state ที่ modal เดิมไม่เคยมี (เดิมถ้า reject ล้มเหลว
+ไม่มีอะไรแจ้ง user เลย — ตอนนี้จำเป็นเพราะ guard ใหม่ต้องมีทางบอก error กลับ)
+
+**Test:** เพิ่ม BILL-15–19 ใน `test/bills.test.js` — reject บิลอนุมัติแล้วสำเร็จ, permission qc_staff ทำไม่ได้,
+reject บิล draft ไม่ได้, บล็อกถ้ามี NCR active ผูกอยู่ (เช็คข้อความ error มีรหัส NCR ด้วย), ยืนยันว่า NCR ที่
+cancelled แล้วไม่ถูกนับ (ยัง reject บิลได้ปกติ) — `npm run build` (client) ผ่าน, `node --test` (server) →
+**426/426 เขียว**
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/routes/bills.js` | `POST /:id/reject` รับสถานะ `approved` เพิ่ม + guard บล็อกถ้ามี NCR active ผูกอยู่ |
+| `client/src/pages/Bills/Detail.jsx` | ปุ่ม "ส่งกลับแก้ไข" ตอน `approved`, error state ใน modal ส่งกลับ |
+| `server/test/bills.test.js` | เพิ่ม BILL-15–19 |
 
 ---
 

@@ -138,6 +138,64 @@ test('BILL-11b reject: หมายเหตุถูกบันทึกลง
   assert.equal(detail2.body.reject_comment, null);
 });
 
+// S164 — user รายงาน: อนุมัติบิลไปแล้วแต่เจอข้อมูลผิดภายหลัง ต้องการส่งกลับให้ qc_staff แก้ไขใหม่ (เดิม "ส่งกลับ"
+// กดได้แค่ตอน pending_approval เท่านั้น)
+async function approvedBill() {
+  const b = await api('POST', '/api/bills', { cookie: C.staff, body: billBody() });
+  const item = await api('POST', `/api/bills/${b.body.id}/items`, { cookie: C.staff, body: cleanItem() });
+  await api('POST', `/api/bills/${b.body.id}/submit`, { cookie: C.staff });
+  await api('POST', `/api/bills/${b.body.id}/approve`, { cookie: C.sup });
+  return { billId: b.body.id, itemId: item.body.id };
+}
+
+test('BILL-15 supervisor ส่งกลับบิลที่อนุมัติไปแล้ว (ไม่มี NCR ผูกอยู่) → กลับไป draft + บันทึกเหตุผล', async () => {
+  const { billId } = await approvedBill();
+  const r = await api('POST', `/api/bills/${billId}/reject`, { cookie: C.sup, body: { comment: 'ลงรหัสสินค้าผิด' } });
+  assert.equal(r.status, 200);
+  const detail = await api('GET', `/api/bills/${billId}`, { cookie: C.staff });
+  assert.equal(detail.body.status, 'draft');
+  assert.equal(detail.body.reject_comment, 'ลงรหัสสินค้าผิด');
+});
+
+test('BILL-16 permission: qc_staff ส่งกลับบิลที่อนุมัติแล้วไม่ได้ → 403', async () => {
+  const { billId } = await approvedBill();
+  const r = await api('POST', `/api/bills/${billId}/reject`, { cookie: C.staff, body: { comment: 'x' } });
+  assert.equal(r.status, 403);
+});
+
+test('BILL-17 ส่งกลับบิลสถานะ draft (ยังไม่เคยอนุมัติ) → 400', async () => {
+  const b = await api('POST', '/api/bills', { cookie: C.staff, body: billBody() });
+  const r = await api('POST', `/api/bills/${b.body.id}/reject`, { cookie: C.sup, body: { comment: 'x' } });
+  assert.equal(r.status, 400);
+});
+
+test('BILL-18 ส่งกลับบิลที่อนุมัติแล้วแต่มี NCR active ผูกอยู่ → 400 (กัน bill_items ที่ NCR อ้างอิงถูกแก้ไข)', async () => {
+  const { billId, itemId } = await approvedBill();
+  const ncrCode = `NCR-TEST-${billId}`;
+  db.prepare(`INSERT INTO ncrs (ncr_code, bill_id, po_no, invoice_no, severity, status, created_by)
+    VALUES (?, ?, 'PO-1', 'INV-1', 'major', 'pending_supervisor', ?)`).run(ncrCode, billId, uid('qc_staff1'));
+  const ncrId = db.prepare('SELECT id FROM ncrs WHERE ncr_code = ?').get(ncrCode).id;
+  db.prepare(`INSERT INTO ncr_items (ncr_id, bill_item_id, item_name, qty_received, qty_sampled, qty_failed)
+    VALUES (?, ?, 'สินค้า', 100, 10, 2)`).run(ncrId, itemId);
+
+  const r = await api('POST', `/api/bills/${billId}/reject`, { cookie: C.sup, body: { comment: 'x' } });
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, new RegExp(ncrCode));
+});
+
+test('BILL-19 ส่งกลับบิลที่มี NCR แต่ NCR ถูกยกเลิกแล้ว (cancelled) → ยังส่งกลับได้ปกติ', async () => {
+  const { billId, itemId } = await approvedBill();
+  const ncrCode = `NCR-TEST-CANCELLED-${billId}`;
+  db.prepare(`INSERT INTO ncrs (ncr_code, bill_id, po_no, invoice_no, severity, status, created_by)
+    VALUES (?, ?, 'PO-1', 'INV-1', 'major', 'cancelled', ?)`).run(ncrCode, billId, uid('qc_staff1'));
+  const ncrId = db.prepare('SELECT id FROM ncrs WHERE ncr_code = ?').get(ncrCode).id;
+  db.prepare(`INSERT INTO ncr_items (ncr_id, bill_item_id, item_name, qty_received, qty_sampled, qty_failed)
+    VALUES (?, ?, 'สินค้า', 100, 10, 2)`).run(ncrId, itemId);
+
+  const r = await api('POST', `/api/bills/${billId}/reject`, { cookie: C.sup, body: { comment: 'x' } });
+  assert.equal(r.status, 200);
+});
+
 // ===== Telegram กลุ่ม QC — ข้อความรูปแบบใหม่ตอน submit/approve (คำขอ user, S143) =====
 // mock 'node-fetch' ผ่าน require.cache (pattern เดียวกับ test/backupService.test.js's mockNodeFetch) กันยิง
 // network จริงไป Telegram API ระหว่างเทส — sendTelegram() ใน routes/notifications.js ไม่ await โดยผู้เรียก
