@@ -26,7 +26,7 @@ function submitSupplierResponse({ ncr, respondent_name, root_cause, corrective_a
     for (const uid of resolveNotifyTargetIds(billRow ? billRow.supplier_id : null)) {
       createNotification(uid, 'Supplier ตอบ NCR แล้ว', `${ncr.ncr_code} — Supplier ส่งคำตอบแล้ว รอ QC Manager ตรวจสอบ`, `/ncr/${ncr.id}`);
     }
-    sendTelegram(db.getSetting('telegram_group_qc'), `[IQC] Supplier ตอบกลับ\n${ncr.ncr_code}\nรอ QC Manager ตรวจสอบ`);
+    sendTelegram(db.getSetting('telegram_group_qc'), `Supplier ตอบกลับ\n${ncr.ncr_code}\nรอ QC Manager ตรวจสอบ`);
 
     db.auditLog('supplier_responses', result.lastInsertRowid, 'CREATE', null, { ncr_id: ncr.id }, null, null);
     return result.lastInsertRowid;

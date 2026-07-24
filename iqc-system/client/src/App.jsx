@@ -34,6 +34,7 @@ import NCRReport from './pages/Reports/NCRReport';
 import UAIReport from './pages/Reports/UAIReport';
 import SummaryReport from './pages/Reports/Summary';
 import NCRResponse from './pages/Supplier/NCRResponse';
+import UaiPublicView from './pages/UAI/PublicView';
 import DeliveryCalendar from './pages/Delivery/index';
 import IssueTalkList from './pages/IssueTalk/index';
 import IssueTalkDetail from './pages/IssueTalk/Detail';
@@ -79,6 +80,7 @@ function AppRoutes() {
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
       <Route path="/supplier/ncr/:token" element={<NCRResponse />} />
       <Route path="/fncp-response/:token" element={<FNCPResponse />} />
+      <Route path="/uai/view/:token" element={<UaiPublicView />} />
 
       <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
         <Route index element={<Dashboard />} />

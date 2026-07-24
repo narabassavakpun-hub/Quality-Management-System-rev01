@@ -499,6 +499,18 @@ export default function UAIDetail() {
               placeholder="ระบุเหตุผลหรือข้อเสนอแนะเพิ่มเติม..."
             />
           </div>
+          {/* S168 — เลือกได้ระหว่างวาดลายเซ็นจริง หรือกดอนุมัติเฉยๆ (ระบบสร้างตราประทับชื่อ+เวลาแทนให้อัตโนมัติ) */}
+          <Button
+            variant="success"
+            className="w-full"
+            onClick={() => sign.mutate({ signature_image: null, comment: sigComment })}
+            loading={sign.isPending}
+          >
+            กดอนุมัติ (ไม่ต้องวาดลายเซ็น)
+          </Button>
+          <div className="flex items-center gap-2 text-muted text-[12px]">
+            <div className="flex-1 border-t border-border" /> หรือ <div className="flex-1 border-t border-border" />
+          </div>
           <div className="text-small text-muted">วาดลายเซ็นในกล่องด้านล่าง</div>
           <SignatureCanvas
             onConfirm={(dataURL) => sign.mutate({ signature_image: dataURL, comment: sigComment })}

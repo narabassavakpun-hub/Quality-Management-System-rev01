@@ -9,6 +9,7 @@ const requireRole = require('../middleware/requireRole');
 const uploads = require('../middleware/upload');
 const { getUsersByRole, createNotification, sendTelegram } = require('../lib/notify');
 const { canPurchasingActOnSupplier, purchasingVisibilitySQL } = require('../lib/purchasingScope');
+const { generateStampImage } = require('../lib/stampImage'); // S168 — ตราประทับอัตโนมัติแทนลายเซ็นตอนกดอนุมัติ
 
 function getNcrSupplierId(ncrId) {
   const row = db.prepare('SELECT b.supplier_id as supplier_id FROM ncrs n LEFT JOIN bills b ON b.id = n.bill_id WHERE n.id = ?').get(ncrId);
@@ -84,6 +85,60 @@ router.get('/', auth, (req, res) => {
   }
 
   res.json(rows);
+});
+
+// ===== S169 — GET /api/uai/view/:token — ดูรายละเอียดแบบไม่ต้อง login (magic link จาก Telegram DM, 24 ชม.) =====
+// ⚠️ ต้องอยู่ก่อน GET /:id เสมอ — Express match route ตามลำดับประกาศ ถ้าอยู่หลัง '/:id' จะโดนจับคำว่า "view"
+// เป็นค่า :id ไปแทน (เข้า handler ผิดตัว) ไม่ใช่ route นี้เลย
+router.get('/view/:token', (req, res) => {
+  const tokenRow = db.prepare('SELECT * FROM uai_view_tokens WHERE token = ?').get(req.params.token);
+  if (!tokenRow) return res.status(404).json({ error: 'ลิงก์ไม่ถูกต้อง' });
+  if (new Date(tokenRow.expires_at) < new Date()) {
+    return res.status(410).json({ error: 'ลิงก์หมดอายุแล้ว (ใช้ได้ 24 ชม.) กรุณาเข้าสู่ระบบเพื่อดูเอกสาร' });
+  }
+
+  // จงใจ SELECT เฉพาะ field ที่จำเป็น (ไม่รวม supplier_token) — ต่างจาก GET /:id ที่ query columns ทั้งหมดมาก่อน
+  // แล้วค่อยลบทีหลังตาม role เพราะที่นี่ไม่มี role ให้เช็คเลย (ไม่ login)
+  const uai = db.prepare(`
+    SELECT u.*, n.ncr_code, n.severity, n.invoice_no, n.po_no,
+           n.disposition, n.disposition_note,
+           s.name as supplier_name, usr.full_name as created_by_name
+    FROM uai_documents u
+    LEFT JOIN ncrs n ON n.id = u.ncr_id
+    LEFT JOIN bills b ON b.id = n.bill_id
+    LEFT JOIN suppliers s ON s.id = b.supplier_id
+    LEFT JOIN users usr ON usr.id = u.created_by
+    WHERE u.id = ?
+  `).get(tokenRow.uai_id);
+  if (!uai) return res.status(404).json({ error: 'ไม่พบเอกสาร UAI' });
+  delete uai.supplier_token; // เผื่อ column หลุดมาจาก SELECT * ในอนาคต กันไว้อีกชั้น
+
+  uai.signatures = db.prepare(`
+    SELECT us.role, us.action, us.comment, us.signature_image, us.signature_method, us.signed_at, usr.full_name
+    FROM uai_signatures us
+    LEFT JOIN users usr ON usr.id = us.user_id
+    WHERE us.uai_id = ? ORDER BY us.signed_at
+  `).all(tokenRow.uai_id).map(s => ({ ...s, signature_image: sigSrc(s.signature_image) }));
+
+  uai.ncr_items = db.prepare(`
+    SELECT ni.item_name, ni.qty_received, ni.qty_sampled, ni.qty_failed, ni.defect_detail, ni.bill_item_id, dc.name as defect_category_name
+    FROM ncr_items ni
+    LEFT JOIN defect_categories dc ON dc.id = ni.defect_category_id
+    WHERE ni.ncr_id = ?
+  `).all(uai.ncr_id);
+
+  // S170 — เพิ่มรูปงานเสีย (ที่หลุดไปตอน S169 ทำให้ C-level เปิดลิงก์ดูแล้วไม่เห็นรูปประกอบพิจารณา) — mirror
+  // GET /:id (authed) ที่มีรูป 2 แหล่งนี้อยู่แล้ว: ต่อรายการ (bill_item_images) + รวมทั้ง NCR (ncr_images)
+  for (const item of uai.ncr_items) {
+    item.bill_item_images = item.bill_item_id
+      ? db.prepare('SELECT file_path FROM bill_item_images WHERE bill_item_id = ?').all(item.bill_item_id)
+      : [];
+  }
+  uai.ncr_images = db.prepare('SELECT file_path FROM ncr_images WHERE ncr_id = ?').all(uai.ncr_id);
+
+  uai.images = db.prepare('SELECT file_path, original_name FROM uai_images WHERE uai_id = ? ORDER BY uploaded_at').all(uai.id);
+
+  res.json(uai);
 });
 
 // ===== GET /api/uai/:id =====
@@ -242,7 +297,16 @@ router.delete('/:id/images/:imgId', auth, requireRole(['purchasing', 'purchasing
 });
 
 // ===== POST /api/uai/:id/sign =====
-router.post('/:id/sign', auth, (req, res) => {
+// S168 — บันทึกตราประทับอัตโนมัติ (Buffer PNG จาก generateStampImage) ด้วยชื่อไฟล์ pattern เดียวกับลายเซ็นจริง
+// (sig-<uuid>.png) เพื่อให้จุดอ่านค่ากลับ (sigSrc) และการลบไฟล์ตอน transaction ล้มเหลวใช้โค้ดเดิมได้หมด
+function saveStampBuffer(buf) {
+  fs.mkdirSync(SIG_DIR, { recursive: true });
+  const name = `sig-${crypto.randomUUID()}.png`;
+  fs.writeFileSync(path.join(SIG_DIR, name), buf);
+  return name;
+}
+
+router.post('/:id/sign', auth, async (req, res) => {
   const uai = db.prepare('SELECT * FROM uai_documents WHERE id = ?').get(req.params.id);
   if (!uai) return res.status(404).json({ error: 'ไม่พบ UAI' });
 
@@ -253,21 +317,31 @@ router.post('/:id/sign', auth, (req, res) => {
   if (req.user.role !== expectedRole && !isPurchasingManagerOverride) return res.status(403).json({ error: 'ไม่ใช่คิวของคุณในการลงนาม' });
   if (expectedRole === 'purchasing' && blockIfNotAssignedPurchasing(req, res, uai.ncr_id)) return;
 
+  // S168 — signature_image ไม่บังคับอีกต่อไป: ไม่ส่งมา = เลือก "กดอนุมัติ" แทนวาดลายเซ็น →
+  // สร้างตราประทับอัตโนมัติ (ชื่อ+เวลา) แทน — signature_image ยังเป็น NOT NULL ในตาราง จึงต้องมีไฟล์เสมอ
   const { signature_image, comment } = req.body;
-  if (!signature_image) return res.status(400).json({ error: 'กรุณาวาดลายเซ็น' });
-
-  // DEVMORE M2 — เซฟลายเซ็นเป็นไฟล์ก่อน transaction (เก็บ filename ใน DB)
   let sigFile;
-  try { sigFile = saveSignatureImage(signature_image); }
-  catch (e) { return res.status(400).json({ error: e.message }); }
+  let signatureMethod;
+  try {
+    if (signature_image) {
+      sigFile = saveSignatureImage(signature_image);
+      signatureMethod = 'signature';
+    } else {
+      const buf = await generateStampImage(req.user.full_name, new Date());
+      sigFile = saveStampBuffer(buf);
+      signatureMethod = 'approve_button';
+    }
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
 
   const action = ['uai_pending_cco', 'uai_pending_cmo', 'uai_pending_cpo', 'uai_pending_purchasing'].includes(uai.status) ? 'approved' : 'acknowledged';
 
   try {
-    const nextStatus = uaiService.signUai({ uai, actorId: req.user.id, actorRole: req.user.role, actorIp: req.ip, sigFile, action, comment });
+    const nextStatus = uaiService.signUai({ uai, actorId: req.user.id, actorRole: req.user.role, actorIp: req.ip, sigFile, action, comment, signatureMethod });
     res.json({ ok: true, status: nextStatus });
   } catch (e) {
-    // DEVMORE M2 — ลบไฟล์ลายเซ็นที่ค้างถ้า transaction ล้มเหลว
+    // DEVMORE M2 — ลบไฟล์ลายเซ็น/ตราประทับที่ค้างถ้า transaction ล้มเหลว
     try { if (sigFile) fs.unlinkSync(path.join(SIG_DIR, sigFile)); } catch {}
     res.status(400).json({ error: e.message });
   }

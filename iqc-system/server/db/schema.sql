@@ -405,7 +405,35 @@ CREATE TABLE IF NOT EXISTS uai_signatures (
   signature_image TEXT NOT NULL,
   action TEXT NOT NULL,
   comment TEXT,
+  -- S168 — วิธีที่ใช้ยืนยัน: 'signature' (วาดลายเซ็นจริง), 'approve_button' (กดอนุมัติในเว็บ ไม่วาดลายเซ็น),
+  -- 'telegram' (กดอนุมัติผ่านปุ่ม inline ใน Telegram) — ทั้ง approve_button/telegram ยังคง signature_image
+  -- เป็นตราประทับที่ระบบสร้างอัตโนมัติ (ชื่อ+เวลา) เพื่อให้ PDF/หน้าจอเดิมที่ต้องมีรูปยังทำงานได้ไม่ต้องแก้จุดแสดงผล
+  -- ไม่มี CHECK constraint โดยตั้งใจ (validate ที่ app layer แทน) ตาม pattern เดียวกับ ncrs.status (DEVMORE H4)
+  signature_method TEXT NOT NULL DEFAULT 'signature',
   signed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- S169 — magic link ดูรายละเอียด UAI แบบไม่ต้อง login (แนบใน Telegram DM ตอนถึงคิวเซ็น) อายุ 24 ชม./token
+-- token ใหม่ทุกครั้งที่ส่งแจ้งเตือน (ไม่ reuse) — หมดอายุแล้วต้อง login ปกติ ดู services/uaiService.js's
+-- createUaiViewToken() + routes/uai.js's GET /view/:token
+CREATE TABLE IF NOT EXISTS uai_view_tokens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  uai_id INTEGER REFERENCES uai_documents(id) ON DELETE RESTRICT,
+  token TEXT UNIQUE NOT NULL,
+  expires_at DATETIME NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_uai_view_tokens_token ON uai_view_tokens(token);
+CREATE INDEX IF NOT EXISTS idx_uai_view_tokens_uai   ON uai_view_tokens(uai_id);
+
+-- S170 — สถานะชั่วคราวระหว่างรอผู้ใช้พิมพ์ "เหตุผลที่ไม่อนุมัติ" กลับมาในแชท Telegram หลังกดปุ่ม inline
+-- "❌ ไม่อนุมัติ" (ปุ่มเดียวส่ง reason ไม่ได้ ต้องรอข้อความถัดไปจากผู้ใช้ — ดู routes/telegramWebhook.js's
+-- processTextMessage()) 1 แถวต่อ 1 chat_id เท่านั้น (INSERT OR REPLACE ทับของเก่าเสมอถ้ากดปุ่มซ้ำ) ลบทิ้งทันทีที่
+-- ประมวลผลข้อความเสร็จไม่ว่าสำเร็จหรือพัง กันผู้ใช้เขียนข้อความอื่นมาโดนตีความเป็นเหตุผลผิดๆ ภายหลัง
+CREATE TABLE IF NOT EXISTS telegram_pending_rejects (
+  chat_id TEXT PRIMARY KEY,
+  uai_id INTEGER NOT NULL REFERENCES uai_documents(id) ON DELETE CASCADE,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS uai_images (

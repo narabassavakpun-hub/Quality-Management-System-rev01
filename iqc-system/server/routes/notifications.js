@@ -23,7 +23,7 @@ function notifyUserTelegram(userId, title, message, link) {
     const row = db.prepare('SELECT telegram_chat_id FROM users WHERE id = ?').get(userId);
     const chatId = row && row.telegram_chat_id ? String(row.telegram_chat_id).trim() : '';
     if (!chatId) return;
-    let text = `[IQC] ${title}`;
+    let text = title;
     if (message) text += `\n${message}`;
     const appUrl = db.getSetting('app_url');
     if (appUrl && link) text += `\n${appUrl.replace(/\/+$/, '')}${link}`;
@@ -34,17 +34,21 @@ function notifyUserTelegram(userId, title, message, link) {
   }
 }
 
-async function sendTelegram(chatId, text) {
+// S168 — extra.reply_markup (optional): inline keyboard เช่นปุ่ม "อนุมัติผ่าน Telegram" ของ UAI —
+// ไม่กระทบ caller เดิมทั้งหมดที่เรียกแค่ (chatId, text) เพราะเป็น param เสริม
+async function sendTelegram(chatId, text, extra) {
   const token = db.getSetting('telegram_bot_token');
   if (!token || !chatId) return;
   try {
     const fetch = require('node-fetch');
     // DEVMORE M6 — ส่งเป็น plain text (ไม่ใช้ parse_mode:HTML) กัน HTML injection/parse error
     // จากค่าที่ผู้ใช้/Supplier กรอก เช่น ชื่อสินค้า, comment, root_cause
+    const body = { chat_id: chatId, text };
+    if (extra?.reply_markup) body.reply_markup = extra.reply_markup;
     await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text }),
+      body: JSON.stringify(body),
     });
   } catch (e) {
     console.error('Telegram error:', e.message);

@@ -50,7 +50,7 @@ function submitBill({ bill, actorId, actorIp }) {
     const appUrl = db.getSetting('app_url');
     const link = appUrl ? `${appUrl.replace(/\/+$/, '')}/bills/${bill.id}` : `/bills/${bill.id}`;
     const text = [
-      '[IQC] 📥 มีบันทึกรับเข้าบิลใหม่',
+      '📥 มีบันทึกรับเข้าบิลใหม่',
       `PO: ${bill.po_no}`,
       `Invoice: ${bill.invoice_no}`,
       `บริษัท: ${info?.supplier_name || '-'}`,

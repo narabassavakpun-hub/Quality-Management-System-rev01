@@ -158,6 +158,21 @@ function TelegramTab() {
         <p className="text-[12px] text-muted mt-1">ใช้สร้าง link ส่ง Supplier เช่น {'{APP_URL}'}/supplier/ncr/{'{token}'}</p>
       </div>
 
+      {/* S168 — ปุ่ม "อนุมัติผ่าน Telegram" ของ UAI (ต้อง setWebhook กับ Telegram ก่อนถึงจะใช้ได้) */}
+      <div className="border-t border-border pt-4">
+        <div className="flex items-center justify-between mb-1">
+          <label className="label mb-0">อนุมัติ UAI ผ่านปุ่ม Telegram</label>
+          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${data.telegram_webhook_enabled ? 'bg-green-100 dark:bg-green-900 text-success' : 'bg-gray-100 dark:bg-gray-900 text-muted'}`}>
+            {data.telegram_webhook_enabled ? 'เปิดใช้งานอยู่' : 'ปิดอยู่'}
+          </span>
+        </div>
+        <p className="text-[12px] text-muted mb-2">
+          เมื่อเปิด ผู้ที่ถึงคิวลงนาม UAI จะได้รับปุ่ม "✅ อนุมัติผ่าน Telegram" ใน Telegram ส่วนตัว กดแล้วอนุมัติได้ทันทีไม่ต้องเข้าเว็บ
+          (ระบบสร้างตราประทับชื่อ+เวลาแทนลายเซ็น) — ต้องตั้งค่า Bot Token + APP URL เป็น https:// ให้ครบก่อน
+        </p>
+        <WebhookToggle enabled={!!data.telegram_webhook_enabled} />
+      </div>
+
       {save.error && (
         <div className="text-danger text-small bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded px-3 py-2">
           {save.error?.response?.data?.error || 'บันทึกไม่สำเร็จ'}
@@ -178,6 +193,42 @@ function TelegramTab() {
 
       {testMsg && <div className="text-success text-small bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-700 rounded px-3 py-2">{testMsg}</div>}
       {testErr && <div className="text-danger text-small bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded px-3 py-2">{testErr}</div>}
+    </div>
+  );
+}
+
+// S168 — เปิด/ปิด Telegram webhook (ปุ่ม "อนุมัติผ่าน Telegram" ของ UAI) — แยก component ย่อยเพราะเป็น
+// action คนละแบบจากฟอร์มบันทึกค่าปกติด้านบน (ยิง API ทันทีตอนกด ไม่ต้องกด "บันทึก" อีกที)
+function WebhookToggle({ enabled }) {
+  const qc = useQueryClient();
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function handleToggle() {
+    setError(''); setBusy(true);
+    try {
+      await api.post(`/admin/settings/telegram/webhook/${enabled ? 'unregister' : 'register'}`);
+      qc.invalidateQueries(['settings-telegram']);
+    } catch (e) {
+      setError(e?.response?.data?.error || 'ดำเนินการไม่สำเร็จ');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={handleToggle}
+        disabled={busy}
+        className={`min-h-[44px] px-4 rounded-md text-small font-medium disabled:opacity-50 transition-colors ${
+          enabled ? 'border border-border text-danger hover:bg-red-50 dark:hover:bg-red-900' : 'bg-primary text-white hover:opacity-90'
+        }`}
+      >
+        {busy ? 'กำลังดำเนินการ...' : enabled ? 'ปิดใช้งาน' : 'เปิดใช้งาน (ตั้งค่า Webhook)'}
+      </button>
+      {error && <div className="text-danger text-small bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded px-3 py-2 mt-2">{error}</div>}
     </div>
   );
 }

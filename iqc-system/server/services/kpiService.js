@@ -63,7 +63,7 @@ function submitReport({ report, actorId, actorIp }) {
         `/kpi/reports/${report.id}`);
     }
     sendTelegram(db.getSetting('telegram_group_qc'),
-      `[IQC] รายงาน KPI ส่งอนุมัติ\n${report.report_no} (${report.month}/${report.year})\nรอ QC Manager อนุมัติ`
+      `รายงาน KPI ส่งอนุมัติ\n${report.report_no} (${report.month}/${report.year})\nรอ QC Manager อนุมัติ`
     );
 
     db.auditLog('kpi_reports', report.id, 'SUBMIT', { status: report.status }, { status: 'pending_qc_manager' }, actorId, actorIp);
@@ -92,7 +92,7 @@ function approveReport({ report, role, t, comment, actorId, actorIp }) {
           `/kpi/reports/${report.id}`);
       }
       sendTelegram(db.getSetting('telegram_group_qc'),
-        `[IQC] รายงาน KPI ผ่าน QC Manager\n${report.report_no} (${report.month}/${report.year})\nรอ CPO อนุมัติ`
+        `รายงาน KPI ผ่าน QC Manager\n${report.report_no} (${report.month}/${report.year})\nรอ CPO อนุมัติ`
       );
     } else if (role === 'cpo') {
       for (const u of getUsersByRole('qmr')) {
@@ -101,7 +101,7 @@ function approveReport({ report, role, t, comment, actorId, actorIp }) {
           `/kpi/reports/${report.id}`);
       }
       sendTelegram(db.getSetting('telegram_group_qc'),
-        `[IQC] รายงาน KPI ผ่าน CPO\n${report.report_no} (${report.month}/${report.year})\nรอ QMR อนุมัติ`
+        `รายงาน KPI ผ่าน CPO\n${report.report_no} (${report.month}/${report.year})\nรอ QMR อนุมัติ`
       );
     } else if (role === 'qmr') {
       const notifyRoles = ['admin', 'qc_manager', 'cpo'];
@@ -111,7 +111,7 @@ function approveReport({ report, role, t, comment, actorId, actorIp }) {
           `/kpi/reports/${report.id}`);
       }
       sendTelegram(db.getSetting('telegram_group_qc'),
-        `[IQC] รายงาน KPI อนุมัติแล้ว\n${report.report_no} (${report.month}/${report.year})\nอนุมัติโดย QMR — สถานะ: Approved`
+        `รายงาน KPI อนุมัติแล้ว\n${report.report_no} (${report.month}/${report.year})\nอนุมัติโดย QMR — สถานะ: Approved`
       );
     }
 
@@ -136,7 +136,7 @@ function rejectReport({ report, role, fromStatus, reason, actorId, actorIp }) {
         `/kpi/reports/${report.id}`);
     }
     sendTelegram(db.getSetting('telegram_group_qc'),
-      `[IQC] รายงาน KPI ถูกปฏิเสธ\n${report.report_no} (${report.month}/${report.year})\nโดย ${role}: ${reason.trim()}`
+      `รายงาน KPI ถูกปฏิเสธ\n${report.report_no} (${report.month}/${report.year})\nโดย ${role}: ${reason.trim()}`
     );
 
     db.auditLog('kpi_reports', report.id, 'REJECT', { status: report.status }, { status: 'rejected', role, reason }, actorId, actorIp);

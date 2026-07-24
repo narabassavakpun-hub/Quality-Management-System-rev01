@@ -306,6 +306,8 @@ function runMigrations() {
 
   // users: personal Telegram chat id — ส่งแจ้งเตือนกระดิ่งเข้า Telegram ส่วนตัวของแต่ละคน
   safeAddColumn('users', 'telegram_chat_id', 'TEXT');
+  // uai_signatures: วิธียืนยัน (S168) — signature/approve_button/telegram (ดู schema.sql comment)
+  safeAddColumn('uai_signatures', 'signature_method', "TEXT NOT NULL DEFAULT 'signature'");
   // users: อีเมลส่วนตัว (S128) — ใช้ส่งแจ้งเตือนอีเมล (เช่น COO รับทราบ NCR) เหมือน telegram_chat_id
   safeAddColumn('users', 'email', 'TEXT');
   // users: Telegram @username สาธารณะ (S153) — เก็บไม่มี '@' นำหน้า, ใช้ @mention ในข้อความกลุ่ม (เช่น
@@ -692,6 +694,9 @@ function seedData() {
   // settings defaults
   const settingKeys = [
     'telegram_bot_token','telegram_group_qc','telegram_group_purchasing','app_url','token_expiry_days',
+    // S168 — Telegram webhook (อนุมัติ UAI ผ่านปุ่ม inline) — telegram_webhook_secret เข้ารหัสผ่าน
+    // getSecretSetting/setSecretSetting (pattern เดียวกับ ad_secret_key) ต่างจาก telegram_bot_token เดิม
+    'telegram_webhook_secret', 'telegram_webhook_enabled',
     'company_name','company_address','company_logo',
     'ncr_img_cols','ncr_img_max_width','uai_img_cols','uai_img_max_width',
     'factory_lat','factory_lon','factory_radius_m',
@@ -708,6 +713,7 @@ function seedData() {
   ];
   const defaults = {
     telegram_bot_token: '', telegram_group_qc: '', telegram_group_purchasing: '',
+    telegram_webhook_secret: '', telegram_webhook_enabled: '0',
     app_url: 'http://localhost:5173', token_expiry_days: '90',
     company_name: '', company_address: '', company_logo: '',
     ncr_img_cols: '3', ncr_img_max_width: '180',

@@ -36,7 +36,7 @@ function createSchedule({ supplier_id, scheduled_date, time_slot, notes, items, 
       createNotification(u.id, 'แจ้งกำหนดส่งสินค้า', `${supplier?.name} วันที่ ${scheduled_date} เวลา ${time_slot}`, scheduleLink);
     }
     sendTelegram(db.getSetting('telegram_group_qc'),
-      `[IQC] แจ้งกำหนดส่งสินค้า\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date} (${time_slot})\nหมายเหตุ: ${notes || '-'}`
+      `แจ้งกำหนดส่งสินค้า\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date} (${time_slot})\nหมายเหตุ: ${notes || '-'}`
     );
 
     // แจ้งเตือนพิเศษเมื่อนัดนอกเวลาทำงาน (07:xx หรือ 18:xx)
@@ -47,10 +47,10 @@ function createSchedule({ supplier_id, scheduled_date, time_slot, notes, items, 
       for (const u of getWarehouseStaff()) createNotification(u.id, 'แจ้งนัดส่งนอกเวลาทำงาน', offMsg, scheduleLink);
       for (const uid of resolveNotifyTargetIds(supplier_id)) createNotification(uid, 'แจ้งนัดส่งนอกเวลาทำงาน', offMsg, scheduleLink);
       sendTelegram(db.getSetting('telegram_group_qc'),
-        `[IQC] แจ้งเตือน: นัดส่งสินค้านอกเวลาทำงาน\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date} เวลา: ${time_slot} (${offLabel})`
+        `แจ้งเตือน: นัดส่งสินค้านอกเวลาทำงาน\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date} เวลา: ${time_slot} (${offLabel})`
       );
       sendTelegram(db.getSetting('telegram_group_purchasing'),
-        `[IQC] แจ้งเตือน: นัดส่งสินค้านอกเวลาทำงาน\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date} เวลา: ${time_slot} (${offLabel})`
+        `แจ้งเตือน: นัดส่งสินค้านอกเวลาทำงาน\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date} เวลา: ${time_slot} (${offLabel})`
       );
     }
 
@@ -67,10 +67,10 @@ function createSchedule({ supplier_id, scheduled_date, time_slot, notes, items, 
       for (const u of getWarehouseStaff()) createNotification(u.id, `แจ้งนัดส่งวันหยุด`, weekendMsg, scheduleLink);
       for (const uid of resolveNotifyTargetIds(supplier_id)) createNotification(uid, `แจ้งนัดส่งวันหยุด`, weekendMsg, scheduleLink);
       sendTelegram(db.getSetting('telegram_group_qc'),
-        `[IQC] แจ้งเตือน: นัดส่งสินค้า${dayName}\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date} เวลา: ${time_slot}`
+        `แจ้งเตือน: นัดส่งสินค้า${dayName}\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date} เวลา: ${time_slot}`
       );
       sendTelegram(db.getSetting('telegram_group_purchasing'),
-        `[IQC] แจ้งเตือน: นัดส่งสินค้า${dayName}\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date} เวลา: ${time_slot}`
+        `แจ้งเตือน: นัดส่งสินค้า${dayName}\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date} เวลา: ${time_slot}`
       );
     }
 
@@ -103,7 +103,7 @@ function createUnplanned({ supplier_id, scheduled_date, time_slot, notes, items,
     }
 
     sendTelegram(db.getSetting('telegram_group_purchasing'),
-      `[IQC] สินค้าส่งนอกแผน\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date}\nบันทึกโดย: ${actorName}`
+      `สินค้าส่งนอกแผน\nSupplier: ${supplier?.name}\nวันที่: ${scheduled_date}\nบันทึกโดย: ${actorName}`
     );
 
     db.auditLog('delivery_schedules', scheduleId, 'CREATE', null, { supplier_id, is_unplanned: 1 }, actorId, actorIp);
@@ -149,6 +149,21 @@ function updateStatus({ schedule, status, late_reason, rescheduled_date, actual_
       }
     }
 
+    // S171 — จัดซื้อยกเลิกแผนส่ง (มักเกิดตอน supplier เปลี่ยนแผนกระทันหันหลังคลังรับทราบไปแล้ว) — เดิม branch นี้
+    // ไม่มีการแจ้งเตือนเลยเหมือน on_time/late/rescheduled ด้านบน ทำให้คลัง/กลุ่ม QC ไม่รู้ว่ารายการที่รับทราบไปแล้ว
+    // ถูกยกเลิก (ต่างจาก deleteSchedule ที่แจ้งคลังอยู่แล้ว — cancel ควรแจ้งเหมือนกันเพราะทดแทน delete ในเคส acknowledged)
+    if (status === 'cancelled') {
+      const scheduleLink = `/delivery?schedule=${schedule.id}`;
+      const supplier = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(schedule.supplier_id);
+      const cancelMsg = `${actorName} ยกเลิกกำหนดส่งวันที่ ${schedule.scheduled_date} (${schedule.time_slot}) — ผู้ผลิต: ${supplier?.name}\nเหตุผล: ${late_reason}`;
+      for (const u of getWarehouseStaff()) {
+        createNotification(u.id, 'ยกเลิกกำหนดส่งสินค้า', cancelMsg, scheduleLink);
+      }
+      sendTelegram(db.getSetting('telegram_group_qc'),
+        `แจ้งยกเลิกกำหนดส่งสินค้า\nSupplier: ${supplier?.name}\nวันที่เดิม: ${schedule.scheduled_date} (${schedule.time_slot})\nเหตุผล: ${late_reason}`
+      );
+    }
+
     if (status === 'rescheduled') {
       const scheduleLink = `/delivery?schedule=${schedule.id}`;
       const supplier = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(schedule.supplier_id);
@@ -171,9 +186,9 @@ function updateStatus({ schedule, status, late_reason, rescheduled_date, actual_
           createNotification(uid, `แจ้งเลื่อนวันส่ง (วันหยุด)`, holidayMsg, scheduleLink);
         }
         sendTelegram(db.getSetting('telegram_group_qc'),
-          `[IQC] แจ้งเตือน: เลื่อนวันส่งสินค้าเป็นวันหยุด\nSupplier: ${supplier?.name}\nวันที่ใหม่: ${rescheduled_date} (${dayName})\nเหตุผล: ${late_reason}`);
+          `แจ้งเตือน: เลื่อนวันส่งสินค้าเป็นวันหยุด\nSupplier: ${supplier?.name}\nวันที่ใหม่: ${rescheduled_date} (${dayName})\nเหตุผล: ${late_reason}`);
         sendTelegram(db.getSetting('telegram_group_purchasing'),
-          `[IQC] แจ้งเตือน: เลื่อนวันส่งสินค้าเป็นวันหยุด\nSupplier: ${supplier?.name}\nวันที่ใหม่: ${rescheduled_date} (${dayName})\nเหตุผล: ${late_reason}`);
+          `แจ้งเตือน: เลื่อนวันส่งสินค้าเป็นวันหยุด\nSupplier: ${supplier?.name}\nวันที่ใหม่: ${rescheduled_date} (${dayName})\nเหตุผล: ${late_reason}`);
       }
     }
     db.auditLog('delivery_schedules', schedule.id, 'STATUS_UPDATE',
@@ -222,9 +237,9 @@ function updateSchedule({ schedule, scheduled_date, time_slot, notes, actorId, a
           createNotification(uid, `แจ้งแก้ไขวันส่ง (วันหยุด)`, holidayMsg, scheduleLink);
         }
         sendTelegram(db.getSetting('telegram_group_qc'),
-          `[IQC] แจ้งเตือน: แก้ไขวันส่งสินค้าเป็นวันหยุด\nSupplier: ${supplier?.name}\nวันที่ใหม่: ${newDate} (${dayName}) เวลา: ${newTime}`);
+          `แจ้งเตือน: แก้ไขวันส่งสินค้าเป็นวันหยุด\nSupplier: ${supplier?.name}\nวันที่ใหม่: ${newDate} (${dayName}) เวลา: ${newTime}`);
         sendTelegram(db.getSetting('telegram_group_purchasing'),
-          `[IQC] แจ้งเตือน: แก้ไขวันส่งสินค้าเป็นวันหยุด\nSupplier: ${supplier?.name}\nวันที่ใหม่: ${newDate} (${dayName}) เวลา: ${newTime}`);
+          `แจ้งเตือน: แก้ไขวันส่งสินค้าเป็นวันหยุด\nSupplier: ${supplier?.name}\nวันที่ใหม่: ${newDate} (${dayName}) เวลา: ${newTime}`);
       }
     }
 

@@ -2,9 +2,9 @@
 
 ---
 
-## 📌 Current State (2026-07-23)
+## 📌 Current State (2026-07-24)
 
-**Version:** rev01 · Production · **Latest code:** Session 166 (2026-07-23)
+**Version:** rev01 · Production · **Latest code:** Session 171 (2026-07-24)
 
 **Architecture Summary**
 - Backend: Express 4.18 + better-sqlite3 (WAL, FK ON), **102 ตาราง** (+`environment_presets`, S118; +`supplier_purchasing_assignees`, S125), ~33 route files, SSE + Telegram + **Email/SMTP (S128, `lib/mailer.js`)**, port 3001
@@ -138,6 +138,254 @@
 **Technical Debt / Roadmap:** ดู [`../AUDIT.md`](../AUDIT.md) §12 (Refactor Roadmap) — **P0 ปิดครบแล้ว (S105)**; P1 ปิดครบ; P2 ปิดครบ (S103); เหลือ P3 (horizontal scale, TypeScript) + gap ใหม่ (ipqc_records removal decision, ipqc_inspections test coverage, fgqc reset-all FK gap) + restore-drill ยังไม่ automate ใน CI (ดู AUDIT.md D5) + CLAUDE.md §11 Role Matrix ต้องเพิ่ม purchasing_manager (S125) + purchasing_manager review step (S128)
 
 **เอกสารอ้างอิง:** [`../CLAUDE.md`](../CLAUDE.md) · [`../PRD.md`](../PRD.md) · [`../brand.md`](../brand.md) · [`../design-dashboard.md`](../design-dashboard.md) · [`../testcase.md`](../testcase.md) · [`../AUDIT.md`](../AUDIT.md)
+
+---
+
+## 2026-07-24 | Session 171 — Delivery: ปุ่ม "ยกเลิกการส่งของ" ให้จัดซื้อหลังคลังรับทราบแล้ว + แจ้งเตือนคลัง/กลุ่ม QC
+
+**คำขอ:** ที่ปฏิทินรับส่งของ เมื่อคลังรับทราบแผนส่งแล้ว แต่ supplier เปลี่ยนแผนกระทันหัน (ก่อนถึงวันนัด) ให้จัดซื้อ
+กดปุ่มยกเลิกได้ และให้ระบบแจ้งเตือนไปที่คลังและกลุ่ม QC ว่ามีการยกเลิกรายการนี้
+
+**ตรวจโค้ดเดิมก่อนแก้ (สำคัญ):** พบว่า backend รองรับ "ยกเลิกหลัง acknowledged" อยู่แล้วจริง — `PATCH
+/delivery/:id/status` ยอม purchasing ตั้ง `status='cancelled'` จาก `pending` **หรือ** `acknowledged` ก็ได้ (บังคับ
+กรอกเหตุผลอยู่แล้วด้วย) ตรงกับกฎเดิมใน CLAUDE.md §20 ("ลบหลัง QC acknowledge ไม่ได้ → ใช้ 'ยกเลิก'") แต่มี **gap
+2 จุด** ที่ทำให้ user มองว่า "ไม่มีปุ่มให้กด": (1) client's `canUpdateStatus` (เงื่อนไขเปิดฟอร์ม "อัปเดตสถานะ" ที่มี
+option ยกเลิกอยู่ใน `<select>`) เช็คแค่ `isQC` เท่านั้น — จัดซื้อไม่เคยเห็นปุ่มนี้เลยทั้งที่ backend ให้สิทธิ์อยู่แล้ว
+(2) `updateStatus()` ฝั่ง service ไม่มี branch แจ้งเตือนสำหรับ `status==='cancelled'` เลย (ต่างจาก `on_time`/`late`/
+`rescheduled` ที่มีแจ้งเตือนครบ) — ต่อให้กดยกเลิกได้ก็ไม่มีใครรู้
+
+**Backend (`services/deliveryService.js`):** เพิ่ม branch `status === 'cancelled'` ใน `updateStatus()` — แจ้งเตือน
+คลัง (`getWarehouseStaff()`, in-app) + กลุ่ม QC (`sendTelegram(telegram_group_qc, ...)`) พร้อมชื่อผู้ยกเลิก/วันที่เดิม/
+เหตุผล มี deep-link `/delivery?schedule=<id>` เหมือน branch อื่นทุกจุด (SSE/query-invalidate ทำงานอัตโนมัติผ่าน
+`createNotification` ไม่ต้องเพิ่มโค้ดแยก)
+
+**Frontend (`Delivery/index.jsx`):** เพิ่มปุ่ม **"ยกเลิกการส่งของ"** แยกเฉพาะทาง (ไม่ใช้ฟอร์ม "อัปเดตสถานะ" เดิมที่มี
+หลาย option ปนกัน) เห็นเฉพาะจัดซื้อตอน `status==='acknowledged'` (`canCancel`) — เปิด panel ขอเหตุผลบังคับกรอกก่อน
+ยืนยัน เรียก endpoint เดิม (`PATCH /status` + `{status:'cancelled', late_reason}`) ไม่มี endpoint ใหม่ — ส่วน
+`pending` ยังใช้ปุ่ม "ลบ" เดิม (คลังยังไม่เห็น ไม่ต้องแจ้งเตือน) จึงแก้เงื่อนไขปุ่ม "ลบ" ให้โชว์เฉพาะ `pending` เท่านั้น
+(เดิมโชว์คู่กับ `acknowledged` ด้วยทั้งที่ backend `DELETE` ปฏิเสธเสมอถ้าไม่ใช่ pending — ปุ่มที่กดแล้ว error เงียบๆ
+มาตั้งแต่ก่อน session นี้ แก้พร้อมกันเพราะจุดเดียวกับปุ่มใหม่)
+
+**Test:** เพิ่ม DEL-14–16 ใน `test/delivery.test.js` — ยกเลิก acknowledged สำเร็จ, ไม่ใส่เหตุผล→400, ยืนยันมี
+notification จริงให้คลัง (title/message มีเหตุผลที่กรอก/link ถูกต้อง) — `node --test` (server) → **456/456 เขียว**
+(453 เดิม + 3 ใหม่), `npm run build` (client) ผ่านปกติ
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/services/deliveryService.js` | `updateStatus()` เพิ่ม branch แจ้งเตือนตอน `status==='cancelled'` |
+| `client/src/pages/Delivery/index.jsx` | เพิ่ม `canCancel` + ปุ่ม/panel "ยกเลิกการส่งของ", แก้เงื่อนไขปุ่ม "ลบ" ให้ตรงกับ backend |
+| `server/test/delivery.test.js` | เพิ่ม DEL-14–16 |
+
+---
+
+## 2026-07-24 | Session 170 — UAI: แก้ลิงก์สาธารณะไม่มีรูปปัญหา + เพิ่มปุ่ม "ไม่อนุมัติ" ผ่าน Telegram (COO/CMO/CPO)
+
+**คำขอ:** user รายงาน 2 บั๊ก/gap หลัง S169: (1) ลิงก์ UAI ที่ส่งให้ C-level ดูประกอบพิจารณาไม่มีรูปภาพแสดงปัญหาเลย
+(2) มีแค่ปุ่ม "อนุมัติ" ใน Telegram ไม่มีปุ่ม "ไม่อนุมัติ"
+
+**บั๊ก 1 — รูปหาย:** `GET /uai/view/:token` (S169) เขียน SELECT แบบจำกัด field เองใหม่ทั้งหมด (ไม่ใช้ query เดียวกับ
+`GET /:id`) แล้วลืมพา 2 แหล่งรูปที่ authed route มีอยู่แล้วมาด้วย: `bill_item_images` (รูปงานเสียต่อรายการ) และ
+`ncr_images` (รูปรวมของ NCR) — เพิ่ม `ni.bill_item_id` เข้า SELECT ของ `ncr_items` แล้วต่อ query ดึงทั้ง 2 แหล่งเหมือน
+`GET /:id`, ฝั่ง client เพิ่มส่วนแสดงผลใน `PublicView.jsx` (การ์ด "รูปภาพจาก NCR" + รูปต่อรายการใน "รายการสินค้า")
+มี path เหมือนหน้า authed (`/uploads/bill-items/`, `/uploads/ncr/`)
+
+**บั๊ก/gap 2 — ปุ่มไม่อนุมัติ:** ตรวจโค้ดพบว่าปุ่ม "ไม่อนุมัติ" ในเว็บมีเฉพาะขั้น **COO/CMO/CPO** เท่านั้น
+(`canRejectExec` ใน `UAI/Detail.jsx`, เรียก `POST /:id/reject-exec` ซึ่งบังคับกรอกเหตุผลเป็น text) ขั้นอื่น
+(purchasing/qc_ack/production_ack/qmr_ack) ไม่มีทางปฏิเสธในเว็บเลยเหมือนกัน — เพิ่มปุ่ม Telegram ให้ตรงกับสิทธิ์จริง
+(ไม่ใช่เพิ่มทุกขั้นแบบไม่เลือก):
+- `notifySignerTelegramButton()` รับ option `{ allowReject }` — ส่งปุ่ม 2 ปุ่ม (✅/❌) เฉพาะเมื่อ `true` (เรียกจาก 3
+  branch cco/cmo/cpo ใน `signUai()` เท่านั้น) ขั้นอื่นยังเห็นแค่ปุ่ม "✅ อนุมัติ" เดิม
+- **ปัญหา:** เหตุผลปฏิเสธเป็น field บังคับ กดปุ่มเดียวใน Telegram ส่งมาไม่ได้ (inline button ส่งได้แค่
+  `callback_data` คงที่ ไม่มีช่องกรอกข้อความ) → ออกแบบเป็น **conversation แบบ 2 จังหวะ**: กดปุ่ม "❌ ไม่อนุมัติ"
+  (`callback_data: uai_reject:<id>`) → เช็คสิทธิ์/คิวทันทีเหมือนปุ่มอนุมัติ แต่ **ยังไม่ reject จริง** แค่บันทึก
+  `chat_id → uai_id` ไว้ในตารางใหม่ `telegram_pending_rejects` (1 แถว/1 chat, `INSERT OR REPLACE` ทับของเก่าเสมอ)
+  แล้วส่งข้อความขอให้พิมพ์เหตุผลกลับมา — พอ webhook รับ `message` update (ข้อความธรรมดา ไม่ใช่ callback_query) ที่มี
+  pending state ค้างอยู่ ก็ตีความเป็นเหตุผล เรียก `rejectExec()` จริง แล้วลบ pending state ทิ้งทันที (consume เสมอ
+  ไม่ว่าสำเร็จหรือพัง กันข้อความถัดไปโดนตีความผิด) — พิมพ์ "ยกเลิก"/"/cancel" เพื่อยกเลิก flow ได้
+- `routes/telegramWebhook.js` refactor: แยก `processSign`/`processRejectStart`/`processTextMessage`, main handler
+  เช็ค `req.body.callback_query` vs `req.body.message` (Telegram ส่ง `message` update มาอยู่แล้วโดย default เพราะ
+  `setWebhook` เดิมไม่ได้จำกัด `allowed_updates` — ไม่ต้องแก้จุด register webhook)
+
+**Schema:** เพิ่ม `telegram_pending_rejects` (`chat_id` PK, `uai_id`, `created_at`) — ตารางสถานะชั่วคราวล้วนๆ ไม่ใช่
+ข้อมูล audit จึงตั้ง `ON DELETE CASCADE` (ต่างจาก `uai_view_tokens` ที่ตั้งใจใช้ `RESTRICT`) กันบล็อกการลบ UAI ที่ยัง
+มี pending reject ค้างอยู่โดยไม่จำเป็น
+
+**Test:** เพิ่ม VT-05 (รูปงานเสีย/รูป NCR ติดมาด้วยจริง) ใน GROUP L และ GROUP M ใหม่ (RJ-00–06) ครอบ: กดปุ่มไม่ reject
+ทันที, ยกเลิก flow ด้วยข้อความ "ยกเลิก", ข้อความทั่วไปที่ไม่มี flow ค้างถูกเพิกเฉย, happy path (กดปุ่ม→พิมพ์เหตุผล→
+UAI ถูกปฏิเสธจริง+NCR กลับ `pending_supplier`+pending state ถูกลบ), กดปุ่มหลังคิวเปลี่ยนไปแล้วไม่เปิด flow ใหม่,
+role ที่ไม่ใช่ cco/cmo/cpo กดไม่ได้ — `node --test` (server) → **453/453 เขียว** (445 เดิม + 8 ใหม่), `npm run build`
+(client) ผ่านปกติ
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/db/schema.sql` | ใหม่ — ตาราง `telegram_pending_rejects` |
+| `server/routes/uai.js` | `GET /view/:token` เพิ่ม `ncr_images`/`bill_item_images` (แก้บั๊กรูปหาย) |
+| `client/src/pages/UAI/PublicView.jsx` | เพิ่มส่วนแสดงรูป `ncr_images`/`bill_item_images` |
+| `server/services/uaiService.js` | `notifySignerTelegramButton()` รับ `allowReject`, ส่งปุ่ม "ไม่อนุมัติ" เฉพาะ cco/cmo/cpo |
+| `server/routes/telegramWebhook.js` | refactor: `processSign`/`processRejectStart`/`processTextMessage`, รองรับ `message` update |
+| `server/test/ncrUai.test.js` | เพิ่ม VT-05 + GROUP M (RJ-00–06) |
+
+---
+
+## 2026-07-24 | Session 169 — UAI: ลิงก์ดูรายละเอียดแบบไม่ต้อง login แนบใน Telegram DM (magic link, อายุ 24 ชม.)
+
+**คำขอ:** เพิ่มลิงก์รายละเอียด UAI ที่ Telegram DM ส่วนตัว (ข้อความเดียวกับที่ `notifySignerTelegramButton` ส่งตอน
+S168) ให้คนที่ถึงคิวเซ็น/ผู้บริหารคลิกเข้าไปดูรายละเอียดได้เลยไม่ต้อง login — ลิงก์มี token อายุ 24 ชม. เกินแล้วต้อง
+login ปกติ ใช้กับทั้ง 7 ขั้นในสายเซ็น (ไม่ใช่แค่ระดับผู้บริหาร)
+
+**Schema:** เพิ่มตารางใหม่ `uai_view_tokens` (`uai_id`, `token` UNIQUE, `expires_at`, `created_at`) — ไม่ต้องเขียน
+migration ใน `database.js` เลย เพราะ `initSchema()` รัน `CREATE TABLE IF NOT EXISTS` ทั้งไฟล์ทุกครั้งที่ boot อยู่
+แล้ว (กฎเดิม: ตารางใหม่ล้วนไม่ต้อง migration, ต้องมีเฉพาะตอนเพิ่มคอลัมน์ในตารางที่มีอยู่แล้ว)
+
+**Backend:**
+- `services/uaiService.js` เพิ่ม `createUaiViewToken(uaiId)` (internal เท่านั้น ไม่ export) — generate token ใหม่
+  ทุกครั้งที่แจ้งเตือน (ไม่ reuse ของเดิมแม้ยังไม่หมดอายุ, เลือกความง่ายเพราะ token อายุสั้นอยู่แล้วไม่ต้องกังวลตาราง
+  บวม) ด้วย `db.generateSecureToken()` (ตาม pattern `supplier_token`/`prod_token` เดิม — ห้าม `Math.random()`)
+  หมดอายุ `Date.now() + 24h`
+- `notifySignerTelegramButton()` แก้ให้แนบลิงก์ `${appUrl}/uai/view/${token}` เสมอทุกครั้งที่ส่ง DM (ไม่ผูกกับ
+  `telegram_webhook_enabled` — อยากให้ดูได้แม้ปิดปุ่มอนุมัติผ่าน Telegram) ส่วนปุ่ม inline "อนุมัติผ่าน Telegram"
+  เดิมยังคงแนบเพิ่มเฉพาะตอนเปิด webhook เหมือนเดิม
+- `routes/uai.js` เพิ่ม `GET /view/:token` — **ไม่มี `auth` middleware** (public, ตาม pattern
+  `/api/supplier/ncr/:token` เดิม) เช็ค token ไม่พบ→404, หมดอายุ→410 พร้อมข้อความให้ login ปกติ — payload จำกัด
+  เฉพาะฟิลด์ที่จำเป็น (ไม่ใช้ `SELECT *` กับ `ncr_items`/`uai_signatures`, ตัด `supplier_token` ทิ้งกันหลุดถ้ามีวัน
+  ไหน schema เปลี่ยน) รวมรูปแนบ (`uai_images`) ด้วยเพราะมีประโยชน์กับผู้บริหารที่ทบทวนเคส
+  - ⚠️ **route ordering:** ต้องประกาศ `GET /view/:token` ก่อน `GET /:id` เสมอ (Express match ตามลำดับ ถ้าอยู่
+    หลังจะโดนจับคำว่า "view" เป็นค่า `:id` แทน) — คอมเมนต์กำกับไว้ในโค้ดแล้ว
+
+**Frontend:** หน้าใหม่ `pages/UAI/PublicView.jsx` (อ่านอย่างเดียว ไม่มีปุ่มอนุมัติ/เซ็น, ไม่ผ่าน `AppLayout`/
+`AuthProvider` — pattern เดียวกับ `Supplier/NCRResponse.jsx`) แสดง badge สถานะ, ข้อมูล NCR อ้างอิง/disposition,
+รายการสินค้า, รูปแนบ, ประวัติเซ็น/อนุมัติ — error state (404/410) มีปุ่มลิงก์ไป `/login` — เพิ่ม route
+`/uai/view/:token` ใน `App.jsx` (กลุ่ม public route เดียวกับ `/supplier/ncr/:token`/`/fncp-response/:token`)
+
+**Test:** เพิ่ม GROUP L (VT-01–04) ใน `test/ncrUai.test.js` ต่อจาก GROUP K เดิม — สร้าง token สำเร็จตอนเซ็นจริง
+(อายุ ~24 ชม.), เปิดดูผ่าน `GET /uai/view/:token` โดยไม่ส่ง cookie เลยได้ปกติ (ไม่มี `supplier_token` หลุดมาใน
+response), token ปลอม→404, token หมดอายุ→410 — `node --test` (server) → **445/445 เขียว** (441 เดิม + 4 ใหม่),
+`npm run build` (client) ผ่านปกติ (มีแค่ chunk-size warning เดิมที่ไม่เกี่ยวกับ session นี้)
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/db/schema.sql` | ใหม่ — ตาราง `uai_view_tokens` |
+| `server/services/uaiService.js` | เพิ่ม `createUaiViewToken()`, แก้ `notifySignerTelegramButton()` แนบลิงก์เสมอ |
+| `server/routes/uai.js` | เพิ่ม `GET /view/:token` (public, ต้องอยู่ก่อน `GET /:id`) |
+| `client/src/pages/UAI/PublicView.jsx` | ใหม่ — หน้าดูรายละเอียด UAI แบบไม่ต้อง login |
+| `client/src/App.jsx` | เพิ่ม route `/uai/view/:token` |
+| `server/test/ncrUai.test.js` | เพิ่ม GROUP L (VT-01–04) |
+
+---
+
+## 2026-07-23 | Session 168 — UAI: เลือกได้ระหว่าง "เซ็นด้วยมือ" หรือ "กดอนุมัติ" ทุกขั้น + อนุมัติผ่านปุ่ม Telegram (webhook ใหม่)
+
+**คำขอ:** เปลี่ยนระบบ UAI จากที่บังคับเซ็นลายมืออย่างเดียว ให้ผู้ใช้เลือกได้ว่าจะกดปุ่มอนุมัติหรือเซ็นด้วยมือ +
+พัฒนาให้กดอนุมัติผ่าน Telegram ได้เลย — เป็นฟีเจอร์ใหญ่ ใช้ Explore agent สำรวจ `uaiService.js`/`routes/uai.js`/
+client sign flow/Telegram secret pattern ทั้งหมดก่อน แล้วถาม user 3 คำถามเพื่อปิดช่องว่างสำคัญก่อนเริ่มแก้จริง:
+
+1. **ขอบเขตขั้นตอน** — เลือกได้ทุกขั้น (รวม CCO/CMO/CPO) ไม่ใช่แค่ขั้น "รับทราบ"
+2. **แทนที่ลายเซ็น** — สร้างตราประทับอัตโนมัติ (ชื่อ+เวลา) แทน เพราะ `uai_signatures.signature_image` เดิมเป็น
+   `NOT NULL` (บังคับอยู่แล้ว) การันตี PDF/หน้าจอเดิมที่ดึงรูปมาโชว์ยังทำงานได้เหมือนเดิมทุกจุดไม่ต้องแก้โค้ดแสดงผล
+3. **Telegram webhook** — ระบบเดิมส่งอย่างเดียว ไม่เคยรับ callback กลับเลย ต้องสร้าง webhook subsystem ใหม่ทั้งหมด
+   (endpoint + ยืนยันตัว + แมป chat_id→user) — user ยืนยันสร้างเลย ยอมรับความเสี่ยงเรื่องยืนยันตัวจาก Telegram
+
+**Schema:** เพิ่ม `uai_signatures.signature_method` (`'signature'|'approve_button'|'telegram'`, ไม่มี CHECK
+constraint โดยตั้งใจ ตาม pattern เดียวกับ `ncrs.status` — DEVMORE H4) + settings key ใหม่
+`telegram_webhook_secret` (เข้ารหัสผ่าน `setSecretSetting`/AES ตาม pattern `ad_secret_key` — **ไม่ใช่**
+pattern เดิมของ `telegram_bot_token` ที่เก็บ plain เพราะ secret ตัวนี้ใช้ยืนยัน inbound request สำคัญกว่า) +
+`telegram_webhook_enabled` (flag เปิด/ปิด)
+
+**ตราประทับอัตโนมัติ (`lib/stampImage.js` ใหม่):** ใช้ `sharp` (มี dependency อยู่แล้ว) rasterize SVG → PNG
+(กรอบเขียว + เครื่องหมายถูก + ชื่อ + เวลาไทย) — ไม่ต้องเพิ่ม dependency ใหม่เลย ทดสอบแล้วว่า render ภาษาไทยได้ถูกต้อง
+(font ไทยมีอยู่แล้วใน Docker image ตาม Dockerfile เดิมสำหรับ PDF export) ใช้ร่วมกันทั้ง 2 ทาง (กดอนุมัติเว็บ/
+Telegram)
+
+**Backend:**
+- `routes/uai.js`'s `POST /:id/sign` — `signature_image` ไม่บังคับอีกต่อไป ไม่ส่งมา = สร้างตราประทับแทนอัตโนมัติ
+  (`signatureMethod='approve_button'`)
+- `services/uaiService.js`'s `signUai()` — เพิ่ม param `signatureMethod` (default `'signature'` กันโค้ดเดิมพัง)
+- **Telegram webhook ใหม่ทั้งระบบ** (`routes/telegramWebhook.js`, mount ที่ `/api/telegram/webhook` แบบ public
+  ไม่มี `auth` middleware เหมือน `/api/fncp-response` เดิม — ยืนยันตัวด้วย Telegram's native `secret_token`
+  header เทียบแบบ `crypto.timingSafeEqual` กัน timing attack): รับ `callback_query` → แมป `chat.id` กลับเป็น
+  user ผ่าน `users.telegram_chat_id` (แชทส่วนตัว 1:1 กับบอท `chat.id` ตรงกับค่านี้เสมอ) → เช็ค role ตรงคิว
+  ตาม `SIGN_ROLE_MAP` เหมือน route ปกติ → สร้างตราประทับ → เรียก `uaiService.signUai()` ตรงๆ (ข้าม HTTP
+  route/session เพราะไม่มี JWT cookie) → `answerCallbackQuery` + แก้ข้อความเดิมให้เห็นว่าอนุมัติแล้ว —
+  **ตัดสินใจ await ให้จบก่อนตอบ 200** (ไม่ทำ fire-and-forget) เพราะงานเบา (DB local + Telegram API 1-2 ครั้ง)
+  ทดสอบง่ายกว่าและเห็น error ตรงจุดกว่า
+- `routes/notifications.js`'s `sendTelegram()` — เพิ่ม param เสริม `extra.reply_markup` (inline keyboard)
+  ไม่กระทบ caller เดิมทั้งหมดที่เรียกแค่ 2 args
+- `uaiService.js` เพิ่ม `notifySignerTelegramButton()` — ส่ง DM แยกต่างหาก (นอกเหนือจาก `createNotification`
+  ปกติ) พร้อมปุ่ม "✅ อนุมัติผ่าน Telegram" ให้คนที่ถึงคิวเซ็นทุกขั้น (purchasing ผ่าน `reviewUai`, cco/cmo/cpo/
+  qc_ack/production_ack/qmr_ack ผ่าน `signUai`) — ส่งเฉพาะถ้า `telegram_webhook_enabled='1'` กันโชว์ปุ่มที่กด
+  แล้วไม่มีอะไรรับ callback จริง
+- `index.js` — เพิ่ม `POST /admin/settings/telegram/webhook/register` (generate secret ถ้ายังไม่มี + เรียก
+  Telegram `setWebhook` จริง) และ `/unregister` (`deleteWebhook` + ปิด flag)
+
+**Frontend:** `UAI/Detail.jsx`'s sign modal เพิ่มปุ่ม "กดอนุมัติ (ไม่ต้องวาดลายเซ็น)" คู่กับ `SignatureCanvas`
+เดิม (เรียก mutation เดิมแค่ส่ง `signature_image: null`) — `Admin/Settings.jsx`'s Telegram tab เพิ่มส่วนเปิด/ปิด
+webhook (component ใหม่ `WebhookToggle`, ยิง API ทันทีตอนกด ไม่ผ่านปุ่ม "บันทึก" หลักเพราะเป็น action คนละแบบ)
+
+**Test:** เพิ่ม GROUP J (CA-01–03, กดอนุมัติ) และ GROUP K (WH-00–05, webhook) ใน `test/ncrUai.test.js` — ครอบ
+secret ผิด (401), ไม่มี user ผูก chat_id, กดอนุมัติสำเร็จ+`signature_method` ถูกต้อง, กดซ้ำหลังคิวเปลี่ยนไปแล้ว
+ไม่ error, สลับวิธี signature/approve_button/telegram ระหว่างขั้นตอนได้ไม่พัง — `npm run build` (client) ผ่าน,
+`node --test` (server) → **441/441 เขียว**
+
+**ยังไม่ได้ทำ (นอกขอบเขตรอบนี้):** ปุ่ม "อนุมัติผ่าน Telegram" ยังไม่ขยายไปถึง FG Production's UAI คู่ขนาน
+(`routes/fgFuai.js`/`fg_fuai` table — คนละระบบจาก `uai_documents` ที่ user ระบุสถานะมาตรงกับตัวนี้) — ถ้าต้องการ
+ให้ทำเพิ่มทีหลังได้
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/db/schema.sql`, `database.js` | เพิ่ม `uai_signatures.signature_method` + settings key `telegram_webhook_secret`/`telegram_webhook_enabled` |
+| `server/lib/stampImage.js` | ใหม่ — สร้างตราประทับ PNG (sharp + SVG) |
+| `server/routes/telegramWebhook.js` | ใหม่ — webhook รับ callback_query จาก Telegram |
+| `server/routes/uai.js` | `POST /:id/sign` — signature_image ไม่บังคับ, สร้างตราประทับถ้าไม่ส่งมา |
+| `server/services/uaiService.js` | `signUai()` รับ `signatureMethod`, เพิ่ม `notifySignerTelegramButton()` ทุกขั้น |
+| `server/routes/notifications.js` | `sendTelegram()` รับ `extra.reply_markup` เพิ่ม |
+| `server/index.js` | mount `/api/telegram` + `POST /admin/settings/telegram/webhook/register`/`unregister` |
+| `client/src/pages/UAI/Detail.jsx` | ปุ่ม "กดอนุมัติ" ในหน้าเซ็น |
+| `client/src/pages/Admin/Settings.jsx` | `WebhookToggle` component ใหม่ในแท็บ Telegram |
+| `server/test/ncrUai.test.js` | เพิ่ม GROUP J (CA-01–03) + GROUP K (WH-00–05) |
+
+---
+
+## 2026-07-23 | Session 167 — Telegram: เอา prefix "[IQC]" ออกจากข้อความทุกจุด (กลุ่ม + ส่วนตัว)
+
+**คำขอ:** "ที่กลุ่ม telegram หรือ telegram ส่วนตัว ทุก ID ทุกกลุ่ม ให้เอาคำว่า [IQC] ออกทั้งหมด"
+
+**พบจุดคุ้มค่าที่สุดก่อน**: ข้อความ Telegram ส่วนตัว (ทุก user ทุก role ที่ตั้ง `telegram_chat_id` ไว้) วิ่งผ่าน
+จุดเดียวคือ `notifyUserTelegram()` ใน `routes/notifications.js` (ถูกเรียกอัตโนมัติจาก `createNotification()`
+ทุกครั้งที่มีการแจ้งเตือนในระบบ ไม่ว่าจะมาจากโมดูลไหน) — แก้บรรทัดเดียว (`text = \`[IQC] ${title}\`` → `text =
+title`) ก็ครอบคลุมข้อความส่วนตัวทั้งหมดในระบบทันที ไม่ต้องไล่แก้ทีละจุด
+
+**ข้อความกลุ่ม (`telegram_group_qc`/`telegram_group_purchasing`) ไม่มีจุดรวมแบบนั้น** — แต่ละจุดสร้างข้อความเอง
+ต้องไล่แก้ทีละไฟล์ (`sed 's/\[IQC\] //g'` เพราะทุกจุดมี `[IQC] ` รูปแบบเดียวกันเป๊ะ ตรวจแล้วไม่มีจุดไหนขาด space
+ต่อท้ายที่จะทำให้ลบแล้วคำติดกัน): `services/ncrService.js`, `services/billService.js`,
+`services/uaiService.js`, `services/deliveryService.js`, `services/supplierService.js`,
+`services/kpiService.js`, `lib/overdueNotifier.js`, `index.js` (ข้อความทดสอบส่งการแจ้งเตือน)
+
+**ไม่แตะ**: ข้อความแจ้งเตือนของ `lib/backupService.js`/`bootstrap.js` (`[IQC Backup]`/`[IQC Boot]`) — เป็นคนละ
+prefix (ไม่ตรงกับ `[IQC]` เป๊ะๆ ที่ user ขอ) และเป็นข้อความแจ้งเตือนระบบ/infra คนละหมวดจากข้อความแจ้งเตือนงาน
+QC ที่ user หมายถึง
+
+**Test:** เจอ 4 จุดใน test suite ที่ assert ตรงๆ ว่าข้อความต้องขึ้นต้นด้วย `[IQC]` (`bills.test.js`,
+`purchasingNotifications.test.js` ×3) — แก้ regex ให้ตรงกับข้อความจริงหลังลบ prefix (เช่น
+`/^\[IQC\] 📥.../` → `/^📥.../`, เทียบกับ `ncr_code` จริงแทนที่จะเทียบ `[IQC]` placeholder) —
+`node --test` (server) → **432/432 เขียว**
+
+### Files Changed
+
+| File | สิ่งที่ทำ |
+|---|---|
+| `server/routes/notifications.js` | `notifyUserTelegram()` เอา `[IQC]` prefix ออก (จุดรวมของข้อความส่วนตัวทั้งหมด) |
+| `server/services/ncrService.js`, `billService.js`, `uaiService.js`, `deliveryService.js`, `supplierService.js`, `kpiService.js` | เอา `[IQC] ` ออกจากข้อความกลุ่มทุกจุด |
+| `server/lib/overdueNotifier.js` | เอา `[IQC] ` ออก |
+| `server/index.js` | เอา `[IQC] ` ออกจากข้อความทดสอบส่งการแจ้งเตือน (Admin > Settings) |
+| `server/test/bills.test.js`, `test/purchasingNotifications.test.js` | แก้ assertion ที่เช็ค `[IQC]` ตรงๆ ให้ตรงกับข้อความจริง |
 
 ---
 

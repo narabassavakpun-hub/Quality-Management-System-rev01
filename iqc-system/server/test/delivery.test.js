@@ -135,3 +135,37 @@ test('DEL-13 purchasing deletes pending → ok', async () => {
   const r = await api('DELETE', `/api/delivery/${id}`, { cookie: C.pur });
   assert.equal(r.status, 200);
 });
+
+// ================= S171: จัดซื้อยกเลิกแผนที่คลังรับทราบไปแล้ว (supplier เปลี่ยนแผนกระทันหัน) =================
+test('DEL-14 purchasing cancels acknowledged (with reason) → cancelled', async () => {
+  const id = await mkPending();
+  await api('POST', `/api/delivery/${id}/acknowledge`, { cookie: C.wh });
+  const r = await api('PATCH', `/api/delivery/${id}/status`, { cookie: C.pur, body: { status: 'cancelled', late_reason: 'supplier เปลี่ยนแผนกระทันหัน' } });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.status, 'cancelled');
+});
+
+test('DEL-15 cancel acknowledged โดยไม่ใส่เหตุผล → 400', async () => {
+  const id = await mkPending();
+  await api('POST', `/api/delivery/${id}/acknowledge`, { cookie: C.wh });
+  const r = await api('PATCH', `/api/delivery/${id}/status`, { cookie: C.pur, body: { status: 'cancelled' } });
+  assert.equal(r.status, 400);
+});
+
+test('DEL-16 cancel acknowledged → ต้องแจ้งเตือนคลัง (createNotification) ด้วยเหตุผลที่กรอกไว้', async () => {
+  const id = await mkPending();
+  await api('POST', `/api/delivery/${id}/acknowledge`, { cookie: C.wh });
+  const whId = uid('warehouse_test1');
+  const before = db.prepare('SELECT COUNT(*) AS c FROM notifications WHERE user_id = ?').get(whId).c;
+
+  const r = await api('PATCH', `/api/delivery/${id}/status`, { cookie: C.pur, body: { status: 'cancelled', late_reason: 'ของหมดกะทันหัน' } });
+  assert.equal(r.status, 200);
+
+  const after = db.prepare('SELECT COUNT(*) AS c FROM notifications WHERE user_id = ?').get(whId).c;
+  assert.equal(after, before + 1, 'ต้องมีแจ้งเตือนใหม่ 1 รายการให้คลัง');
+
+  const notif = db.prepare('SELECT * FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1').get(whId);
+  assert.equal(notif.title, 'ยกเลิกกำหนดส่งสินค้า');
+  assert.ok(notif.message.includes('ของหมดกะทันหัน'), 'ข้อความแจ้งเตือนต้องมีเหตุผลที่กรอกไว้');
+  assert.equal(notif.link, `/delivery?schedule=${id}`);
+});

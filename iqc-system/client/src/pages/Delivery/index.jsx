@@ -133,6 +133,10 @@ export function DetailModal({ schedule, onClose, suppliers, role, holidays = [] 
   const canEdit = role === 'purchasing' && ['pending', 'acknowledged'].includes(detail.status) && !detail.is_unplanned && !past;
   const canAck  = isWarehouse && detail.status === 'pending';
   const canUpdateStatus = isQC && detail.status === 'acknowledged';
+  // S171 — จัดซื้อยกเลิกแผนที่คลังรับทราบไปแล้ว (เช่น supplier เปลี่ยนแผนกระทันหัน) — เฉพาะ acknowledged เพราะ
+  // สถานะ pending ใช้ปุ่ม "ลบ" เดิมได้อยู่แล้ว (คลังยังไม่เห็น ไม่ต้องแจ้งเตือนใคร) ส่วน acknowledged ต้องแจ้งเตือน
+  // คลัง+กลุ่ม QC ด้วย (ดู updateStatus's cancelled branch ใน deliveryService.js) จึงแยกปุ่ม/flow ออกจาก "ลบ"
+  const canCancel = role === 'purchasing' && detail.status === 'acknowledged' && !detail.is_unplanned && !past;
 
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
@@ -145,6 +149,8 @@ export function DetailModal({ schedule, onClose, suppliers, role, holidays = [] 
   const [statusForm, setStatusForm] = useState({ status: '', late_reason: '', rescheduled_date: '', actual_date: '', actual_time: '' });
   const [statusHolidayConfirm, setStatusHolidayConfirm] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const fileRef = useRef();
@@ -204,6 +210,16 @@ export function DetailModal({ schedule, onClose, suppliers, role, holidays = [] 
   const delSchedule = useMutation({
     mutationFn: () => api.delete(`/delivery/${schedule.id}`),
     onSuccess: () => { qc.invalidateQueries(['delivery']); onClose(); },
+  });
+  const cancelSchedule = useMutation({
+    mutationFn: () => api.patch(`/delivery/${schedule.id}/status`, { status: 'cancelled', late_reason: cancelReason }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['delivery'] });
+      qc.invalidateQueries({ queryKey: ['delivery-history', schedule.id] });
+      qc.invalidateQueries({ queryKey: ['delivery-detail', schedule.id] });
+      setCancelOpen(false);
+      setCancelReason('');
+    },
   });
   const uploadFile = useMutation({
     mutationFn: (files) => {
@@ -405,6 +421,23 @@ export function DetailModal({ schedule, onClose, suppliers, role, holidays = [] 
           </div>
         )}
 
+        {/* S171 — ยกเลิกแผนที่คลังรับทราบไปแล้ว (แยกจาก "อัปเดตสถานะ" ทั่วไปด้านบน ให้เข้าถึงง่ายตรงจุดประสงค์) */}
+        {cancelOpen && (
+          <div className="border border-danger rounded-lg p-3 space-y-3 bg-red-50 dark:bg-red-900">
+            <p className="font-semibold text-body text-danger">ยกเลิกกำหนดส่งของนี้</p>
+            <p className="text-small text-muted">ใช้เมื่อผู้ผลิตเปลี่ยนแผนส่งของกระทันหันหลังคลังรับทราบไปแล้ว — ระบบจะแจ้งเตือนไปที่คลังและกลุ่ม QC ทันที</p>
+            <div>
+              <label className="label">เหตุผล *</label>
+              <input className="input" value={cancelReason} placeholder="ระบุเหตุผล..." onChange={e => setCancelReason(e.target.value)} />
+            </div>
+            {cancelSchedule.error && <p className="text-small text-danger">{cancelSchedule.error.response?.data?.error}</p>}
+            <div className="flex gap-2 justify-end">
+              <Button variant="ghost" onClick={() => { setCancelOpen(false); setCancelReason(''); }}>ปิด</Button>
+              <Button variant="danger" onClick={() => cancelSchedule.mutate()} loading={cancelSchedule.isPending} disabled={!cancelReason.trim()}>ยืนยันยกเลิก</Button>
+            </div>
+          </div>
+        )}
+
         {/* Items */}
         {detail.items?.length > 0 && (
           <div>
@@ -583,10 +616,13 @@ export function DetailModal({ schedule, onClose, suppliers, role, holidays = [] 
         {/* Action buttons */}
         <div className="flex flex-wrap gap-2 pt-2 border-t border-border">
           {canAck && <Button variant="primary" onClick={() => ack.mutate()} loading={ack.isPending}>รับทราบ</Button>}
-          {canEdit && !editing && <Button variant="warning" onClick={() => setEditing(true)}>แก้ไขวันเวลาส่งสินค้า</Button>}
+          {canEdit && !editing && !cancelOpen && <Button variant="warning" onClick={() => setEditing(true)}>แก้ไขวันเวลาส่งสินค้า</Button>}
           {canUpdateStatus && !statusOpen && !editing && <Button variant="warning" onClick={() => setStatusOpen(true)}>อัปเดตสถานะ</Button>}
-          {canEdit && !editing && (
+          {canEdit && detail.status === 'pending' && !editing && !cancelOpen && (
             <Button variant="danger" onClick={() => { if (confirm('ยืนยันลบแผนนี้?')) delSchedule.mutate(); }} loading={delSchedule.isPending}>ลบ</Button>
+          )}
+          {canCancel && !cancelOpen && !editing && (
+            <Button variant="danger" onClick={() => setCancelOpen(true)}>ยกเลิกการส่งของ</Button>
           )}
           <Button variant="ghost" onClick={onClose} className="ml-auto">ปิด</Button>
         </div>

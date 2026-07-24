@@ -192,6 +192,8 @@ app.get('/api/admin/settings/telegram', ...adminOnly, (req, res) => {
     ncr_overdue_repeat_days: db.getSetting('ncr_overdue_repeat_days') || '3',
     // S152 — จำนวนวันที่ค้างอยู่ที่ Supervisor/Manager/QMR (ก่อนถึงจัดซื้อ) ก่อนแจ้งเตือนส่วนตัว + แจ้งซ้ำทุกกี่วัน (internalReminder.js)
     ncr_internal_reminder_days: db.getSetting('ncr_internal_reminder_days') || '3',
+    // S168 — เปิดใช้ปุ่ม "อนุมัติผ่าน Telegram" ของ UAI ไหม (ต้อง setWebhook กับ Telegram สำเร็จก่อน)
+    telegram_webhook_enabled: db.getSetting('telegram_webhook_enabled') === '1',
   });
 });
 
@@ -235,9 +237,55 @@ app.post('/api/admin/settings/telegram/test', ...adminOnly, async (req, res) => 
   }
 
   try {
-    await sendTelegram(qcGroup, '[IQC] ทดสอบการส่งข้อความ — กลุ่ม QC');
-    await sendTelegram(purchGroup, '[IQC] ทดสอบการส่งข้อความ — กลุ่มจัดซื้อ');
+    await sendTelegram(qcGroup, 'ทดสอบการส่งข้อความ — กลุ่ม QC');
+    await sendTelegram(purchGroup, 'ทดสอบการส่งข้อความ — กลุ่มจัดซื้อ');
     res.json({ ok: true, message: 'ส่งข้อความทดสอบสำเร็จ' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ===== S168 — Telegram webhook (ปุ่ม "อนุมัติผ่าน Telegram" ของ UAI) — เปิด/ปิดใช้งาน =====
+// เปิด: generate secret ใหม่ (ถ้ายังไม่มี) → เรียก Telegram setWebhook พร้อม secret_token → เปิด flag
+app.post('/api/admin/settings/telegram/webhook/register', ...adminOnly, async (req, res) => {
+  const token = db.getSetting('telegram_bot_token');
+  const appUrl = (db.getSetting('app_url') || '').replace(/\/+$/, '');
+  if (!token) return res.status(400).json({ error: 'ยังไม่ได้ตั้งค่า Telegram Bot Token' });
+  if (!appUrl || !/^https:\/\//.test(appUrl)) return res.status(400).json({ error: 'ต้องตั้งค่า app_url เป็น https:// ก่อน (Telegram รับเฉพาะ HTTPS)' });
+
+  try {
+    let secret = db.getSecretSetting('telegram_webhook_secret');
+    if (!secret) {
+      secret = db.generateSecureToken();
+      db.setSecretSetting('telegram_webhook_secret', secret);
+    }
+    const fetch = require('node-fetch');
+    const r = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: `${appUrl}/api/telegram/webhook`, secret_token: secret }),
+    });
+    const body = await r.json();
+    if (!body.ok) return res.status(400).json({ error: `Telegram ปฏิเสธ: ${body.description || 'unknown error'}` });
+
+    db.setSetting('telegram_webhook_enabled', '1');
+    db.auditLog('settings', 0, 'UPDATE', { telegram_webhook_enabled: false }, { telegram_webhook_enabled: true }, req.user.id, req.ip);
+    res.json({ ok: true, webhook_url: `${appUrl}/api/telegram/webhook` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/admin/settings/telegram/webhook/unregister', ...adminOnly, async (req, res) => {
+  const token = db.getSetting('telegram_bot_token');
+  try {
+    if (token) {
+      const fetch = require('node-fetch');
+      await fetch(`https://api.telegram.org/bot${token}/deleteWebhook`, { method: 'POST' });
+    }
+    db.setSetting('telegram_webhook_enabled', '0');
+    db.auditLog('settings', 0, 'UPDATE', { telegram_webhook_enabled: true }, { telegram_webhook_enabled: false }, req.user.id, req.ip);
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -392,7 +440,7 @@ app.post('/api/admin/users/:id/telegram-test', ...adminOnly, async (req, res) =>
   if (!chatId) return res.status(400).json({ error: 'ผู้ใช้นี้ยังไม่ได้ตั้งค่า Telegram Chat ID' });
   if (!db.getSetting('telegram_bot_token')) return res.status(400).json({ error: 'ยังไม่ได้ตั้งค่า Telegram Bot Token (ที่ตั้งค่าระบบ)' });
   try {
-    await sendTelegram(chatId, `[IQC] ทดสอบการแจ้งเตือนส่วนตัว — ${user.full_name}\nหากคุณเห็นข้อความนี้ แสดงว่าตั้งค่า Chat ID ถูกต้องแล้ว`);
+    await sendTelegram(chatId, `ทดสอบการแจ้งเตือนส่วนตัว — ${user.full_name}\nหากคุณเห็นข้อความนี้ แสดงว่าตั้งค่า Chat ID ถูกต้องแล้ว`);
     res.json({ ok: true, message: 'ส่งข้อความทดสอบสำเร็จ' });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -646,6 +694,7 @@ app.use('/api/fg-master',      require('./routes/fgMaster'));
 app.use('/api/fg-defect',      require('./routes/fgDefect'));
 app.use('/api/fg-fncp',        require('./routes/fgFncp'));
 app.use('/api/fncp-response',  require('./routes/fgFncpResponse')); // public — no auth
+app.use('/api/telegram',       require('./routes/telegramWebhook')); // public — no auth, ยืนยันด้วย secret_token header แทน (S168)
 app.use('/api/fg-fuai',            require('./routes/fgFuai'));
 app.use('/api/fg-material-defects', require('./routes/fgMaterialDefects'));
 app.use('/api', require('./routes/exports'));

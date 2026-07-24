@@ -52,6 +52,7 @@ app.use(cookieParser());
 app.use('/api/ncr', require('../routes/ncr'));
 app.use('/api/supplier', require('../routes/supplier'));
 app.use('/api/uai', require('../routes/uai'));
+app.use('/api/telegram', require('../routes/telegramWebhook'));
 
 let server, base;
 test.before(async () => { server = app.listen(0); await new Promise(r => server.once('listening', r)); base = `http://127.0.0.1:${server.address().port}`; });
@@ -260,6 +261,274 @@ test('UAI-07 UAI completed closes the NCR', async () => {
 test('UAI-08 sign after completed → 400 (not a signing step)', async () => {
   const r = await api('POST', `/api/uai/${uaiId}/sign`, { cookie: C.qmr, body: { signature_image: SIG } });
   assert.equal(r.status, 400);
+});
+
+// ================= GROUP J (S168): กดอนุมัติแทนวาดลายเซ็น (ตราประทับอัตโนมัติ) =================
+async function setupUaiPendingPurchasing(itemId) {
+  const c = await api('POST', '/api/ncr', { cookie: C.staff, body: { bill_id: bill, severity: 'major', items: ncrItems(itemId) } });
+  const ncrId = c.body.id;
+  await api('POST', `/api/ncr/${ncrId}/approve`, { cookie: C.sup, body: {} });
+  await api('POST', `/api/ncr/${ncrId}/approve`, { cookie: C.mgr, body: { disposition: 'uai', disposition_note: 'x' } });
+  await api('POST', `/api/ncr/${ncrId}/approve`, { cookie: C.qmr, body: {} });
+  await api('PATCH', `/api/ncr/${ncrId}/purchasing-review`, { cookie: C.pur, body: { items: [] } });
+  await api('POST', `/api/ncr/${ncrId}/approve`, { cookie: C.purMgr, body: {} });
+  const reqUai = await api('POST', `/api/ncr/${ncrId}/request-uai`, { cookie: C.pur, body: {
+    reason: 'x', product_type: 'a', work_type: 'b', defect_description: 'c',
+    root_cause_purchasing: 'd', corrective_action_purchasing: 'e', preventive_action_purchasing: 'f',
+  } });
+  const newUaiId = reqUai.body.uai_id;
+  await api('POST', `/api/uai/${newUaiId}/qc-manager-review`, { cookie: C.mgr, body: { decision: 'approve' } });
+  return newUaiId; // status = uai_pending_purchasing
+}
+
+let uaiJ;
+test('CA-01 setup UAI → uai_pending_purchasing', async () => {
+  const itemJ = db.prepare(`INSERT INTO bill_items (bill_id,product_id,item_name,qty_received,qty_sampled,qty_passed,qty_failed,defect_category_id)
+    VALUES (?,?,'สินค้าทดสอบ J-UAI',100,10,7,3,?)`).run(bill, prod, dcat).lastInsertRowid;
+  uaiJ = await setupUaiPendingPurchasing(itemJ);
+  const u = await api('GET', `/api/uai/${uaiJ}`, { cookie: C.mgr });
+  assert.equal(u.body.status, 'uai_pending_purchasing');
+});
+
+test('CA-02 กดอนุมัติ (ไม่ส่ง signature_image) → สำเร็จ, signature_method=approve_button, มีไฟล์ตราประทับ', async () => {
+  const r = await api('POST', `/api/uai/${uaiJ}/sign`, { cookie: C.pur, body: { signature_image: null, comment: 'อนุมัติผ่านปุ่ม' } });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.status, 'uai_pending_cco');
+
+  const u = await api('GET', `/api/uai/${uaiJ}`, { cookie: C.mgr });
+  const sig = u.body.signatures.find(s => s.role === 'purchasing');
+  assert.ok(sig, 'ต้องมี signature record');
+  assert.equal(sig.action, 'approved');
+  assert.equal(sig.signature_method, 'approve_button');
+  assert.ok(sig.signature_image, 'ต้องมีไฟล์ตราประทับ (ไม่ใช่ค่าว่าง) เพราะ column ยังเป็น NOT NULL');
+});
+
+test('CA-03 regression: ขั้นถัดไปยังวาดลายเซ็นจริงได้ปกติ (สลับวิธีระหว่างขั้นตอนได้ ไม่พัง)', async () => {
+  const r = await api('POST', `/api/uai/${uaiJ}/sign`, { cookie: C.cco, body: { signature_image: SIG, comment: 'เซ็นจริง' } });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.status, 'uai_pending_cmo');
+  const u = await api('GET', `/api/uai/${uaiJ}`, { cookie: C.mgr });
+  const sig = u.body.signatures.find(s => s.role === 'cco');
+  assert.equal(sig.signature_method, 'signature');
+});
+
+// ================= GROUP K (S168): อนุมัติผ่านปุ่ม Telegram (webhook) =================
+const whNodeFetchPath = require.resolve('node-fetch');
+function mockNodeFetch(impl) {
+  const orig = require.cache[whNodeFetchPath];
+  require.cache[whNodeFetchPath] = { id: whNodeFetchPath, filename: whNodeFetchPath, loaded: true, exports: impl };
+  return () => { if (orig) require.cache[whNodeFetchPath] = orig; else delete require.cache[whNodeFetchPath]; };
+}
+async function postWebhook(body, secret) {
+  const res = await fetch(`${base}/api/telegram/webhook`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-telegram-bot-api-secret-token': secret ?? 'test-secret-123' },
+    body: JSON.stringify(body),
+  });
+  return { status: res.status };
+}
+const cbQuery = (id, data, chatId) => ({ callback_query: { id, data, from: { id: chatId }, message: { chat: { id: chatId }, message_id: 1, text: 'x' } } });
+
+test('WH-00 setup: ตั้ง telegram_webhook_secret + telegram_chat_id ของ cmo1', () => {
+  db.setSecretSetting('telegram_webhook_secret', 'test-secret-123');
+  db.prepare("UPDATE users SET telegram_chat_id = ? WHERE username = 'cmo1'").run('999111');
+});
+
+test('WH-01 secret token ผิด → 401', async () => {
+  const r = await postWebhook(cbQuery('cq1', `uai_sign:${uaiJ}`, 999111), 'wrong-secret');
+  assert.equal(r.status, 401);
+});
+
+test('WH-02 ไม่มี user ที่ผูก telegram_chat_id นี้ → 200 (ไม่ throw) แต่สถานะ UAI ไม่เปลี่ยน', async () => {
+  const restore = mockNodeFetch(async () => ({ ok: true, json: async () => ({ ok: true }) }));
+  try {
+    const r = await postWebhook(cbQuery('cq2', `uai_sign:${uaiJ}`, 55555));
+    assert.equal(r.status, 200);
+    const u = await api('GET', `/api/uai/${uaiJ}`, { cookie: C.mgr });
+    assert.equal(u.body.status, 'uai_pending_cmo', 'สถานะต้องไม่เปลี่ยนเพราะไม่มี user ผูก chat_id นี้');
+  } finally { restore(); }
+});
+
+test('WH-03 cmo1 กดอนุมัติผ่าน Telegram → เอกสารเดินหน้า, signature_method=telegram, เรียก answerCallbackQuery', async () => {
+  const calledUrls = [];
+  const restore = mockNodeFetch(async (url) => { calledUrls.push(url); return { ok: true, json: async () => ({ ok: true }) }; });
+  db.setSetting('telegram_bot_token', 'test-bot-token'); // ต้องมี token ถึงจะยิง call ออกจริง (ให้ mock จับได้)
+  try {
+    const r = await postWebhook(cbQuery('cq3', `uai_sign:${uaiJ}`, 999111));
+    assert.equal(r.status, 200);
+    const u = await api('GET', `/api/uai/${uaiJ}`, { cookie: C.mgr });
+    assert.equal(u.body.status, 'uai_pending_cpo');
+    const sig = u.body.signatures.find(s => s.role === 'cmo');
+    assert.ok(sig);
+    assert.equal(sig.signature_method, 'telegram');
+    assert.ok(calledUrls.some(u2 => u2.includes('answerCallbackQuery')), 'ต้องเรียก answerCallbackQuery');
+  } finally { restore(); db.setSetting('telegram_bot_token', ''); }
+});
+
+test('WH-04 กด callback ซ้ำ (คิวเปลี่ยนไปแล้ว) → ไม่ error, สถานะไม่เปลี่ยนซ้ำ', async () => {
+  const restore = mockNodeFetch(async () => ({ ok: true, json: async () => ({ ok: true }) }));
+  try {
+    const r = await postWebhook(cbQuery('cq4', `uai_sign:${uaiJ}`, 999111));
+    assert.equal(r.status, 200);
+    const u = await api('GET', `/api/uai/${uaiJ}`, { cookie: C.mgr });
+    assert.equal(u.body.status, 'uai_pending_cpo', 'ต้องไม่เปลี่ยนซ้ำ เพราะ cmo1 ไม่ใช่คิวของ uai_pending_cpo อีกต่อไป');
+  } finally { restore(); }
+});
+
+test('WH-05 callback_data action ที่ไม่รู้จัก → เพิกเฉย ไม่ error', async () => {
+  const r = await postWebhook(cbQuery('cq5', 'some_other_action:1', 999111));
+  assert.equal(r.status, 200);
+});
+
+// ================= GROUP L (S169): ลิงก์ดูรายละเอียด UAI แบบไม่ต้อง login (magic link, 24 ชม.) =================
+test('VT-01 cpo ลงนาม (uaiJ ต่อจาก GROUP K อยู่ uai_pending_cpo) → สร้าง view token ให้ manager1 (qc_manager, มี telegram_chat_id)', async () => {
+  db.prepare("UPDATE users SET telegram_chat_id = ? WHERE username = 'manager1'").run('777333');
+  const before = db.prepare('SELECT COUNT(*) AS c FROM uai_view_tokens WHERE uai_id = ?').get(uaiJ).c;
+
+  const r = await api('POST', `/api/uai/${uaiJ}/sign`, { cookie: C.cpo, body: { signature_image: SIG, comment: 'x' } });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.status, 'uai_pending_qc_ack');
+
+  const after = db.prepare('SELECT COUNT(*) AS c FROM uai_view_tokens WHERE uai_id = ?').get(uaiJ).c;
+  assert.equal(after, before + 1, 'ต้องสร้าง view token ใหม่ 1 อัน ให้ qc_manager ที่มี telegram_chat_id');
+
+  const row = db.prepare('SELECT expires_at FROM uai_view_tokens WHERE uai_id = ? ORDER BY id DESC LIMIT 1').get(uaiJ);
+  const hoursLeft = (new Date(row.expires_at) - new Date()) / 3600000;
+  assert.ok(hoursLeft > 23.9 && hoursLeft <= 24, `อายุ token ควรประมาณ 24 ชม. (ได้ ${hoursLeft})`);
+});
+
+test('VT-02 เปิดดูผ่าน GET /uai/view/:token ได้โดยไม่ต้อง login (ไม่ส่ง cookie เลย)', async () => {
+  const row = db.prepare('SELECT token FROM uai_view_tokens WHERE uai_id = ? ORDER BY id DESC LIMIT 1').get(uaiJ);
+  const r = await api('GET', `/api/uai/view/${row.token}`); // ไม่ส่ง cookie
+  assert.equal(r.status, 200);
+  assert.ok(r.body.ncr_code, 'ต้องมีข้อมูล NCR อ้างอิง');
+  assert.ok(Array.isArray(r.body.signatures));
+  assert.equal(r.body.supplier_token, undefined, 'ไม่ควรมี supplier_token หลุดออกมาในผลลัพธ์สาธารณะ');
+});
+
+test('VT-03 token ปลอม (สุ่มมาเอง ไม่มีในระบบ) → 404', async () => {
+  const r = await api('GET', '/api/uai/view/not-a-real-token-at-all');
+  assert.equal(r.status, 404);
+});
+
+test('VT-04 token หมดอายุแล้ว → 410', async () => {
+  const row = db.prepare('SELECT id, token FROM uai_view_tokens WHERE uai_id = ? ORDER BY id DESC LIMIT 1').get(uaiJ);
+  db.prepare("UPDATE uai_view_tokens SET expires_at = datetime('now', '-1 hour') WHERE id = ?").run(row.id);
+  const r = await api('GET', `/api/uai/view/${row.token}`);
+  assert.equal(r.status, 410);
+});
+
+test('VT-05 (S170) รูปงานเสีย (bill_item_images) + รูปจาก NCR (ncr_images) ต้องติดมาด้วยในลิงก์สาธารณะ (บั๊กเดิม: C-level เปิดลิงก์แล้วไม่เห็นรูป)', async () => {
+  const ncrRow = db.prepare('SELECT ncr_id FROM uai_documents WHERE id = ?').get(uaiJ);
+  const itemRow = db.prepare('SELECT id, bill_item_id FROM ncr_items WHERE ncr_id = ? LIMIT 1').get(ncrRow.ncr_id);
+  db.prepare('INSERT INTO bill_item_images (bill_item_id, file_path) VALUES (?, ?)').run(itemRow.bill_item_id, 'test-defect.jpg');
+  db.prepare('INSERT INTO ncr_images (ncr_id, file_path) VALUES (?, ?)').run(ncrRow.ncr_id, 'test-ncr.jpg');
+
+  // token เดิมหมดอายุไปแล้วจาก VT-04 — สร้างใหม่ตรงๆ ผ่าน DB (ไม่ต้องเดินสถานะใหม่)
+  const token = db.generateSecureToken();
+  db.prepare("INSERT INTO uai_view_tokens (uai_id, token, expires_at) VALUES (?, ?, datetime('now', '+1 day'))").run(uaiJ, token);
+
+  const r = await api('GET', `/api/uai/view/${token}`);
+  assert.equal(r.status, 200);
+  assert.ok(r.body.ncr_images.some(i => i.file_path === 'test-ncr.jpg'), 'ต้องมีรูปจาก ncr_images');
+  const item = r.body.ncr_items.find(i => i.bill_item_images?.length > 0);
+  assert.ok(item, 'ต้องมี ncr_item ที่มี bill_item_images อย่างน้อย 1 รายการ');
+  assert.ok(item.bill_item_images.some(i => i.file_path === 'test-defect.jpg'));
+});
+
+// ================= GROUP M (S170): ปุ่ม "❌ ไม่อนุมัติ" ผ่าน Telegram (เฉพาะ COO/CMO/CPO) =================
+const msgUpdate = (chatId, text) => ({ message: { chat: { id: chatId }, text } });
+
+let uaiM;
+test('RJ-00 setup UAI ใหม่ → uai_pending_cco (สำหรับทดสอบ reject ผ่าน Telegram) + ตั้ง telegram_chat_id ของ cco1', async () => {
+  const itemM = db.prepare(`INSERT INTO bill_items (bill_id,product_id,item_name,qty_received,qty_sampled,qty_passed,qty_failed,defect_category_id)
+    VALUES (?,?,'สินค้าทดสอบ M-UAI',100,10,7,3,?)`).run(bill, prod, dcat).lastInsertRowid;
+  uaiM = await setupUaiPendingPurchasing(itemM);
+  const r = await api('POST', `/api/uai/${uaiM}/sign`, { cookie: C.pur, body: { signature_image: SIG } });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.status, 'uai_pending_cco');
+  db.prepare("UPDATE users SET telegram_chat_id = ? WHERE username = 'cco1'").run('888222');
+  db.setSetting('telegram_bot_token', 'test-bot-token');
+});
+
+test('RJ-01 กดปุ่ม "❌ ไม่อนุมัติ" (uai_reject) → ไม่ reject ทันที แค่เปิด flow รอเหตุผล (สถานะยังไม่เปลี่ยน)', async () => {
+  const restore = mockNodeFetch(async () => ({ ok: true, json: async () => ({ ok: true }) }));
+  try {
+    const r = await postWebhook(cbQuery('rq1', `uai_reject:${uaiM}`, 888222));
+    assert.equal(r.status, 200);
+    const u = await api('GET', `/api/uai/${uaiM}`, { cookie: C.mgr });
+    assert.equal(u.body.status, 'uai_pending_cco', 'ยังไม่ reject จนกว่าจะส่งเหตุผลกลับมา');
+    const pending = db.prepare('SELECT * FROM telegram_pending_rejects WHERE chat_id = ?').get('888222');
+    assert.ok(pending, 'ต้องมี pending reject state ค้างอยู่');
+    assert.equal(pending.uai_id, uaiM);
+  } finally { restore(); }
+});
+
+test('RJ-02 ส่งข้อความ "ยกเลิก" → เคลียร์ pending state, ไม่ reject', async () => {
+  const restore = mockNodeFetch(async () => ({ ok: true, json: async () => ({ ok: true }) }));
+  try {
+    const r = await postWebhook(msgUpdate(888222, 'ยกเลิก'));
+    assert.equal(r.status, 200);
+    const pending = db.prepare('SELECT * FROM telegram_pending_rejects WHERE chat_id = ?').get('888222');
+    assert.equal(pending, undefined);
+    const u = await api('GET', `/api/uai/${uaiM}`, { cookie: C.mgr });
+    assert.equal(u.body.status, 'uai_pending_cco');
+  } finally { restore(); }
+});
+
+test('RJ-03 ข้อความธรรมดาโดยไม่มี pending flow ค้างอยู่ → เพิกเฉย ไม่ error ไม่กระทบสถานะ', async () => {
+  const restore = mockNodeFetch(async () => ({ ok: true, json: async () => ({ ok: true }) }));
+  try {
+    const r = await postWebhook(msgUpdate(888222, 'สวัสดีครับ'));
+    assert.equal(r.status, 200);
+    const u = await api('GET', `/api/uai/${uaiM}`, { cookie: C.mgr });
+    assert.equal(u.body.status, 'uai_pending_cco');
+  } finally { restore(); }
+});
+
+test('RJ-04 กดปุ่มไม่อนุมัติอีกครั้งแล้วพิมพ์เหตุผลจริง → UAI ถูกปฏิเสธ (uai_rejected_by_exec), NCR กลับ pending_supplier, pending state ถูกลบ', async () => {
+  const calledUrls = [];
+  const restore = mockNodeFetch(async (url) => { calledUrls.push(url); return { ok: true, json: async () => ({ ok: true }) }; });
+  try {
+    const r1 = await postWebhook(cbQuery('rq2', `uai_reject:${uaiM}`, 888222));
+    assert.equal(r1.status, 200);
+
+    const r2 = await postWebhook(msgUpdate(888222, 'สินค้าไม่ตรงตามที่ตกลง'));
+    assert.equal(r2.status, 200);
+
+    const u = await api('GET', `/api/uai/${uaiM}`, { cookie: C.mgr });
+    assert.equal(u.body.status, 'uai_rejected_by_exec');
+    const sig = u.body.signatures.find(s => s.role === 'cco' && s.action === 'rejected');
+    assert.ok(sig, 'ต้องมี signature record การ reject');
+    assert.equal(sig.comment, 'สินค้าไม่ตรงตามที่ตกลง');
+
+    const ncr = db.prepare('SELECT status FROM ncrs WHERE id = (SELECT ncr_id FROM uai_documents WHERE id = ?)').get(uaiM);
+    assert.equal(ncr.status, 'pending_supplier');
+
+    const pending = db.prepare('SELECT * FROM telegram_pending_rejects WHERE chat_id = ?').get('888222');
+    assert.equal(pending, undefined, 'pending state ต้องถูกลบทิ้งหลังประมวลผลเสร็จ');
+  } finally { restore(); db.setSetting('telegram_bot_token', ''); }
+});
+
+test('RJ-05 กดปุ่มไม่อนุมัติหลัง UAI ถูกปิด (ไม่ใช่คิวแล้ว) → ปฏิเสธคำขอ ไม่สร้าง pending state', async () => {
+  const restore = mockNodeFetch(async () => ({ ok: true, json: async () => ({ ok: true }) }));
+  try {
+    const r = await postWebhook(cbQuery('rq3', `uai_reject:${uaiM}`, 888222));
+    assert.equal(r.status, 200);
+    const pending = db.prepare('SELECT * FROM telegram_pending_rejects WHERE chat_id = ?').get('888222');
+    assert.equal(pending, undefined, 'ไม่ใช่คิวของ cco1 อีกต่อไป (เอกสารถูกปฏิเสธไปแล้ว) ต้องไม่เปิด flow ใหม่');
+  } finally { restore(); }
+});
+
+test('RJ-06 role ไม่ใช่ cco/cmo/cpo (qc_manager ผูก chat_id ปลอมไว้) → ปฏิเสธคำขอ', async () => {
+  db.prepare("UPDATE users SET telegram_chat_id = ? WHERE username = 'manager1'").run('777444');
+  const restore = mockNodeFetch(async () => ({ ok: true, json: async () => ({ ok: true }) }));
+  try {
+    const r = await postWebhook(cbQuery('rq4', `uai_reject:${uaiJ}`, 777444));
+    assert.equal(r.status, 200);
+    const pending = db.prepare('SELECT * FROM telegram_pending_rejects WHERE chat_id = ?').get('777444');
+    assert.equal(pending, undefined, 'qc_manager ไม่มีสิทธิ์ reject-exec ต้องไม่เปิด flow');
+  } finally { restore(); }
 });
 
 // ================= GROUP C: reject supplier response → resubmit =================

@@ -56,7 +56,7 @@ function checkOverdueNcrNotifications() {
     const mentionLine = mentions.length ? `${mentions.join(' ')}\n` : '';
     sendTelegram(
       db.getSetting('telegram_group_purchasing'),
-      `${mentionLine}[IQC] ${msg}${link ? `\n${appUrl}${link}` : ''}`
+      `${mentionLine}${msg}${link ? `\n${appUrl}${link}` : ''}`
     );
     db.prepare("UPDATE ncrs SET overdue_notified_at = datetime('now') WHERE id = ?").run(row.id);
   }
